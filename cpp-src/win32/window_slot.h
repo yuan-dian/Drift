@@ -50,6 +50,13 @@ struct UiaNode {
     std::wstring acceleratorKey;
     double rangeMin = 0.0;
     double rangeMax = 0.0;
+    // 滚动容器（IScrollProvider）：0 = 非滚动容器（不给 Pattern）/ 1 水平 / 2 垂直。
+    //   主轴单值 + 次轴在 provider 里报「不可滚」——`ScrollMetrics` 本就是单轴的。
+    int scrollAxis = 0;
+    double scrollOffset = 0.0;
+    double scrollMax = 0.0;      // 0 = 内容装得下（Scrollable=false, Percent=-1, ViewSize=100）
+    double scrollViewportW = 0.0;
+    double scrollViewportH = 0.0;
 };
 
 /**

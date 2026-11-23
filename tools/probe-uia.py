@@ -61,6 +61,7 @@ UIA_InvokePatternId = 10000
 # 数值取自 Win SDK 10.0.26100.0/um/UIAutomationClient.h，不猜
 UIA_SelectionPatternId = 10001
 UIA_ValuePatternId = 10002
+UIA_ScrollPatternId = 10004
 UIA_Text_TextChangedEventId = 20015
 UIA_AutomationPropertyChangedEventId = 20004
 
@@ -252,6 +253,7 @@ class VARIANT(ctypes.Structure):
 
 VT_EMPTY = 0
 VT_I4 = 3
+VT_R8 = 5
 VT_BSTR = 8
 VT_BOOL = 11
 
@@ -273,6 +275,9 @@ def prop_of(elem, property_id):
     fn(elem, ctypes.c_int(property_id), ctypes.byref(v))
     if v.vt == VT_I4:
         return v.vt, v.llVal & 0xFFFFFFFF
+    if v.vt == VT_R8:
+        # double 与 llVal 同偏移 8；用 from_buffer 而不是读 llVal 再转 —— 后者要过位模式。
+        return v.vt, ctypes.c_double.from_buffer(v, 8).value
     if v.vt == VT_BOOL:
         return v.vt, bool(v.llVal & 0xFFFF)
     if v.vt == VT_BSTR:
@@ -292,8 +297,9 @@ def set_value_pattern(obj, text):
 
 def pattern_bool(obj, slot):
     # 读返回 BOOL 的 Pattern getter ⇒ (hr, bool)
+    # restype 同上用 `c_long`：不要把失败 HRESULT 变成异常。
     val = ctypes.c_long()
-    fn = _call(obj, slot, ctypes.HRESULT, ctypes.POINTER(ctypes.c_long))
+    fn = _call(obj, slot, ctypes.c_long, ctypes.POINTER(ctypes.c_long))
     hr = fn(obj, ctypes.byref(val)) & 0xFFFFFFFF
     return hr, bool(val.value)
 
@@ -671,6 +677,71 @@ def launch(app, title, wait=4.0, env_extra=None):
     return proc, hwnd
 
 
+def _find_scroll_element(elem, w, depth=0):
+    """DFS 找第一个拿得到 ScrollPattern 的元素 ⇒ `element` 或 None。"""
+    if depth > 12:
+        return None
+    unk = ctypes.c_void_p()
+    fn = _call(elem, ELEM_GetCurrentPattern, ctypes.HRESULT,
+               ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+    fn(elem, ctypes.c_int(UIA_ScrollPatternId), ctypes.byref(unk))
+    if unk.value:
+        return elem
+    c = child(w, elem)
+    while c:
+        found = _find_scroll_element(c, w, depth + 1)
+        if found:
+            return found
+        c = sibling(w, c)
+    return None
+
+
+def verify_scroll(uia, root, w, hwnd, title):
+    """校验 IScrollProvider 的**属性面**：六项 Scroll 属性（30053~30058）。
+
+    ★ 本函数**不碰 Pattern 的 vtable**。裸偏移调用在这个 provider 上读到的值
+      与 `IScrollProvider` 的 IDL 对不上（2026-11-23 反复假红/假绿），根因是
+      手写偏移这条路本身不可靠，不是产品 bug —— C++ 探针按 SDK 头文件解析
+      vtable 读到的全对。
+      ⇒ Pattern 面的读 + 写回判据由 `probes/uia/scroll.cc` 承担（含 UI 真位移
+        校验），这里只做"属性面"这条读屏客户端真正走的通道。
+    """
+    bad = 0
+    elem = _find_scroll_element(root, w)
+    if not elem:
+        print("✗ 树里没有带 ScrollPattern 的容器（--dump 看结构）")
+        return 1
+    print("✓ 拿到 ScrollPattern")
+
+    hpct = prop_of(elem, 30053)[1]
+    hview = prop_of(elem, 30054)[1]
+    vpct = prop_of(elem, 30055)[1]
+    vview = prop_of(elem, 30056)[1]
+    hscroll = prop_of(elem, 30057)[1]
+    vscroll = prop_of(elem, 30058)[1]
+    print(f"  命中元素：{name_of(elem)!r} ctrl={prop_of(elem, 30003)[1]}")
+    print(f"  横向：HPercent={hpct} HViewSize={hview} HScrollable={hscroll}")
+    print(f"  纵向：VPercent={vpct} VViewSize={vview} VScrollable={vscroll}")
+
+    def is_num(x):
+        return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+    # 纵向可滚：百分比落在 0~100、视口占比在 (0,100)（内容确实溢出）。
+    # 横向不可滚：百分比必须是 -1（UIA_ScrollPatternNoScroll）、视口占比 100。
+    ok = (vscroll is True and is_num(vpct) and 0.0 <= vpct <= 100.0
+          and is_num(vview) and 0.0 < vview < 100.0
+          and hscroll is False and is_num(hpct) and hpct == -1.0
+          and is_num(hview) and hview == 100.0)
+    print(("✓" if ok else "✗") + " 属性面六项符合 IScrollProvider 契约")
+    if not ok:
+        bad += 1
+
+    print("  写回判据请跑：bash probes/uia/build.sh && ./probes/uia/uia_scroll.exe "
+          f"\"{title}\"")
+    print("=== IScroll 属性面判定：" + ("PASS" if bad == 0 else f"FAIL({bad})") + " ===")
+    return 0 if bad == 0 else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", default="showcase")
@@ -680,6 +751,8 @@ def main():
                     help="校验 UIA 矩形是屏幕坐标而非客户区局部坐标")
     ap.add_argument("--verify-hit-test", action="store_true",
                     help="校验 ElementFromPoint 能命中具体元素（而不是恒返回窗口根）")
+    ap.add_argument("--verify-scroll", action="store_true",
+                    help="校验 IScrollProvider 的属性面六项（写回判据在 probes/uia/scroll.cc）")
     ap.add_argument("--click", action="append", default=None,
                     help="按 UIA 名字依次点击（可重复；每一步之间等 0.9s）")
     ap.add_argument("--no-launch", action="store_true", help="不启动，连已在跑的窗口")
@@ -710,6 +783,9 @@ def main():
 
         if args.verify_hit_test:
             return verify_hit_test(uia, root, w, hwnd)
+
+        if args.verify_scroll:
+            return verify_scroll(uia, root, w, hwnd, args.title)
 
         for target in args.click:
             elem, r = None, None

@@ -49,7 +49,11 @@ final class Bootstrap extends AppEntry
             static function (): TutorialApplication {
                 return new TutorialApplication();
             },
-        )->setMinSize(480, 360);
+        )
+            ->setMinSize(480, 360)
+            // UIA 语义树（§9）：不接 ⇒ 框架不建树、零开销。教程页里那个可滚动的
+            //   舞台列表靠它才被读屏/自动化看见（`ScrollView` 声明 `scroll` 角色）。
+            ->onSemantics();
 
         $set->run();
     }

@@ -47,6 +47,7 @@ TREE_ITEM_CTRL = 50024
 DATA_ITEM_CTRL = 50029          # §66 表格行（UIA_DataItemControlTypeId）
 UIA_EXPAND_COLLAPSE_PATTERN = 10005
 UIA_SELECTION_ITEM_PATTERN = 10010
+UIA_SCROLL_PATTERN = 10004
 # `ExpandCollapseState` 枚举（UIAutomationCore.h）
 COLLAPSED = 0
 EXPANDED = 1
@@ -145,6 +146,33 @@ def call_pattern(obj, slot):
     """调 Pattern 的方法（3 = ExpandCollapse::Expand / SelectionItem::Select；4 = Collapse）。"""
     fn = U._call(obj, slot, ctypes.HRESULT)
     fn(obj)
+
+
+def find_scroll(uia, w, hwnd):
+    """DFS 找第一个拿得到 ScrollPattern 的元素（滚动容器）。返回 (elem, obj) 或 (None, None)。
+
+    ★ 不按名字找：滚动容器的可访问名是应用声明的（"列表"/"长列表" 会改），
+      而 ScrollPattern 的有无正是"这是不是滚动容器"的**平台侧**判据。
+    """
+    root = U.element_from_handle(uia, hwnd)
+    if not root:
+        return None, None
+    stack = [root]
+    seen = 0
+    while stack and seen < 500:
+        e = stack.pop()
+        seen += 1
+        obj = pattern(e, UIA_SCROLL_PATTERN)
+        if obj is not None:
+            return e, obj
+        kids = []
+        c = U.child(w, e)
+        while c:
+            kids.append(c)
+            c = U.sibling(w, c)
+        stack.extend(reversed(kids))
+
+    return None, None
 
 
 def main():
@@ -414,6 +442,54 @@ def main():
         nav_sel = pattern(nav[0], U.UIA_SelectionPatternId) if nav else None
         PC.check("⑳ 导航按钮不该拿到 SelectionPattern（防 predicate 恒真）",
                  nav_sel is None, nav_sel)
+
+        # ── ㉑–㉓ IScrollProvider（长列表页）──
+        # ★ 只走**属性面**（30053~30058）+ 真滚轮。裸 vtable 偏移在这个 provider 上
+        #   读出过与 `IScrollProvider` IDL 对不上的值（2026-11-23，两套槽位常量互相
+        #   矛盾就是那时的产物）；Pattern 方法的读/写判据由 `probes/uia/scroll.cc`
+        #   承担 —— 那边 vtable 由编译器按 SDK 头文件解析，不存在偏移错位。
+        # ★ 量到的是**页面级外层滚动容器**（实测 VView≈73%，即内容溢出约 36%），
+        #   不是内部的 LazyColumn。这是有意的：三条判据只钉"可滚容器 → UIA 属性面
+        #   → 写回"这条链，不钉某个具体控件；LazyColumn 内部的可滚性由 LazyColumn
+        #   自己的滚动场景测试覆盖。
+        if not PC.check("入口：点得到导航项 '长列表 Big'",
+                        click_name(uia, w, hwnd, "长列表 Big")):
+            PC.skip("长列表页没切过去，㉑㉒㉓ 量不到")
+
+        scroll_elem, scroll_obj = find_scroll(uia, w, hwnd)
+        if not PC.check("㉑ 滚动容器拿得到 ScrollPattern（axis≠0 才给）",
+                        scroll_obj is not None):
+            PC.skip("没有 ScrollPattern，㉒㉓ 量不到")
+
+        num = lambda x: isinstance(x, (int, float)) and not isinstance(x, bool)
+        hscroll = U.prop_of(scroll_elem, 30057)[1]
+        vscroll = U.prop_of(scroll_elem, 30058)[1]
+        hpct = U.prop_of(scroll_elem, 30053)[1]
+        vpct = U.prop_of(scroll_elem, 30055)[1]
+        vview = U.prop_of(scroll_elem, 30056)[1]
+        hview = U.prop_of(scroll_elem, 30054)[1]
+        # 纵向真的溢出（Percent∈[0,100] 且视口占比 <100）；横向不可滚 ⇒
+        # Percent 必须是 `UIA_ScrollPatternNoScroll`(-1)、ViewSize 100。
+        PC.check("㉒ VScrollable/Percent/ViewSize 合法；横向 NoScroll -1 / 100",
+                 vscroll is True and num(vpct) and 0.0 <= vpct <= 100.0
+                 and num(vview) and 0.0 < vview < 100.0
+                 and hscroll is False and num(hpct) and hpct == -1.0
+                 and num(hview) and hview == 100.0,
+                 (vscroll, hpct, hview, round(vpct, 1), round(vview, 1)))
+
+        # ㉓ 真滚轮驱动 ⇒ 属性面百分比必须跟着动，证明 provider 的偏移真的回灌到了
+        #    UI。用滚轮而不是 `SetScrollPercent`：既是真实用户路径，也不必碰 vtable。
+        #    ★ 命中点取**容器矩形中心**而不是硬编码坐标：客户区尺寸随屏幕/DPI 变
+        #      （本机 1920×1017），写死 (300,300) 会落在页头，轮被吞掉 —— 假红。
+        rect = U.rect_of(scroll_elem)
+        cx, cy = win.screen_to_client(hwnd, (rect.left + rect.right) // 2,
+                                      (rect.top + rect.bottom) // 2)
+        win.wheel(hwnd, cx, cy, 6)
+        time.sleep(0.8)
+        again, _obj = find_scroll(uia, w, hwnd)      # 写回后 provider 可能重建
+        after = U.prop_of(again, 30055)[1] if again else None
+        PC.check("㉓ 滚轮滚动后属性面 VPercent 增大（写回链路通）",
+                 num(vpct) and num(after) and after > vpct + 1.0, (vpct, after))
 
         return None
     finally:

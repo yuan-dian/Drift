@@ -9,6 +9,7 @@ use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Pipeline;
 use Drift\Errors;
+use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
@@ -18,6 +19,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsExpandEvent;
 use Drift\Input\SemanticsInvokeEvent;
+use Drift\Input\SemanticsScrollEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\TapTracker;
 use Drift\Input\ThemeChangedEvent;
@@ -1124,6 +1126,42 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     }
 
     /**
+     * 按**语义节点索引**滚动一个容器（UIA `IScrollProvider`）。
+     *
+     * ★ 只认主轴：客户端要求滚的百分比落在次轴上（或容器装得下）⇒ false，
+     *   回 `UIA_E_NOTSUPPORTED`，不假装成功。
+     * ★ 语义节点就声明在容器自己身上，`semanticsScrollMetrics()` 由该 Element 给，
+     *   无需沿父链猜 —— 仍保留父链循环以容忍包装层。
+     *
+     * @return bool 真的滚了（越界 / 无可滚空间 / 轴不符 ⇒ false）
+     */
+    public function setSemanticsScroll(int $index, float $horizontalPercent, float $verticalPercent): bool
+    {
+        $target = $this->semanticsTarget($index);
+        if ($target === null) {
+            return false;
+        }
+
+        for ($e = $target['element']; $e !== null; $e = $e->parent()) {
+            $metrics = $e->semanticsScrollMetrics();
+            if ($metrics === null) {
+                continue;
+            }
+
+            $pct = $metrics->scrollAxis() === Axis::Horizontal ? $horizontalPercent : $verticalPercent;
+            $max = $metrics->maxOffset();
+            if ($pct < 0.0 || $max <= 0.0) {
+                return false;
+            }
+            $metrics->scrollTo($max * min(100.0, $pct) / 100.0);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * 按**语义节点索引**展开/折叠一行（UIA `IExpandCollapseProvider`，§65）。
      *
      * ★ **不合成 tap**：行的 tap 是"选中"，展开是另一件事。而箭头那个 `IconButton`
@@ -1528,6 +1566,14 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         //   `ExpandCollapsePattern`。与 Invoke 同队列、同轮循环。
         if ($event instanceof SemanticsExpandEvent) {
             $this->setSemanticsExpanded($event->index, $event->expand);
+
+            return null;
+        }
+
+        // ★ UIA 的"可滚动"半边：读屏要求把滚动容器滚到某百分比
+        //   （`IScrollProvider`）。与上面三条同队列、同轮循环。
+        if ($event instanceof SemanticsScrollEvent) {
+            $this->setSemanticsScroll($event->index, $event->horizontalPercent, $event->verticalPercent);
 
             return null;
         }

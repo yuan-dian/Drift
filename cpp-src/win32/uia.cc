@@ -7,6 +7,7 @@
 #include <uiautomationcoreapi.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #pragma comment(lib, "UIAutomationCore.lib")
@@ -70,8 +71,7 @@ static VARIANT uiaVarBool(bool b) {
     v.boolVal = b ? VARIANT_TRUE : VARIANT_FALSE;
     return v;
 }
-static void uiaRaiseProperty(IRawElementProviderSimple *simple, PROPERTYID id,
-                             VARIANT before, VARIANT after) {
+static void uiaRaiseProperty(IRawElementProviderSimple *simple, PROPERTYID id,                             VARIANT before, VARIANT after) {
     UiaRaiseAutomationPropertyChangedEvent(simple, id, before, after);
     VariantClear(&before);
     VariantClear(&after);
@@ -87,6 +87,35 @@ static ToggleState toggleStateOf(const UiaNode &node) {
         return node.value.empty() ? ToggleState_Off : ToggleState_On;
     }
     return (node.value == L"checked") ? ToggleState_On : ToggleState_Off;
+}
+
+// ── IScrollProvider 的三条换算（单轴语义 → UIA 两轴视图）──────────────────
+// 语义侧只带主轴 offset/max/viewport；次轴在这里统一报"不可滚"。
+// 百分比 / ViewSize 的公式集中此处：属性回答与事件 diff 必须同源，各写一份会漂移。
+static double uiaScrollPercent(double offset, double max) {
+    if (max <= 0.0) return -1.0;   // UIA 约定：不可滚 ⇒ -1（NoScroll）
+    double p = offset / max * 100.0;
+    return p < 0.0 ? 0.0 : (p > 100.0 ? 100.0 : p);
+}
+// 视口占内容的比例（100 = 全部可见）。content = viewport + maxOffset。
+static double uiaScrollViewSize(double viewport, double max) {
+    double content = viewport + max;
+    if (content <= 0.0) return 100.0;
+    double v = viewport / content * 100.0;
+    return v < 0.0 ? 0.0 : (v > 100.0 ? 100.0 : v);
+}
+// Scroll() 的步进：按"一页"折成百分比增量，NoAmount 返回 -1 表示该轴不动。
+static double uiaScrollStep(double cur, ScrollAmount amt, double pagePercent) {
+    double step;
+    switch (amt) {
+        case ScrollAmount_LargeDecrement: step = -pagePercent; break;
+        case ScrollAmount_SmallDecrement: step = -pagePercent / 3.0; break;
+        case ScrollAmount_LargeIncrement: step = pagePercent; break;
+        case ScrollAmount_SmallIncrement: step = pagePercent / 3.0; break;
+        default: return -1.0;
+    }
+    double t = cur + step;
+    return t < 0.0 ? 0.0 : (t > 100.0 ? 100.0 : t);
 }
 
 // ── parent 关系走树 helper（uiaNodes 前序扁平，parent 指父索引，-1 = 窗口根）──
@@ -461,6 +490,105 @@ private:
     int m_index;
 };
 
+/**
+ * 滚动容器（`IScrollProvider`）：`ScrollView` / `LazyList` 的读屏滚动。
+ *
+ * ★ 数据全来自 `m_slot.uiaNodes[m_index]` 的 scroll* 字段（PHP 侧从
+ *   `ScrollMetrics` 现读），不另存状态。单轴语义：主轴有值、次轴报不可滚。
+ * ★ `Scroll()` 归一成"目标百分比"再转投（`kMsgUiaScroll`），与 `SetScrollPercent`
+ *   共用一条写回路径 —— 否则两套语义要在 PHP 侧各接一次，容易只接一半。
+ */
+class ScrollAdapter : public ComTearOff<ScrollAdapter, IScrollProvider> {
+public:
+    explicit ScrollAdapter(WindowSlot &slot, HWND hwnd, int index) : m_slot(slot), m_hwnd(hwnd), m_index(index) {}
+    STDMETHOD(get_HorizontallyScrollable)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = scrollableOn(node(), 1) ? TRUE : FALSE;
+        return S_OK;
+    }
+    STDMETHOD(get_VerticallyScrollable)(BOOL *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        *ret = scrollableOn(node(), 2) ? TRUE : FALSE;
+        return S_OK;
+    }
+    STDMETHOD(get_HorizontalScrollPercent)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        const UiaNode *n = node();
+        // MSDN 口径：不可滚的轴给 `UIA_ScrollPatternNoScroll`(-1) 且 S_OK。
+        *ret = scrollableOn(n, 1) ? uiaScrollPercent(n->scrollOffset, n->scrollMax) : -1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_VerticalScrollPercent)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        const UiaNode *n = node();
+        *ret = scrollableOn(n, 2) ? uiaScrollPercent(n->scrollOffset, n->scrollMax) : -1.0;
+        return S_OK;
+    }
+    STDMETHOD(get_HorizontalViewSize)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        const UiaNode *n = node();
+        *ret = (n != nullptr && n->scrollAxis == 1)
+                   ? uiaScrollViewSize(n->scrollViewportW, n->scrollMax)
+                   : 100.0;
+        return S_OK;
+    }
+    STDMETHOD(get_VerticalViewSize)(double *ret) override {
+        if (ret == nullptr) return E_INVALIDARG;
+        const UiaNode *n = node();
+        *ret = (n != nullptr && n->scrollAxis == 2)
+                   ? uiaScrollViewSize(n->scrollViewportH, n->scrollMax)
+                   : 100.0;
+        return S_OK;
+    }
+    STDMETHOD(Scroll)(ScrollAmount horizontal, ScrollAmount vertical) override {
+        const UiaNode *n = node();
+        if (n == nullptr) return UIA_E_ELEMENTNOTAVAILABLE;
+        double h = -1.0, v = -1.0;
+        if (n->scrollAxis == 1) {
+            double cur = uiaScrollPercent(n->scrollOffset, n->scrollMax);
+            if (cur >= 0.0) h = uiaScrollStep(cur, horizontal, uiaScrollViewSize(n->scrollViewportW, n->scrollMax));
+        } else if (n->scrollAxis == 2) {
+            double cur = uiaScrollPercent(n->scrollOffset, n->scrollMax);
+            if (cur >= 0.0) v = uiaScrollStep(cur, vertical, uiaScrollViewSize(n->scrollViewportH, n->scrollMax));
+        }
+        if (h < 0.0 && v < 0.0) return UIA_E_NOTSUPPORTED;   // 两个方向都滚不动
+        post(h, v);
+        return S_OK;
+    }
+    STDMETHOD(SetScrollPercent)(double horizontal, double vertical) override {
+        const UiaNode *n = node();
+        if (n == nullptr) return UIA_E_ELEMENTNOTAVAILABLE;
+        // -1 = 该轴不动。要动的轴必须真可滚，否则不假装成功。
+        bool wantH = horizontal >= 0.0;
+        bool wantV = vertical >= 0.0;
+        if (!wantH && !wantV) return S_OK;   // 无操作是合法请求
+        if (wantH && !(n->scrollAxis == 1 && n->scrollMax > 0.0)) return UIA_E_NOTSUPPORTED;
+        if (wantV && !(n->scrollAxis == 2 && n->scrollMax > 0.0)) return UIA_E_NOTSUPPORTED;
+        post(wantH ? (horizontal > 100.0 ? 100.0 : horizontal) : -1.0,
+             wantV ? (vertical > 100.0 ? 100.0 : vertical) : -1.0);
+        return S_OK;
+    }
+
+private:
+    const UiaNode *node() const {
+        const std::vector<UiaNode> &nodes = m_slot.uiaNodes;
+        return (m_index >= 0 && m_index < (int)nodes.size()) ? &nodes[m_index] : nullptr;
+    }
+    /** 该轴可滚？（轴匹配 且 有可滚空间）—— Scrollable / ViewSize / Percent 共用一份判据 */
+    static bool scrollableOn(const UiaNode *n, int axis) {
+        return n != nullptr && n->scrollAxis == axis && n->scrollMax > 0.0;
+    }
+    void post(double h, double v) {
+        if (m_hwnd != NULL) {
+            PostMessageW(m_hwnd, kMsgUiaScroll, (WPARAM)m_index,
+                         (LPARAM)new std::pair<double, double>(h, v));
+        }
+    }
+    WindowSlot &m_slot;
+    HWND m_hwnd;
+    int m_index;
+};
+
 class CProvider : public IRawElementProviderFragmentRoot {
 public:
     /** @param hwnd 这棵树属于哪个窗口（多窗口时每窗一个 provider，各管各的树） */
@@ -623,6 +751,10 @@ public:
                  return false;
              },
              [](WindowSlot &s, HWND, int i) -> IUnknown * { return new SelectionAdapter(s, i); }},
+            {UIA_ScrollPatternId,
+             // 0 = 非滚动容器 ⇒ 不给 Pattern；1/2 = 滚动容器（含"装得下"那档）。
+             [](const std::vector<UiaNode> &n, int i) { return n[i].scrollAxis != 0; },
+             [](WindowSlot &s, HWND h, int i) -> IUnknown * { return new ScrollAdapter(s, h, i); }},
         };
         for (const Rule &r : rules) {
             if (r.id == id && r.applies(nodes, m_index)) {
@@ -736,6 +868,32 @@ public:
                 out->vt = VT_BSTR;
                 out->bstrVal = SysAllocString(self->acceleratorKey.c_str());
             }
+        } else if (id == UIA_ScrollHorizontalScrollPercentPropertyId && self != nullptr && self->scrollAxis == 1) {
+            out->vt = VT_R8;
+            out->dblVal = uiaScrollPercent(self->scrollOffset, self->scrollMax);
+        } else if (id == UIA_ScrollVerticalScrollPercentPropertyId && self != nullptr && self->scrollAxis == 2) {
+            out->vt = VT_R8;
+            out->dblVal = uiaScrollPercent(self->scrollOffset, self->scrollMax);
+        } else if (id == UIA_ScrollHorizontalViewSizePropertyId && self != nullptr && self->scrollAxis == 1) {
+            out->vt = VT_R8;
+            out->dblVal = uiaScrollViewSize(self->scrollViewportW, self->scrollMax);
+        } else if (id == UIA_ScrollVerticalViewSizePropertyId && self != nullptr && self->scrollAxis == 2) {
+            out->vt = VT_R8;
+            out->dblVal = uiaScrollViewSize(self->scrollViewportH, self->scrollMax);
+        } else if (id == UIA_ScrollHorizontallyScrollablePropertyId && self != nullptr && self->scrollAxis == 1) {
+            out->vt = VT_BOOL;
+            out->boolVal = self->scrollMax > 0.0 ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_ScrollVerticallyScrollablePropertyId && self != nullptr && self->scrollAxis == 2) {
+            out->vt = VT_BOOL;
+            out->boolVal = self->scrollMax > 0.0 ? VARIANT_TRUE : VARIANT_FALSE;
+        } else if (id == UIA_IsScrollPatternAvailablePropertyId) {
+            // ★ 必须由 **provider 自己**回答；只靠 `GetPatternProvider` 让 UIA 合成时，
+            //   属性面读得到 True，但 ScrollPattern 代理内部按 provider 原值（VT_EMPTY）
+            //   判定"不可用" ⇒ 客户端 get_CurrentVerticalScrollPercent 恒 NOTSUPPORTED
+            //   （2026-11-23 真机实测：provider 侧日志证明 getter 返回 S_OK + 正确值，
+            //   客户端仍拿到 UIA_E_NOTSUPPORTED）。
+            out->vt = VT_BOOL;
+            out->boolVal = (self != nullptr && self->scrollAxis != 0) ? VARIANT_TRUE : VARIANT_FALSE;
         }
         return S_OK;
     }
@@ -957,6 +1115,7 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
     std::vector<std::wstring> oldKeys, oldIdent, oldName, oldValue;
     std::vector<int> oldSelect;
     std::vector<char> oldEnabled, oldFocusable;
+    std::vector<double> oldScroll;   // 主轴偏移（IScroll 位置事件用）
     size_t n = slot.uiaNodes.size();
     oldKeys.reserve(n);
     oldIdent.reserve(n);
@@ -965,6 +1124,7 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
     oldValue.reserve(n);
     oldEnabled.reserve(n);
     oldFocusable.reserve(n);
+    oldScroll.reserve(n);
     for (const UiaNode &o : slot.uiaNodes) {
         oldKeys.push_back(o.key);
         oldIdent.push_back(uiaNodeIdentity(o));
@@ -973,6 +1133,7 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
         oldValue.push_back(o.value);
         oldEnabled.push_back(o.enabled ? 1 : 0);
         oldFocusable.push_back(o.focusable ? 1 : 0);
+        oldScroll.push_back(o.scrollOffset);
     }
 
     slot.uiaNodes = nodes;
@@ -1029,7 +1190,9 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
             bool valueChanged = oldValue[k] != now.value;
             bool enabledChanged = (oldEnabled[k] != 0) != now.enabled;
             bool focusableChanged = (oldFocusable[k] != 0) != now.focusable;
-            if (!nameChanged && !valueChanged && !enabledChanged && !focusableChanged) continue;
+            // 滚动位置：只对滚动容器发，且按主轴挑属性 ID（读屏据事件更新"已滚到 x%"）。
+            bool scrollChanged = now.scrollAxis != 0 && oldScroll[k] != now.scrollOffset;
+            if (!nameChanged && !valueChanged && !enabledChanged && !focusableChanged && !scrollChanged) continue;
 
             IRawElementProviderSimple *simple = slot.uiaProvider->makeFragmentSimple((int)k);
             if (simple == nullptr) continue;
@@ -1050,6 +1213,18 @@ void driftUiaApply(WindowSlot &slot, const std::vector<UiaNode> &nodes) {
                 if (now.controlType == UIA_EditControlTypeId) {
                     UiaRaiseAutomationEvent(simple, UIA_Text_TextChangedEventId);
                 }
+            }
+            if (scrollChanged) {
+                // 变化的"前后值"是百分比（与属性面同公式），不是像素偏移 —— 客户端比对的是同一量。
+                VARIANT before, after;
+                before.vt = VT_R8;
+                before.dblVal = uiaScrollPercent(oldScroll[k], now.scrollMax);
+                after.vt = VT_R8;
+                after.dblVal = uiaScrollPercent(now.scrollOffset, now.scrollMax);
+                // 滚动位置变化 = ScrollPercent 属性的 PropertyChanged（UIA 没有独立的"位置事件"）。
+                PROPERTYID scrollProp = now.scrollAxis == 1 ? UIA_ScrollHorizontalScrollPercentPropertyId
+                                                            : UIA_ScrollVerticalScrollPercentPropertyId;
+                uiaRaiseProperty(simple, scrollProp, before, after);
             }
             simple->Release();
         }

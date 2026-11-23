@@ -199,6 +199,7 @@ function usage(): never
       工程路径  ⇒ 目录或 `.yml` 文件（`probes/io_pool`）—— 真机探针用同一个入口，
                    ★ 约定：目录名 == `name:`（产物按目录名算）
 
+      --jobs N       透传 tpc 的 `-j`（并行编译任务数）。本机 `cl.exe` 并发挂死时用 `--jobs 1`。
       --incremental  显式放行 tpc 增量（约 30–60s）。**默认不走增量**：只要输入指纹
                      变了 / 首次构建 / 产物不在，就自动清缓存全量（门不能信缓存，
                      见 Drift\Dev\Build\StalePolicy）。仅在你明知改动可安全增量时用，
@@ -238,6 +239,20 @@ $incremental = in_array('--incremental', $argvRest, true);
 
 // `--dry`：只算输入清单与决策，**不构建、不清缓存**（廉价诊断）。
 $dry = in_array('--dry', $argvRest, true);
+
+// --jobs N：透传 tpc 的 `-j`。默认不动（tpc 自己默认 4）；本机并发编译偶发
+//   `cl.exe` 挂死（CPU≈0、8MB、管道写满死锁）时用 `--jobs 1` 串行绕开。
+$jobs = 0;
+foreach ($argvRest as $i => $argument) {
+    if ($argument === '--jobs' && isset($argvRest[$i + 1]) && ctype_digit((string) $argvRest[$i + 1])) {
+        $jobs = (int) $argvRest[$i + 1];
+    } elseif (str_starts_with($argument, '--jobs=')) {
+        $n = substr($argument, 7);
+        if (ctype_digit($n)) {
+            $jobs = (int) $n;
+        }
+    }
+}
 
 // 位置参数：**应用名或工程路径**（2026-10-30）。
 //   · 名字（`hello`）⇒ `apps/hello/project.yml` —— 四个应用的老路，逐字节不变；
@@ -340,10 +355,13 @@ hash_update($inputs, 'src:' . hashTree("{$root}/src") . "\n");
 // ★ 后缀必须显式给全 `project.yml`：默认只收 `.php` ⇒ 改 `sources` / `ignore` /
 //   `resource` 后指纹不变、构建 SKIP，产物静默过期（2026-11-11 修订）。
 // ★ 空手写 `''` 收全部也**不行**：`build/` 是每次构建都变的生成物 ⇒ 永远 FULL，
-//   比 SKIP 更难发现。故显式排除 `build`（生成物）、`bin`（产物）、
-//   `tests`（不进 AOT sources，改测试不该触发三分钟重编）。宁可多一次 FULL，
-//   不可漏一次 SKIP —— 方向是对的，因为漏 SKIP 是静默交付旧 exe。
-hash_update($inputs, 'app:' . hashTree($projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests']) . "\n");
+//   比 SKIP 更难发现。故显式排除 `build`（生成物）、`tests`（不进 AOT sources，
+//   改测试不该触发三分钟重编）。宁可多一次 FULL，不可漏一次 SKIP —— 方向是对的，
+//   因为漏 SKIP 是静默交付旧 exe。
+// ★ `bin` **不能**排除：`apps/<app>/bin/<os>/Bootstrap.php` 是组合根**源码**
+//   （2026-11-23 实证：给 tutorial 加 `->onSemantics()` 后指纹不变 ⇒ 构建 SKIP，
+//   跑起来还是旧 exe，症状是"改了没生效"且无任何提示）。
+hash_update($inputs, 'app:' . hashTree($projectDir, ['.php', '.yml', '.json'], ['build', 'tests']) . "\n");
 // ★ 图标是**构建期嵌入**的（`resource.icon` → tpc 生成 .res），但它在**仓库根**
 //   `assets/`、不在工程目录内 ⇒ 上面那行收不到。改图标是"改了却没重编"的同款洞。
 // ★ 字体（`cpp/fonts/`）**不进指纹**：它在运行期由 `FontLocator` / `drift_skia.cc`
@@ -452,6 +470,10 @@ if ($decision === StalePolicy::SKIP) {
 // ───────────────────────────────────────────────────────────── 构建 ──
 
 $command = [$phpBinary, $entry, '--project', $project, '-O2', '-m', 'bin'];
+if ($jobs > 0) {
+    $command[] = '-j';
+    $command[] = (string) $jobs;
+}
 
 fwrite(STDOUT, sprintf(
     "[drift-build] 工程 %s ｜ 入口 %s ｜ MSVC %s ｜ SDK %s\n",

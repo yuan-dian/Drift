@@ -82,7 +82,7 @@
 | 文本输入 | TextField/TextArea + TextDraft（撤销栈/选区/码位）；纯文本剪贴板；IME 候选窗定位（IMM32/XIM 细致） | Qt QInputMethodEvent / Chromium composition | 框选四落点、中文按连续汉字选词；候选框照顾第三方输入法 | **IME 预编辑串明确不做**（TextInputClient 死接口）；剪贴板仅纯文本，无富文本/图片 | 部分 |
 | 手势 | tap/drag + 应用内拖放 | Flutter GestureDetector / Qt QGesture | arena 消歧正确 | **触摸/笔/长按/swipe/fling/pinch 全仓无命中**（P2 裁决不做） | 缺失 |
 | 语义树 | 13 角色、加性按需构建、full/coalesce 两档泵送、索引快照竞态处理 | Flutter Semantics / UIA / AT-SPI | 数据化、可测、结构变化立即 full 推送 | 13 角色偏少；无语义合并；无 TextPattern/Grid 等富 pattern | 部分 |
-| 原生 A11y | Win32 UIA 1057 行：7 个 Pattern、结构/焦点/属性/文本事件、UIA 动作转投 | WinUI/Qt 全 Pattern | Win32 侧可用且有外部客户端探针 | **AT-SPI 未接（X11 no-op）、VoiceOver 无平台**；UIA 仍缺 IText/IGrid/IScrollProvider（11-15 P0 未闭合） | 部分 |
+| 原生 A11y | Win32 UIA：8 个 Pattern（含本轮 IScroll）、结构/焦点/属性/文本/滚动位置事件、UIA 动作转投 | WinUI/Qt 全 Pattern | Win32 侧可用且有外部客户端探针 | **AT-SPI 未接（X11 no-op）、VoiceOver 无平台**；UIA 仍缺 IText/IGrid（IScroll 本轮已闭合） | 部分 |
 | 系统能力 | 原生文件对话框（Win32 IFileDialog / X11 zenity-yad）；应用内 Modal/Snackbar/Tooltip | Qt QFileDialog / WinUI 通知 | 模态阻塞时长可记账 | **系统托盘 Win32 返回 null、平台通知全仓无端口**；X11 助手依赖外部程序 | 部分 |
 | 窗口 | 多窗口、几何持久化、最小化/最大化、自绘标题栏（Win32 完整） | WinUI/Qt 窗口体系 | 每窗独立浮层栈，句柄即身份 | **无全屏**；X11 无边框/光标已真接（本轮）；DPI 走 X11Dpr 每屏一值、主题变化已推 ThemeChangedEvent | 部分 |
 
@@ -132,7 +132,7 @@
 | 上次 P0 | 当时状态 | 现在 | 证据 |
 |---|---|---|---|
 | P0-1 表单最后一公里 | 密码框写不出来、无格式化、无补全 | **部分闭合** | `TextField::obscureText()`、`inputFormatters()` 已落地；仍无 Form/validator、补全、IME 预编辑 |
-| P0-2 UIA Pattern 与事件面 | 只分派 6 种 Pattern，"满配"是错判 | **未闭合** | `uia.cc` 仍 7 种（Invoke/Value/Toggle/RangeValue/Selection/SelectionItem/ExpandCollapse），无 Text/Grid/Scroll |
+| P0-2 UIA Pattern 与事件面 | 只分派 6 种 Pattern，"满配"是错判 | **部分闭合** | `IScrollProvider` 已落地（8 种 Pattern，含 Scroll + 位置事件 + 写回）；仍无 IText/IGrid（见裁决 P6 的分步理由） |
 | P0-3 业务状态恢复 + 导航栈 | 仅有窗口几何 | **已闭合** | `NavigationStack`（push/replace/pop/args/guard/toArray）+ `RestorationStore` + `WindowStateStore` |
 
 上次 P1 中已闭合：`Future::timeout` 统一 Failure code、CLI 路由收口与 release 资产、deps-v2 双平台发布。
@@ -142,7 +142,7 @@
 
 **P0 — 影响定位或交付**
 1. 第三平台或 X11 A11y：无障碍只覆盖 Win32，对"跨平台"定位是硬伤。AT-SPI 比 macOS 成本低。
-2. UIA Pattern 补齐（IText/IGrid/IScroll + PropertyChanged）：读屏与政企采购的阻断项（承接 11-15 P0-2）。
+2. UIA Pattern 补齐：**IScroll 已闭合**（本轮，含写回与位置事件）；剩余 IText / IGrid 按裁决 P6 分步——IText 需重开 P3 且是 30+ 方法的字符区间大件，IGrid 需 cell 语义角色。读屏与政企采购的阻断项（承接 11-15 P0-2）。
 3. 全匿名构建可达：ROADMAP 1.0 门槛未封闭的最后一项，属交付而非能力。
 
 **P1 — 每天可感知**

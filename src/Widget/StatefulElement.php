@@ -34,6 +34,15 @@ final class StatefulElement extends Element
         return $this->state;
     }
 
+    /** 滚动容器：`State` 实现 `ScrollMetrics` 就给（`ScrollView` / `LazyList` 走这条） */
+    #[\Override]
+    public function semanticsScrollMetrics(): ?ScrollMetrics
+    {
+        $s = $this->state;
+
+        return $s instanceof ScrollMetrics ? $s : null;
+    }
+
     #[\Override]
     public function mount(?Element $parent, BuildContext $context): void
     {

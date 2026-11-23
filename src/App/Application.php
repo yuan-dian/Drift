@@ -377,6 +377,12 @@ abstract class Application
         return $this->shell->setSemanticsExpanded($index, $expand);
     }
 
+    /** 按语义节点索引把滚动容器滚到某百分比（两轴，`-1` = 该轴不动）。 */
+    public function setSemanticsScroll(int $index, float $horizontalPercent, float $verticalPercent): bool
+    {
+        return $this->shell->setSemanticsScroll($index, $horizontalPercent, $verticalPercent);
+    }
+
     /** 上次语义推送的档位。 */
     public function semanticsMode(): string
     {

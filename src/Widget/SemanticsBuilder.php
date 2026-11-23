@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Widget;
 
+use Drift\Geometry\Axis;
 use Drift\Input\SemanticsNode;
 use Drift\Input\SemanticsRole;
 use Drift\Input\SemanticsTree;
@@ -103,6 +104,18 @@ final class SemanticsBuilder
             $n->acceleratorKey = $w->semanticsAcceleratorKey();
             $n->parent = $parentIdx;
             $n->depth = $depth;
+
+            // 滚动容器（IScrollProvider）：指标在 State 上（`ScrollMetrics`），
+            // 构建期现读 —— 滚动不重建语义树也能拿到最新偏移。
+            $metrics = $el->semanticsScrollMetrics();
+            if ($metrics !== null) {
+                $n->scrollAxis = $metrics->scrollAxis() === Axis::Horizontal ? 1 : 2;
+                $n->scrollOffset = $metrics->offset();
+                $n->scrollMax = $metrics->maxOffset();
+                $vp = $metrics->viewportExtent();
+                $n->scrollViewportW = $vp->width;
+                $n->scrollViewportH = $vp->height;
+            }
 
             // ★★ 用 `effectiveBox()`（自己的盒，没有就往下找第一个有盒的子孙），
             //   **不是** `renderObject()`。语义只声明在控件上，而"组合型"控件的盒

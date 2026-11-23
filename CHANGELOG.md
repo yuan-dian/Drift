@@ -65,6 +65,16 @@
 
 ### 已实现
 
+- **UIA `IScrollProvider`（滚动容器无障碍）**：语义节点新增 `scrollAxis` 三态
+  （`0` 非滚动容器 / `1` 水平 / `2` 垂直）与 `scrollOffset` / `scrollMax` /
+  `scrollViewportW/H`，由 `SemanticsBuilder` 从容器 `State` 的 `ScrollMetrics` 构建期现读
+  （`Element::semanticsScrollMetrics()`；`StatefulElement` 在 `state` 实现该接口时给出）。
+  Windows 侧新增 `ScrollAdapter`：可滚 / 百分比 / 视口比例六项属性 + `Scroll()`（方向步进
+  折成目标百分比）+ `SetScrollPercent()`（转投 `kMsgUiaScroll`，两轴 `-1` = 不动），
+  滚动位置变化发 `Scroll{Horizontal,Vertical}ScrollPercent` 属性事件。写回经
+  `Application::setSemanticsScroll()` 落到 `ScrollMetrics::scrollTo()`；要滚的轴不是主轴
+  （或内容装得下）回 `UIA_E_NOTSUPPORTED`，不假装成功。单轴语义到 UIA 两轴视图的换算
+  集中在 `uiaScrollPercent` / `uiaScrollViewSize` 一处，属性面与事件面共用。
 - **`nested-subscribe` 覆盖虚拟化列表**：前置闸从"文件提及 `Each`"改为参数形态
   —— 只查 `items(array, callable)` 中第二参是闭包字面量的调用。`LazyColumn` /
   `LazyGrid` 等大列表原先整文件漏检，而它们恰恰最怕"每行一个订阅者"；菜单单参、

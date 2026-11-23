@@ -182,7 +182,7 @@ function cpp_bridge_uia_contract(string $uiaCc): array
     foreach ([
         'UIA_InvokePatternId', 'UIA_ValuePatternId', 'UIA_TogglePatternId',
         'UIA_RangeValuePatternId', 'UIA_SelectionItemPatternId',
-        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId',
+        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId', 'UIA_ScrollPatternId',
     ] as $p) {
         if (\substr_count($m[1], $p) !== 1) {
             $bad[] = '分派表 ' . $p;
@@ -191,6 +191,23 @@ function cpp_bridge_uia_contract(string $uiaCc): array
     foreach (['UIA_HelpTextPropertyId', 'UIA_AutomationIdPropertyId', 'UIA_AcceleratorKeyPropertyId'] as $p) {
         if (\substr_count($code, $p) !== 1) {
             $bad[] = '属性分支 ' . $p;
+        }
+    }
+    // IScroll 的属性分支成对出现（百分比 / 视口 / 可滚），漏一个就是"客户端读空"。
+    foreach ([
+        'UIA_ScrollHorizontalViewSizePropertyId', 'UIA_ScrollVerticalViewSizePropertyId',
+        'UIA_ScrollHorizontallyScrollablePropertyId', 'UIA_ScrollVerticallyScrollablePropertyId',
+    ] as $p) {
+        if (\substr_count($code, $p) !== 1) {
+            $bad[] = '滚动属性 ' . $p;
+        }
+    }
+    // 百分比常量在两处出现：simpleProperty 的属性分支 + 位置变化的 PropertyChanged。
+    foreach ([
+        'UIA_ScrollHorizontalScrollPercentPropertyId', 'UIA_ScrollVerticalScrollPercentPropertyId',
+    ] as $p) {
+        if (\substr_count($code, $p) < 2) {
+            $bad[] = '滚动百分比(属性+事件) ' . $p;
         }
     }
     foreach (['UiaRaiseAutomationPropertyChangedEvent', 'UIA_Text_TextChangedEventId'] as $p) {
@@ -339,13 +356,17 @@ CPP;
     $patterns = [
         'UIA_InvokePatternId', 'UIA_ValuePatternId', 'UIA_TogglePatternId',
         'UIA_RangeValuePatternId', 'UIA_SelectionItemPatternId',
-        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId',
+        'UIA_ExpandCollapsePatternId', 'UIA_SelectionPatternId', 'UIA_ScrollPatternId',
     ];
     $goodUia = "static const Rule rules[] = {\n"
         . \implode("\n", \array_map(static fn(string $p): string => '    ' . $p . ',', $patterns))
         . "\n        };\n"
         . "UIA_HelpTextPropertyId UIA_AutomationIdPropertyId UIA_AcceleratorKeyPropertyId\n"
-        . "UiaRaiseAutomationPropertyChangedEvent UIA_Text_TextChangedEventId\n";
+        . "UIA_ScrollHorizontalScrollPercentPropertyId UIA_ScrollVerticalScrollPercentPropertyId\n"
+        . "UIA_ScrollHorizontalViewSizePropertyId UIA_ScrollVerticalViewSizePropertyId\n"
+        . "UIA_ScrollHorizontallyScrollablePropertyId UIA_ScrollVerticallyScrollablePropertyId\n"
+        . "UiaRaiseAutomationPropertyChangedEvent UIA_Text_TextChangedEventId\n"
+        . "UIA_ScrollHorizontalScrollPercentPropertyId UIA_ScrollVerticalScrollPercentPropertyId\n";
     $uiaBase = cpp_bridge_uia_contract($goodUia);
     echo ($uiaBase === [] ? '  ✓ ' : '  ✗ ') . "UIA 契约基线全绿\n";
     if ($uiaBase !== []) {
@@ -363,10 +384,14 @@ CPP;
     };
     $uiaReport('分派表删掉 SelectionPattern ⇒ 红',
         \str_replace('    UIA_SelectionPatternId,' . "\n", '', $goodUia));
+    $uiaReport('分派表删掉 ScrollPattern ⇒ 红',
+        \str_replace('    UIA_ScrollPatternId,' . "\n", '', $goodUia));
     $uiaReport('删掉属性变更 raise ⇒ 红',
         \str_replace('UiaRaiseAutomationPropertyChangedEvent ', '', $goodUia));
+    $uiaReport('删掉滚动位置事件 ⇒ 红',
+        \str_replace('UIA_ScrollHorizontalScrollPercentPropertyId ', '', $goodUia));
 
-    echo $failures === 0 ? "--- cpp-bridge selftest 10/10 ---\n" : "--- cpp-bridge selftest FAIL ({$failures}) ---\n";
+    echo $failures === 0 ? "--- cpp-bridge selftest 12/12 ---\n" : "--- cpp-bridge selftest FAIL ({$failures}) ---\n";
     exit($failures === 0 ? 0 : 1);
 }
 

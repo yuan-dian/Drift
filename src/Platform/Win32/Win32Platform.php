@@ -12,6 +12,7 @@ use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
 use Drift\Input\SemanticsExpandEvent;
 use Drift\Input\SemanticsInvokeEvent;
+use Drift\Input\SemanticsScrollEvent;
 use Drift\Input\SemanticsSetValueEvent;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
@@ -334,6 +335,23 @@ final class Win32Platform implements Platform
             $index = (int) ($event['idx'] ?? -1);
             if ($index >= 0) {
                 $input->push(new SemanticsSetValueEvent($index, (string) ($event['value'] ?? '')));
+
+                return 1;
+            }
+
+            return 0;
+        }
+
+        if ($type === 'uia-scroll') {
+            // 载荷是 "h,v" 两轴目标百分比（-1 = 该轴不动）。
+            $index = (int) ($event['idx'] ?? -1);
+            if ($index >= 0) {
+                $parts = explode(',', (string) ($event['scroll'] ?? ''), 2);
+                $input->push(new SemanticsScrollEvent(
+                    $index,
+                    (float) ($parts[0] ?? -1.0),
+                    (float) ($parts[1] ?? -1.0),
+                ));
 
                 return 1;
             }

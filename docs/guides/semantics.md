@@ -33,6 +33,7 @@
 `SemanticsNode` 的状态字段用**三态**表达"有没有这个概念"，不是合成一个 bool：
 
 - `selectState` / `expandState`：`0` = 无此概念 / `1` = 未选或折叠 / `2` = 已选或展开。若把 `0` 与 `1` 混成一个 `false`，每个按钮都会对客户端声称"未选中"，UIA 侧就得给所有节点挂 `IsSelected`。
+- `scrollAxis`：`0` = 非滚动容器（不给 `IScrollProvider`）/ `1` 水平 / `2` 垂直。与 `selectState` 同构的三态：`0` 与"滚动容器但内容装得下"必须分开——后者有概念但 `Scrollable=false`。配套 `scrollOffset` / `scrollMax` / `scrollViewportW/H` 从容器 State 的 `ScrollMetrics` 现读，只表达主轴。
 - `rangeMin` / `rangeMax`：只对 `slider` / `progress` 有意义，供 UIA 的 `IRangeValueProvider` 用。
 - `hint` / `automationId` / `acceleratorKey`：静态描述，空串表示"不答"，不是状态。
 - `level`：1-based 业务深度，`0` = 未声明，不给 UIA 的 `Level` 属性。
@@ -45,15 +46,17 @@
 
 **树导航**：`uiaFirstChild` / `uiaLastChild` / `uiaNextSibling` / `uiaPrevSibling` 等 helper 直接从扁平前序数组 + `parent` 索引算父子兄弟，`GetParent` 只走一步不绕圈。SDK 的接口是扁平化的：主类只继承 `FragmentRoot`，`Simple` / `Fragment` 走内嵌对象，避免多接口继承的 `IUnknown` 歧义。
 
-**Pattern** 按角色 / 状态分派（tear-off）：`InvokeAdapter`、`SelectionItemAdapter`、`ExpandCollapseAdapter`、`ValueAdapter`、`RangeAdapter`。属性变更要看 Pattern 而不仅是属性——例如只读 `CurrentIsSelected` 而不给 `SelectionItemPattern`，真机读到的全是 `false`。换角色也可能连带掐掉 Pattern（`TreeItem` 换了控制类型仍要走 Invoke），两处条件必须同时核对。
+**Pattern** 按角色 / 状态分派（tear-off）：`InvokeAdapter`、`SelectionItemAdapter`、`ExpandCollapseAdapter`、`ValueAdapter`、`RangeAdapter`、`ScrollAdapter`。属性变更要看 Pattern 而不仅是属性——例如只读 `CurrentIsSelected` 而不给 `SelectionItemPattern`，真机读到的全是 `false`。换角色也可能连带掐掉 Pattern（`TreeItem` 换了控制类型仍要走 Invoke），两处条件必须同时核对。
 
-**事件**：`driftUiaApply()` 在覆盖节点数组前先抓旧快照，再 diff 出：节点数变了发 `ChildrenInvalidated`；焦点变了发 `AutomationFocusChanged`；选中态从非 `2` 变 `2` 发 `ElementSelected`；`name` / `value` / `enabled` / `focusable` 变了发对应属性变更事件，文本控件还要补 `TextChanged`。按 `key` 认同一节点，结构变化交给 `ChildrenInvalidated`，不重复比较。读屏客户端订阅的是事件，不是快照。
+`ScrollAdapter`（`IScrollProvider`）是单轴语义到 UIA 两轴视图的桥：`scrollAxis` 决定主轴，次轴统一报"不可滚"。百分比 / ViewSize 的公式集中在 `uiaScrollPercent` / `uiaScrollViewSize` 一处，属性回答与事件 diff 共用——两处各写一份会漂移。`Scroll()` 把方向/步进折成目标百分比，与 `SetScrollPercent` 共用一条写回路径。
+
+**事件**：`driftUiaApply()` 在覆盖节点数组前先抓旧快照，再 diff 出：节点数变了发 `ChildrenInvalidated`；焦点变了发 `AutomationFocusChanged`；选中态从非 `2` 变 `2` 发 `ElementSelected`；`name` / `value` / `enabled` / `focusable` 变了发对应属性变更事件，文本控件还要补 `TextChanged`；滚动容器的偏移变了发 `Scroll{Horizontal,Vertical}ScrollPercent`（UIA 没有独立的"滚动位置事件"，就是这两个属性变更事件）。按 `key` 认同一节点，结构变化交给 `ChildrenInvalidated`，不重复比较。读屏客户端订阅的是事件，不是快照。
 
 ## 客户端可见性与动作回灌
 
-读屏 / 自动化（`InvokePattern`、`Select()`、语音控制）触发动作时，**provider 只投一条窗口消息**（`kMsgUiaInvoke` / `kMsgUiaExpand` / `kMsgUiaSetValue`），不进 PHP：COM 的 RPC 线程重入 PHP 会让进程静默消失；即便移到窗口线程派发里跑，也可能出现"命令执行了、界面不动"。消息进 `EventLoop` 后，紧接着就是 `FrameClock::advance()`，激活引起的重建同一轮就落盘。
+读屏 / 自动化（`InvokePattern`、`Select()`、`SetScrollPercent`、语音控制）触发动作时，**provider 只投一条窗口消息**（`kMsgUiaInvoke` / `kMsgUiaExpand` / `kMsgUiaSetValue` / `kMsgUiaScroll`），不进 PHP：COM 的 RPC 线程重入 PHP 会让进程静默消失；即便移到窗口线程派发里跑，也可能出现"命令执行了、界面不动"。消息进 `EventLoop` 后，紧接着就是 `FrameClock::advance()`，激活引起的重建同一轮就落盘。
 
-动作统一在 `Application::semanticsTarget($index)` 寻址：`index` 是推给平台那份快照的前序下标，越界 / 零面积 / 未命中返回 `null`，壳据此回 `UIA_E_ELEMENTNOTAVAILABLE`，不假装成功。Invoke 最终是在节点中心派发一次**合成 tap**，把"点哪个控件"交回既有输入路由——读屏点与鼠标点走同一条路。
+动作统一在 `Application::semanticsTarget($index)` 寻址：`index` 是推给平台那份快照的前序下标，越界 / 零面积 / 未命中返回 `null`，壳据此回 `UIA_E_ELEMENTNOTAVAILABLE`，不假装成功。Invoke 最终是在节点中心派发一次**合成 tap**，把"点哪个控件"交回既有输入路由——读屏点与鼠标点走同一条路。`setSemanticsScroll()` 沿命中链找实现 `ScrollMetrics` 的容器 State，把百分比换算成偏移后 `scrollTo()`；要滚的轴不是主轴（或内容装得下）⇒ 返回 `false`，壳回 `UIA_E_NOTSUPPORTED`。
 
 语义推送分两档：结构或焦点变了走 `full`、立即推（增量表达不了"多了一个节点"，焦点延迟会让人以为键盘失灵）；动画中走 `coalesce`、攒够上限才推一次。快照下标在两次推送之间可能指到别的节点（与任何 UI 自动化一样的竞态），结构变化会立刻整棵重推，窗口很短。
 

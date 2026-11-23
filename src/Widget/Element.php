@@ -277,6 +277,17 @@ abstract class Element
     }
 
     /**
+     * 滚动容器指标（`IScrollProvider` 的数据面）：默认无，`StatefulElement` 在
+     * `state` 实现 `ScrollMetrics` 时给。语义构建期现读，天然实时、无缓存陈旧。
+     *
+     * @internal `SemanticsBuilder` 用
+     */
+    public function semanticsScrollMetrics(): ?ScrollMetrics
+    {
+        return null;
+    }
+
+    /**
      * 让自己在下次 settle 重建。
      * 只有 StatefulElement 有状态可重读；无态节点调它什么都不发生。
      * 消费方 OverlayLayout::syncPanelSignatures()（跨树：浮层是第二棵根渲染树，主树 setState 到不了）。

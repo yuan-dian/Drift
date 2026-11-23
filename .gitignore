@@ -56,6 +56,12 @@ apps/*/build/
 !/probes/aot_micro/
 /probes/aot_micro/build/
 !/probes/linux_x11/
+#   · `probes/uia/` —— UIA 真机判据（provider 树、Structure/Focus 事件、IScroll
+#     读+写回）。结论被 CHANGELOG 与战史引用，源码不入库则「复跑」是空话 ⇒ 入库，
+#     只忽略 MSVC 产物。★ 不进 `gate`（要 MSVC + 起真实窗口）。
+!/probes/uia/
+/probes/uia/*.obj
+/probes/uia/*.exe
 
 # ── 工具输出 ──
 /Errors.log

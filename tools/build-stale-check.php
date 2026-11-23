@@ -98,6 +98,11 @@ function stale_missing(string $src): array
         if (!\str_contains($appLine, "'build'")) {
             $missing[] = "工程目录没排除 build/（生成物每帧都变 ⇒ 指纹永远变、每次全量重编）";
         }
+        // `bin` 不是产物目录：`apps/<app>/bin/<os>/Bootstrap.php` 是组合根源码。
+        //   把它排进 ignore 后，改 Bootstrap 指纹不变 ⇒ 构建 SKIP、跑起来还是旧 exe。
+        if (\str_contains($appLine, "'bin'")) {
+            $missing[] = "工程目录把 bin/ 当产物排除了（`bin/<os>/Bootstrap.php` 是组合根源码 ⇒ 改它构建会 SKIP）";
+        }
     }
 
     // 图标是构建期嵌入的，但它在仓库根 `assets/`，不在工程目录内 ⇒ 必须单列一项。
@@ -129,7 +134,7 @@ function stale_good_source(): string
         "function wipeCache(string \$d): void {}",
         "\$incremental = in_array('--incremental', \$argvRest, true);",
         "\$decision = StalePolicy::decide(\$p, \$c, \$e, \$f, \$i);",
-        "hash_update(\$inputs, 'app:' . hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests']) . \"\\n\");",
+        "hash_update(\$inputs, 'app:' . hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'tests']) . \"\\n\");",
         "hash_update(\$inputs, 'assets:' . hashTree(\$root . '/assets', '') . \"\\n\");",
         "hash_update(\$inputs, 'cpp:' . hashTree(\$root . '/cpp-src', '') . \"\\n\");",
         "hash_update(\$inputs, 'tpc:' . \$tpcIdentity . \"\\n\");",
@@ -253,7 +258,7 @@ if ($selftest) {
             'name' => '工程目录退回默认后缀（只收 .php）⇒ 报改 project.yml 会 SKIP',
             'got' => \array_values(\array_filter(
                 stale_missing(\str_replace(
-                    "hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'bin', 'tests'])",
+                    "hashTree(\$projectDir, ['.php', '.yml', '.json'], ['build', 'tests'])",
                     "hashTree(\$projectDir)",
                     $good
                 )),
@@ -262,11 +267,23 @@ if ($selftest) {
             'wantCount' => 1,
         ],
         [
+            'name' => '工程目录把 bin/ 当产物排除 ⇒ 报改组合根会 SKIP',
+            'got' => \array_values(\array_filter(
+                stale_missing(\str_replace(
+                    "['build', 'tests']",
+                    "['build', 'bin', 'tests']",
+                    $good
+                )),
+                static fn(string $m): bool => \str_contains($m, '把 bin/ 当产物排除')
+            )),
+            'wantCount' => 1,
+        ],
+        [
             'name' => '工程目录不排除 build/ ⇒ 报指纹永远变、每次全量',
             'got' => \array_values(\array_filter(
                 stale_missing(\str_replace(
-                    "['build', 'bin', 'tests']",
-                    "['bin', 'tests']",
+                    "['build', 'tests']",
+                    "['tests']",
                     $good
                 )),
                 static fn(string $m): bool => \str_contains($m, '没排除 build/')

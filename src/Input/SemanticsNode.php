@@ -94,4 +94,21 @@ final class SemanticsNode
 
     /** 快捷键串（UIA AcceleratorKey）；空 = 不答 */
     public string $acceleratorKey = '';
+
+    /**
+     * 滚动主轴：`0` = 不是滚动容器（不给 `IScrollProvider`）/ `1` 水平 / `2` 垂直。
+     *
+     * ★ 与 `selectState` 同构的三态：`0` 与"滚动容器但内容装得下"必须分开 ——
+     *   前者没有滚动概念（读屏当普通容器），后者有 concept 但 `Scrollable=false`。
+     * ★ 只表达主轴：`ScrollMetrics` 本就是单轴的，次轴在 C++ 侧统一报"不可滚"。
+     */
+    public int $scrollAxis = 0;
+
+    /** 主轴当前偏移 / 可滚到的最大偏移（逻辑像素；`max=0` = 装得下） */
+    public float $scrollOffset = 0.0;
+    public float $scrollMax = 0.0;
+
+    /** 视口尺寸（逻辑像素，两轴）。不与 `w/h` 复用：节点盒可能已陈旧，视口以容器读数为准 */
+    public float $scrollViewportW = 0.0;
+    public float $scrollViewportH = 0.0;
 }

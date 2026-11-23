@@ -26,3 +26,8 @@ constexpr UINT kMsgUiaSetValue = WM_APP + 3;
 /** UIA `Expand` / `Collapse`（§65）。不复用 `kMsgUiaInvoke`：后者落到"节点中心合成
  *  一次 tap"，而树行的 tap 是**选中**不是展开。`wp` = 节点索引，`lp` = 1 展开 / 0 折叠。 */
 constexpr UINT kMsgUiaExpand = WM_APP + 4;
+
+/** UIA `IScrollProvider::Scroll` / `SetScrollPercent` 的转投消息。`wp` = 节点索引，
+ *  `lp` = `new std::pair<double,double>`（水平/垂直**目标百分比**，`-1` = 该轴不动）。
+ *  `Scroll()` 也归一到百分比发起：步进量由 adapter 按视口折算，省一条消息与一种语义。 */
+constexpr UINT kMsgUiaScroll = WM_APP + 5;

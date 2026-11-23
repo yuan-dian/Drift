@@ -15,7 +15,9 @@
 
 #include "string_conv.h"
 
+#include <cstdio>    // snprintf —— UIA scroll 载荷 "h,v" 序列化
 #include <cstring>   // memcpy —— Skia 直贴路径按行拷（§7.3 提速，见文件尾）
+#include <utility>   // std::pair —— UIA scroll 两轴百分比载荷
 #include <phpx.h>
 #include <windows.h>
 #include <imm.h>
@@ -126,6 +128,7 @@ enum EventKind {
     kEvUiaInvoke,
     kEvUiaSetValue,
     kEvUiaExpand,
+    kEvUiaScroll,
     kEvFilesDropped,
     kEvCloseRequested,
 };
@@ -789,6 +792,29 @@ LRESULT CALLBACK driftWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
 
+        case kMsgUiaScroll: {
+            // UIA `IScrollProvider::Scroll` / `SetScrollPercent` 的落地：同"入队 + 叫醒"，
+            // 载荷是两个百分比（`-1` = 该轴不动），存成 "h,v" 串过边界（无 double 字段）。
+            std::pair<double, double> *payload = (std::pair<double, double> *) lp;
+            PendingEvent event;
+            event.hwnd = hwnd;
+            event.kind = kEvUiaScroll;
+            event.a = (int) (INT_PTR) wp;
+            event.b = 0;
+            event.c = 0;
+            event.d = 0;
+            event.e = 0;
+            if (payload != nullptr) {
+                char buf[96];
+                snprintf(buf, sizeof(buf), "%.17g,%.17g", payload->first, payload->second);
+                event.text = buf;
+                delete payload;
+            }
+            g_queue.push_back(event);
+            wakePump(hwnd);
+            return 0;
+        }
+
         case WM_CLOSE:
             // ★ 关闭的**唯一入口**（用户点 X 与应用调 `WindowHost::close()` 同路，
             //   后者是 `PostMessageW(WM_CLOSE)`）。
@@ -1441,6 +1467,13 @@ Array toArray(const PendingEvent &event) {
             out.set("type", "uia-expand");
             out.set("idx", (Int)event.a);
             out.set("expand", (bool)(event.b != 0));
+            break;
+
+        case kEvUiaScroll:
+            out.set("type", "uia-scroll");
+            out.set("idx", (Int)event.a);
+            // "h,v" 两轴目标百分比（-1 = 该轴不动），PHP 侧 explode 还原
+            out.set("scroll", String(event.text));
             break;
 
         case kEvFilesDropped:
@@ -2782,6 +2815,11 @@ void php_drift_win_uia_push(Int hwnd, Array nodes) {
         node.selectState = (int)a.get("selectState").toInt();
         node.expandState = (int)a.get("expandState").toInt();
         node.level = (int)a.get("level").toInt();
+        node.scrollAxis = (int)a.get("scrollAxis").toInt();
+        node.scrollOffset = a.get("scrollOffset").toFloat();
+        node.scrollMax = a.get("scrollMax").toFloat();
+        node.scrollViewportW = a.get("scrollViewportW").toFloat();
+        node.scrollViewportH = a.get("scrollViewportH").toFloat();
         next.push_back(node);
     }
 

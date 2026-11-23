@@ -180,6 +180,12 @@ final class SemanticsTree
                 'hint' => $n->hint,
                 'automationId' => $n->automationId,
                 'acceleratorKey' => $n->acceleratorKey,
+                // 滚动容器（IScrollProvider）：axis 0 = 不给 Pattern，非 0 才答滚动属性
+                'scrollAxis' => $n->scrollAxis,
+                'scrollOffset' => $n->scrollOffset,
+                'scrollMax' => $n->scrollMax,
+                'scrollViewportW' => $n->scrollViewportW,
+                'scrollViewportH' => $n->scrollViewportH,
             ];
         }
 
