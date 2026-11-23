@@ -9,6 +9,7 @@ use Drift\Input\KeyChord;
 use Drift\Input\KeyEvent;
 use Drift\Input\PointerEvent;
 use Drift\Input\ScrollEvent;
+use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
 use Drift\Platform\Clipboard;
 use Drift\Platform\Dialog;
@@ -181,14 +182,19 @@ final class X11Platform implements Platform
         if ($type === 'quit' || $type === 'noop' || $type === 'timer' || $type === 'dpi') {
             return 0;
         }
-        if ($type === 'theme') {
-            // XSettings 的亮/暗或高对比度变了：只丢缓存，下一帧由 X11Screen 现读。
-            // 不产生输入事件 —— 主题变化不是用户按键，不该进命中链/加速键。
-            X11Appearance::invalidate();
-            return 0;
-        }
-
         $handle = (int) ($event['hwnd'] ?? 0);
+
+        if ($type === 'theme') {
+            // 与 Win32 同口径：显式发 ThemeChangedEvent（带一次外观快照），
+            // AppShell 据此换主题 + 全树重建；事件不进命中链/加速键。
+            X11Appearance::invalidate();
+            $appearance = $handle > 0
+                ? $this->screen($handle)->appearance()
+                : X11Appearance::current();
+            $this->inputOf($handle)->push(new ThemeChangedEvent($appearance));
+
+            return 1;
+        }
 
         if ($type === 'resize') {
             $target = $handle > 0 ? $handle : ($this->displayHost()->handle() ?? 0);
@@ -197,7 +203,7 @@ final class X11Platform implements Platform
                 $provider->surface()->resize(
                     max(0, (int) ($event['w'] ?? 0)),
                     max(0, (int) ($event['h'] ?? 0)),
-                    1.0,
+                    X11Dpr::of($target),
                 );
             }
 
@@ -285,12 +291,14 @@ final class X11Platform implements Platform
 
             return;
         }
+        // 框架给逻辑像素，桥要屏幕像素（Platform::imeCaret 契约）。
+        $dpr = X11Dpr::of($windowHandle);
         drift_x11_ime_set_caret(
             $windowHandle,
             true,
-            (float) ($rect[0] ?? 0.0),
-            (float) ($rect[1] ?? 0.0),
-            (float) ($rect[2] ?? 0.0),
+            (float) ($rect[0] ?? 0.0) * $dpr,
+            (float) ($rect[1] ?? 0.0) * $dpr,
+            (float) ($rect[2] ?? 0.0) * $dpr,
         );
     }
 

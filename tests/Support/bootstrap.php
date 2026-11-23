@@ -17,3 +17,4 @@ require __DIR__ . '/functions.php';
 //   `drift_*` 函数，缺了就是 "Call to undefined function"（而不是可断言的假数据）。
 require_once __DIR__ . '/../../tools/fakes/skia.php';
 require_once __DIR__ . '/../../tools/fakes/win32.php';
+require_once __DIR__ . '/../../tools/fakes/x11.php';

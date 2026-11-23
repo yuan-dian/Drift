@@ -626,6 +626,7 @@ function boxOrigin(RenderBox $box): array
 //   require tests/ 会造出反向依赖，而 smoke 是能独立跑的开发工具。
 require_once __DIR__ . '/fakes/skia.php';
 require_once __DIR__ . '/fakes/win32.php';
+require_once __DIR__ . '/fakes/x11.php';
 
 /**
  * 从 Paragraph 独立算出每个字形的期望跨边界参数（**正确语义**：offsetX/offsetY 施加）。

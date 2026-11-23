@@ -11,6 +11,7 @@ use Drift\Platform\WindowHost;
 use Drift\Platform\WindowMaterial;
 use Drift\Platform\WindowMaterialCapabilities;
 
+use function drift_x11_begin_drag;
 use function drift_x11_client_size;
 use function drift_x11_create;
 use function drift_x11_destroy;
@@ -18,14 +19,17 @@ use function drift_x11_is_alive;
 use function drift_x11_maximize_toggle;
 use function drift_x11_minimize;
 use function drift_x11_place_window;
+use function drift_x11_set_cursor;
+use function drift_x11_set_frameless;
 use function drift_x11_set_min_size;
 use function drift_x11_set_title;
 use function drift_x11_show;
 use function drift_x11_window_position;
 
 /**
- * X11 窗口端口。建窗/存活/尺寸/标题/几何/最小化/最大化走桥（ICCCM + EWMH）；
- * 材质、拖拽、光标、AT-SPI 语义这一版是显式 no-op，不是"平台支持但没生效"。
+ * X11 窗口端口。建窗/存活/尺寸/标题/几何/最小化/最大化/光标/无边框拖拽走桥；
+ * 材质、AT-SPI 语义仍是显式 no-op，不是"平台支持但没生效"。
+ * 逻辑↔物理换算统一走 {@see X11Dpr}，桥只收物理像素。
  * @internal 平台实现；应用只认 Drift\Platform\WindowHost
  */
 final class X11WindowHost implements WindowHost
@@ -57,8 +61,8 @@ final class X11WindowHost implements WindowHost
 
     public function close(int $windowHandle): void
     {
-        // 没有 X11 侧的 close guard（WM_DELETE_WINDOW 只做事件上报），
-        // 与 Win32 的 WM_CLOSE 不同：这里直接销毁。
+        // 应用主动关闭：直接销毁。用户点关（WM_DELETE_WINDOW）走另外的
+        // close-requested 上报路径，两条不混。
         $this->destroy($windowHandle);
     }
 
@@ -82,6 +86,10 @@ final class X11WindowHost implements WindowHost
 
     public function setCloseGuard(int $windowHandle, bool $armed): void
     {
+        // X11 的 WM_DELETE_WINDOW 天生就是"请求"（WM 不会强杀应用），桥恒上报
+        // CloseRequestedEvent，由应用决定何时 destroy —— 等价于 Win32 guard 恒 armed。
+        // 故这里的开关在 X11 无操作价值：不做成"未 armed 就销毁"，那会与本平台
+        // 的关闭链相反，且改坏真机门对 close-requested 的断言。
     }
 
     public function setTitle(int $windowHandle, string $title): void
@@ -91,7 +99,14 @@ final class X11WindowHost implements WindowHost
 
     public function setMinSize(int $windowHandle, int $width, int $height): void
     {
-        drift_x11_set_min_size($windowHandle, $width, $height);
+        // 入参是逻辑像素，X 大小提示要物理像素；统一经 X11Dpr 折算。
+        $dpr = X11Dpr::of($windowHandle);
+
+        drift_x11_set_min_size(
+            $windowHandle,
+            (int) round($width * $dpr),
+            (int) round($height * $dpr),
+        );
     }
 
     public function applyMaterial(int $windowHandle, WindowMaterial $material): void
@@ -105,10 +120,16 @@ final class X11WindowHost implements WindowHost
 
     public function setFrameless(int $windowHandle, int $dragHeight): void
     {
+        // 逻辑拖动带高折成物理：桥提供给 EWMH 的命中区按屏幕像素算。
+        drift_x11_set_frameless(
+            $windowHandle,
+            (int) round($dragHeight * X11Dpr::of($windowHandle)),
+        );
     }
 
     public function beginDrag(int $windowHandle): void
     {
+        drift_x11_begin_drag($windowHandle);
     }
 
     public function minimize(int $windowHandle): void
@@ -124,17 +145,17 @@ final class X11WindowHost implements WindowHost
     public function clientSize(int $windowHandle): Size
     {
         $raw = drift_x11_client_size($windowHandle);
-        $scale = 1.0;
+        $dpr = X11Dpr::of($windowHandle);
 
         return Size::of(
-            (float) ((int) ($raw['w'] ?? 0)) / $scale,
-            (float) ((int) ($raw['h'] ?? 0)) / $scale,
+            (float) ((int) ($raw['w'] ?? 0)) / $dpr,
+            (float) ((int) ($raw['h'] ?? 0)) / $dpr,
         );
     }
 
     public function position(int $windowHandle): ?Point
     {
-        // X11 顶层窗口的坐标即相对 root（无 Windows 式外框换算），DPI 恒 1。
+        // X11 顶层窗口的坐标即相对 root（无 Windows 式外框换算），但屏幕坐标是物理像素。
         $raw = drift_x11_window_position($windowHandle);
         $x = $raw['x'] ?? null;
         $y = $raw['y'] ?? null;
@@ -142,17 +163,22 @@ final class X11WindowHost implements WindowHost
             return null;   // 查询失败（死句柄 / 无 display）
         }
 
-        return Point::of((float) $x, (float) $y);
+        $dpr = X11Dpr::of($windowHandle);
+
+        return Point::of((float) $x / $dpr, (float) $y / $dpr);
     }
 
     public function place(int $windowHandle, Rect $rect, bool $maximized): void
     {
+        // 与 setMinSize 同口径：入参逻辑像素，X 几何要物理像素。
+        $dpr = X11Dpr::of($windowHandle);
+
         drift_x11_place_window(
             $windowHandle,
-            $rect->left,
-            $rect->top,
-            $rect->width,
-            $rect->height,
+            $rect->left * $dpr,
+            $rect->top * $dpr,
+            $rect->width * $dpr,
+            $rect->height * $dpr,
             $maximized,
         );
     }
@@ -167,6 +193,8 @@ final class X11WindowHost implements WindowHost
 
     public function setCursor(int $windowHandle, CursorShape $shape): void
     {
+        // 枚举 value 即桥 ABI 编号；名字→XC_* 的映射只在 C++ 一处。
+        drift_x11_set_cursor($windowHandle, $shape->value);
     }
 
     public function pushSemantics(int $windowHandle, array $flatNodes): void

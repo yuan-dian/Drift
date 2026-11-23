@@ -132,6 +132,18 @@ extern "C" {
     int XSetICValues(XIC ic, ...);
     XVaNestedList XVaCreateNestedList(int unused, ...);
 
+    // X resource manager：Xft.dpi 是 X11 事实上的缩放比例来源（XSETTINGS 会同步写它）。
+    char *XGetDefault(Display *d, const char *program, const char *option);
+    // 标准 cursor font：XC_* 是字形编号，XCreateFontCursor 从默认光标字体加载。
+    unsigned long XCreateFontCursor(Display *d, unsigned int shape);
+    int XDefineCursor(Display *d, Window w, unsigned long cursor);
+    int XFreeCursor(Display *d, unsigned long cursor);
+    int XQueryPointer(Display *d, Window w, Window *root_return, Window *child_return,
+                      int *root_x, int *root_y, int *win_x, int *win_y,
+                      unsigned int *mask_return);
+    int XChangeProperty(Display *d, Window w, Atom property, Atom type, int format,
+                        int mode, const unsigned char *data, int nelements);
+
     unsigned long pthread_self(void);
 }
 
@@ -146,6 +158,25 @@ static const int NOTIFY_NORMAL = 0;              // XFocusChangeEvent.mode：正
 static const int NOTIFY_INFERIOR = 2;            // XFocusChangeEvent.detail：焦点移到子窗口（窗口内部控件间移动，不算"用户切走"）
 static const long FOCUS_CHANGE_MASK = 1L << 21;  // XSelectInput：FocusChangeMask
 static const long WM_STATE_ICONIC = 3;           // ICCCM WM_STATE 的 IconicState
+static const int PROP_REPLACE = 0;               // XChangeProperty mode：PropModeReplace
+static const int PROP_FORMAT_32 = 32;            // XChangeProperty format：32 位
+static const int XA_CARDINAL_TYPE = 6;           // XChangeProperty type：XA_CARDINAL
+static const long MOVERESIZE_MOVE = 8;           // EWMH _NET_WM_MOVERESIZE 的 move 操作
+static const int BUTTON1_MASK = 1 << 8;          // XEvent.state：Button1Mask（拖动发起键）
+static const int BUTTON1 = 1;                    // _NET_WM_MOVERESIZE 的 button 参数
+
+// XC_* 标准光标字形编号（Xcursorfont.h 的稳定数值，避免引入整套头）。
+// 与 Drift\Input\CursorShape 的 value 一一对应，改动须两处同步。
+static const unsigned int XC_SHAPES[8] = {
+    68,   // Default      → left_ptr
+    152,  // IBeam        → xterm
+    156,  // PointingHand → hand2
+    116,  // SizeAll      → fleur
+    116,  // SizeNS       → fleur（X 标准字体无专用上下箭头，近似）
+    108,  // SizeWE       → sb_h_double_arrow
+    150,  // Wait         → watch
+    0,    // NotAllowed   → X_cursor
+};
 
 // XIM 常量取自 Xlib.h（值是稳定 ABI，避免为几个宏引入整套 X 头）。
 static const char *const XNInputStyle = "inputStyle";
@@ -923,4 +954,82 @@ void php_drift_x11_ime_set_caret(Int hwnd, Bool visible, Float x, Float y, Float
         XSetICValues(it->second, XNPreeditAttributes, attrs, nullptr);
         XFree(attrs);
     }
+}
+
+// ── DPI：Xft.dpi（X resource）是 X11 事实上的缩放来源 ──
+// ★ XSETTINGS 改 dpi 时会同步更新 Xft.dpi，所以读一处即可；这里现读不缓存，
+//   用户中途调缩放下一次 scale() 就生效。hwnd 忽略：X11 每屏一值，无 per-monitor。
+Float php_drift_x11_dpi(Int hwnd)
+{
+    (void)hwnd;
+    Display *d = display();
+    if (d == nullptr) return 96.0f;
+    const char *raw = XGetDefault(d, "Xft", "dpi");
+    if (raw == nullptr) return 96.0f;
+    const double dpi = atof(raw);
+    // 0 / 负数 / 垃圾串 ⇒ 96；与 Win32 的 Dpr 兜底同口径（桥报事实，PHP 侧也有一道）。
+    return (dpi > 0.0) ? (Float)dpi : 96.0f;
+}
+
+// 光标：按 shape 缓存字形，避免每次命中都 XCreateFontCursor + XFreeCursor。
+static unsigned long g_cursors[8] = {0};
+static bool g_cursorsReady = false;
+
+void php_drift_x11_set_cursor(Int hwnd, Int shape)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    int idx = (int)shape;
+    if (idx < 0 || idx >= 8) idx = 0;
+    if (!g_cursorsReady) {
+        for (int i = 0; i < 8; i++) g_cursors[i] = XCreateFontCursor(d, XC_SHAPES[i]);
+        g_cursorsReady = true;
+    }
+    XDefineCursor(d, (Window)(uintptr_t)hwnd, g_cursors[idx]);
+    XFlush(d);
+}
+
+// 无边框：写 _MOTIF_WM_HINTS{flags=decorations, decorations=0}，主流 WM 都认。
+// Motif hints 是 5 个 long（MWM_HINTS 结构），值 2 表示 decorations 字段有效。
+void php_drift_x11_set_frameless(Int hwnd, Int dragHeight)
+{
+    (void)dragHeight;   // EWMH 没有"拖动带高度"属性，命中由 WM 按整窗判定
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    const Atom motif = XInternAtom(d, "_MOTIF_WM_HINTS", 0);
+    if (motif == 0) return;
+    long hints[5] = {2L, 0L, 0L, 0L, 0L};   // flags=decorations, decorations=none
+    XChangeProperty(d, (Window)(uintptr_t)hwnd, motif, motif,
+                    PROP_FORMAT_32, PROP_REPLACE,
+                    (const unsigned char *)hints, 5);
+    XFlush(d);
+}
+
+// 拖拽：EWMH _NET_WM_MOVERESIZE — 发 ClientMessage 给 root，WM 接管交互移动。
+// 与 Win32 的 SendMessage(WM_NCLBUTTONDOWN,HTCAPTION) 同用途，都是"交给 OS 拖窗"。
+void php_drift_x11_begin_drag(Int hwnd)
+{
+    Display *d = display();
+    if (d == nullptr || hwnd <= 0) return;
+    const Window win = (Window)(uintptr_t)hwnd;
+    Window root, child;
+    int rx, ry, wx, wy;
+    unsigned int mask;
+    if (XQueryPointer(d, win, &root, &child, &rx, &ry, &wx, &wy, &mask) == 0) return;
+
+    const Atom op = XInternAtom(d, "_NET_WM_MOVERESIZE", 0);
+    if (op == 0) return;
+    XEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.client.type = CLIENT_MESSAGE;
+    ev.client.window = win;
+    ev.client.message_type = op;
+    ev.client.format = 32;
+    ev.client.data[0] = (long)rx;
+    ev.client.data[1] = (long)ry;
+    ev.client.data[2] = MOVERESIZE_MOVE;
+    ev.client.data[3] = BUTTON1;
+    ev.client.data[4] = 1;   // source: application
+    XSendEvent(d, root, 0, X11_SUBSTRUCTURE_REDIRECT | X11_SUBSTRUCTURE_NOTIFY, &ev);
+    XFlush(d);
 }

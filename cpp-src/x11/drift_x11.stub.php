@@ -47,3 +47,14 @@ function drift_x11_system_appearance(): array {}
 // IME 插入符定位（XIM spot location）。visible=false 表示无插入符，桥会清掉旧的 IC 位置。
 // ★ 只定位候选窗；组合文字事件属于框架层 ImeEvent，尚未实现，别把它当完整 IME。
 function drift_x11_ime_set_caret(int $hwnd, bool $visible, float $x, float $y, float $h): void {}
+
+// DPI：窗口当前每屏 DPI（96 ⇒ 1.0），来自 Xft.dpi / XSETTINGS / 环境兜底。
+// ★ X11 没有 per-monitor DPI，$hwnd 保留只为接口对齐 Win32，桥忽略它取全局值。
+function drift_x11_dpi(int $hwnd): float {}
+
+// 光标形状：shape 是 Drift\Input\CursorShape 的 value（0..7），名字→XC_* 只在桥内一处。
+function drift_x11_set_cursor(int $hwnd, int $shape): void {}
+
+// 无边框 + 拖拽：Motif hints 去装饰 + EWMH _NET_WM_MOVERESIZE；dragHeight 是物理像素。
+function drift_x11_set_frameless(int $hwnd, int $dragHeight): void {}
+function drift_x11_begin_drag(int $hwnd): void {}

@@ -47,7 +47,7 @@ preview 阶段允许破坏性变更，但要守两条：
    - **deps-v2 已双平台发布**：Windows / Linux 各一资产（macOS 仅预留平台表），共享 schema=2 单锁；两岸从同一 `SKIA_REVISION` 真编并回验，Windows 裁掉未使用模块，`DEPS_VERSION` 与 Release tag 均为 `deps-v2`。AOT / dev 壳分发包自带运行时、扩展依赖与可选字体，PHP 8.4/8.5 双矩阵产物已在公开 CI 验证。
    - **待办（构建可达门槛未封闭）**：本地已用干净 checkout 验证文档路径闭环（doctor 11/11、`verify --fast` 13/13、`drift-build hello --full` 成功、`probe-window hello` 5/5 且退出码 0），公开仓库匿名可读、`deps-v2` 双平台资产与 `deps.lock.json` 的 schema=2 锚点一致。**但尚未做一次「全匿名、零本机替代」的端到端重跑**：上两轮本机代理在 git pack 传输中途断流、deps 包下载只到 11% 且反复 502，只能借用本地 clone / 拷贝 vendor 与 cpp。**完成条件**：在稳定网络下匿名 `git clone` → `fetch-deps`（SHA 过）→ `composer install` → doctor → build → probe，全程不依赖 token 和本机预置的 vendor/cpp；全绿才把 1.0「构建可达」记为满足。本机代理问题不构成产品缺陷，换网络即可重跑。
 2. **开发者体验收口**：减少可组合 Future + 命令式状态机样板；异步资源控件保持一个 `asset()` 入口；新机制先算"每应用省几行、几处写者"。
-3. **平台收口**：第二平台 Linux x64（X11）已过公开 CI 的 T2 端到端门；当前收窄能力差——Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI 未接；X11 系统色无统一 API（HC 用框架兜底配色）。已接 XSettings/环境外观跟随、zenity/yad 对话框、yad 托盘、XIM 插入符定位与 xclip UTF-8 纯文本 `TARGETS` 探测。第三平台等真实交付目标，不提前抽象。
+3. **平台收口**：第二平台 Linux x64（X11）已过公开 CI 的 T2 端到端门；当前收窄能力差——Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI（X11 为每屏一值）未接；X11 系统色无统一 API（HC 用框架兜底配色）、材质空实现。已接 XSettings/环境外观跟随 + `ThemeChangedEvent`、zenity/yad 对话框、yad 托盘、XIM 插入符定位、xclip UTF-8 纯文本 `TARGETS` 探测，以及高 DPI（`X11Dpr` 全仓唯一换算入口）、标准 cursor font 光标、Motif hints 无边框 + EWMH 拖拽、主题变化推事件。第三平台等真实交付目标，不提前抽象。
 4. **工具链**：`create` 脚手架、可视化检查器的价值等到消费者足够多再评估——没有真实用例的机制不上。
 
 ## 明确不做（除非有失效条件触发）

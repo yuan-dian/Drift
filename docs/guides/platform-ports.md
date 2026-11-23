@@ -9,7 +9,7 @@
 | 平台 | 状态 | T2 入口 | 已知缺口 |
 |---|---|---|---|
 | Win32 x64 | 完整桌面实现 | `drift-build --full` + `probe-window` | 触控 / 笔未做 |
-| Linux x64（X11） | 已过公开 CI 端到端门，能力子集 | `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + yad + Linux Skia `.a`） | 无 Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI；系统色靠 HC 兜底配色；剪贴板仅 UTF-8 纯文本，对话框/托盘依赖 zenity/yad 与托盘宿主 |
+| Linux x64（X11） | 已过公开 CI 端到端门，桌面窗口能力齐全 | `bash probes/linux_x11/build.sh`（Xvfb + fluxbox + xclip + yad + Linux Skia `.a`） | 无 Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI（每屏一值）；系统色靠 HC 兜底配色；材质空实现；剪贴板仅 UTF-8 纯文本，对话框/托盘依赖 zenity/yad 与托盘宿主 |
 | macOS | 未接 | —— | 仅在 deps 平台表预留 `macos-arm64` |
 
 ## 端口集合与"没有"的三种写法
@@ -41,15 +41,18 @@
 壳（C++ 侧）负责 OS 侧那一段：建窗与销毁、消息泵与唤醒窗、原生剪贴板 / 对话框 / 托盘、DPI 或缩放信号、系统主题信号，以及把桥函数暴露成稳定的 ABI。PHP 侧只通过 `Platform` 端口发命令、收事件。两侧的实现边界不同，但端口形状不变：
 
 - **Win32**：`PostMessageW` 唤醒、`HWND` 句柄、`WM_SETTINGCHANGE` 主题、`PER_MONITOR_AWARE_V2` DPI、UIA 语义树；对话框与托盘是原生通道，剪贴板走系统 API。
-- **X11**：`XConnectionNumber` + `poll()` 唤醒、窗口句柄为 `Window`、X11 selection 由独立 `xclip` 进程持有（桥内自实现会在同一 connection 上自死锁）；`UTF8_STRING` 纯文本三件套，`hasText()` 先问 `TARGETS`。系统外观读 XSettings owner（`_XSETTINGS_S0`）并用环境变量兜底；对话框与托盘交给 zenity/yad 独立进程，缺失时返回 `null`。IME 只做 XIM 插入符定位，组合文字事件仍属框架层缺口；最大化 / 最小化依赖 WM 处理。
+- **X11**：`XConnectionNumber` + `poll()` 唤醒、窗口句柄为 `Window`、X11 selection 由独立 `xclip` 进程持有（桥内自实现会在同一 connection 上自死锁）；`UTF8_STRING` 纯文本三件套，`hasText()` 先问 `TARGETS`。系统外观读 XSettings owner（`_XSETTINGS_S0`）并用环境变量兜底，变化吐 `theme` 事件推 `ThemeChangedEvent`；DPI 读 `Xft.dpi`（每屏一值）；光标走标准 cursor font，无边框走 Motif hints、拖拽走 EWMH `_NET_WM_MOVERESIZE`。对话框与托盘交给 zenity/yad 独立进程，缺失时返回 `null`。IME 只做 XIM 插入符定位，组合文字事件仍属框架层缺口；最大化 / 最小化依赖 WM 处理。AT-SPI 语义树与材质仍是显式 no-op。
 
 以下几条是 Win32 专属的实现纪律：
 
 - 消息泵阻塞等待由 `waitEvents()` 完成，超时用高精度可等待定时器（约毫秒级），不用 `SetTimer` 的系统 tick——后者会把短等待量化到下个 tick。
 - `needsPolling()` 为 `false` 的后端靠 worker 的 `PostMessageW` 叫醒 UI；"说能叫醒却叫不醒"就是挂死，所以这是后端的能力声明，不是实现细节。
 - 原生模态期间用 `consumeModalBlockedMs()` 读一次、读后即清，交给 `FrameClock::advance()` 从帧间隔里剔除；不清会把同一段模态时间反复剔除，连真卡顿也剔没。
-- IME 光标由 `EventLoop` 调 `imeCaret($windowHandle, $rect)` 上报，`null` 表示无插入符；框架永远给逻辑像素，量化（× DPI）在平台侧做。插入符是线程级资源，"贴哪个窗口"必须由调用方指定。
-- 窗口级能力（`applyMaterial()` / `setFrameless()` / `beginDrag()` / `setCursor()`）可 `no-op`：不支持的旋钮不报错，要问走 `materialCapabilities()` 的能力位，应用据此自适应（例如亚克力不支持就退回模糊）。能力位是 ABI，改位值必须与 C++ 实现同步。
+
+窗口级能力的两条通用纪律：
+
+- IME 光标由 `EventLoop` 调 `imeCaret($windowHandle, $rect)` 上报，`null` 表示无插入符；框架永远给逻辑像素，量化（× DPI）在平台侧做（Win32 / X11 都已接）。插入符是线程级资源，"贴哪个窗口"必须由调用方指定。
+- `applyMaterial()` 可 `no-op`：不支持的旋钮不报错，要问走 `materialCapabilities()` 的能力位，应用据此自适应（例如亚克力不支持就退回模糊）。X11 材质恒空、能力位为 0；`setFrameless()` / `beginDrag()` / `setCursor()` 两平台都已真接，不是空实现。能力位是 ABI，改位值必须与 C++ 实现同步。
 
 ## 表面与 surface 选择
 
@@ -61,7 +64,7 @@
 
 ## DPI 与缩放
 
-`Screen::scale()` 是 DPR（1.0 = 96dpi，125% → 1.25），分数缩放**全程保留小数**；量化只在 `Scale::quantizeRect()` / `RenderSurface::resize()` 一处发生。取 DPR 全仓只有一个入口（`Win32\Dpr::of()`）：句柄无效或桥读不到时兜底为 `1.0`，避免 `0.0` 传进除法后变成 NaN 铺满整棵布局且不报错。它不缓存——跨屏拖动时 DPI 会变。
+`Screen::scale()` 是 DPR（1.0 = 96dpi，125% → 1.25），分数缩放**全程保留小数**；量化只在 `Scale::quantizeRect()` / `RenderSurface::resize()` 一处发生。每个平台各有一个全仓唯一入口（Win32 `Dpr::of()` / X11 `X11Dpr::of()`）：句柄无效或桥读不到时兜底为 `1.0`，避免 `0.0` 传进除法后变成 NaN 铺满整棵布局且不报错。都不缓存：Win32 跨屏拖动会变 DPI，X11 的 XSETTINGS dpi 可被用户中途改。X11 是**每屏一值**（`Xft.dpi`），非 per-monitor，跨屏拖动不换 DPR。该入口还被 clientSize / position / setMinSize / place / imeCaret / resize 事件复用——窗口级逻辑↔物理换算只此一处，别再写 `/ 1.0` 字面量。
 
 `Screen::viewport()` 是根约束的**唯一出处**：窗口客户区的逻辑尺寸、紧约束。物理像素的换算只发生在表面 resize 里。`scale()` 变化会产生 `DpiChanged` 事件，触发**全树重建**（不是 relayout）——它改的是 `build()` 的输入，字号与间距 token 都会变。
 
@@ -69,7 +72,7 @@ Win32 启动阶段的 DPI 感知级别必须是 `PER_MONITOR_AWARE_V2`：旧式�
 
 ## 深色主题跟随
 
-`Screen::systemTheme()` 给明暗，`appearance()` 给完整快照（明暗 + 高对比度 + 用户选的系统色）。Win32 来源是 `WM_SETTINGCHANGE`（`lParam == "ImmersiveColorSet"`）或启动时读注册表，每次现读。X11 来源是 XSettings manager（`_XSETTINGS_S0` 的 owner 属性）与 `GTK_THEME` / `GTK_COLOR_SCHEME` 等环境兜底：桥每 250ms 轮询，变了才吐 `theme` 事件让 `X11Appearance` 丢缓存；X11 没有统一系统色 API，`highContrast` 时不伪造颜色，由 `ThemeData` 的 forced-colors 配色接住。新代码用 `appearance()`，别让高对比度状态散在第二个通道里。
+`Screen::systemTheme()` 给明暗，`appearance()` 给完整快照（明暗 + 高对比度 + 用户选的系统色）。Win32 来源是 `WM_SETTINGCHANGE`（`lParam == "ImmersiveColorSet"`）或启动时读注册表，每次现读。X11 来源是 XSettings manager（`_XSETTINGS_S0` 的 owner 属性）与 `GTK_THEME` / `GTK_COLOR_SCHEME` 等环境兜底：桥每 250ms 轮询，变了才吐 `theme` 事件；`X11Platform` 收到后丢缓存并推 `ThemeChangedEvent`（带一次外观快照），与 Win32 同走 `AppShell` 换主题 + 全树重建，事件不进命中链 / 加速键。X11 没有统一系统色 API，`highContrast` 时不伪造颜色，由 `ThemeData` 的 forced-colors 配色接住。新代码用 `appearance()`，别让高对比度状态散在第二个通道里。
 
 ## 剪贴板、对话框、托盘、IME
 

@@ -10,7 +10,8 @@ use Drift\Theme\SystemAppearance;
 use Drift\Theme\SystemTheme;
 
 /**
- * X11 屏幕端口。缩放在这一版固定 1.0（无 per-monitor DPI 桥），视口按客户区现读。
+ * X11 屏幕端口。缩放读 Xft.dpi / XSETTINGS（每屏一值，非 per-monitor），
+ * 视口按客户区现读；换算统一走 {@see X11Dpr}。
  *
  * ★ 主题走 XSettings（暗色 / 高对比度两轴）+ 环境变量兜底，变化由
  *   X11Platform 的 `theme` 事件触发失效；详见 {@see X11Appearance}。
@@ -28,7 +29,7 @@ final class X11Screen implements Screen
 
     public function scale(): float
     {
-        return 1.0;
+        return X11Dpr::of($this->handle);
     }
 
     public function viewport(): BoxConstraints
