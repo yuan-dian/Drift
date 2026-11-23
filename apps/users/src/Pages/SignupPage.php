@@ -57,7 +57,7 @@ final class SignupPage extends StatelessWidget
             Text::make('注册新用户')->title(),
 
             // 值 + 该字段错误一起读（都在这一个 builder 里 ⇒ 一条依赖集合）
-            Bind::make(fn(): Widget => TextField::make()
+            Bind::make(fn (BuildContext $ctx): Widget => TextField::make()
                 ->value($this->form->name())
                 ->label('姓名')
                 ->error($this->form->errorOf('name'))
@@ -66,7 +66,7 @@ final class SignupPage extends StatelessWidget
                 ->onSubmitted(fn(string $_) => $this->submitted())
                 ->onChanged($this->form->setName(...))),
 
-            Bind::make(fn(): Widget => TextField::make()
+            Bind::make(fn (BuildContext $ctx): Widget => TextField::make()
                 ->value($this->form->email())
                 ->label('邮箱')
                 ->error($this->form->errorOf('email'))
@@ -76,7 +76,7 @@ final class SignupPage extends StatelessWidget
                 ->onChanged($this->form->setEmail(...))),
 
             // 提交错误也是业务状态 ⇒ 订阅回 UI（§11.4.3）
-            Bind::make(fn(): Widget => $this->form->submitError() === ''
+            Bind::make(fn (BuildContext $ctx): Widget => $this->form->submitError() === ''
                 ? Row::make()
                 : Text::make($this->form->submitError())->error()),
 

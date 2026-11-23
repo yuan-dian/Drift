@@ -29,11 +29,6 @@ final class FetchSignJob implements NamedJob
     {
     }
 
-    public function name(): string
-    {
-        return self::NAME;
-    }
-
     public function run(): mixed
     {
         return Api::client($this->base)->sign()->toArray();

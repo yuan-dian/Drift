@@ -20,7 +20,7 @@ use Drift\Widget\Widget;
  * ```
  *
  * ★ **这是手写订阅的那条路，新代码默认不用它**：状态写成 `Cell`
- *   之后，`Bind::make(fn (): Widget => …)` 的 builder 里读什么就订什么 —— 依赖由
+ *   之后，`Bind::make(fn (BuildContext $ctx): Widget => …)` 的 builder 里读什么就订什么 —— 依赖由
  *   采集给出，漏写 `select` 这个失效模式不存在。本类只在"多个字段必须同频变化、
  *   读方要一次拿到一致的几块"时才有存在理由（见 A18），而那种形状目前 `apps/`
  *   里没有（A19）。

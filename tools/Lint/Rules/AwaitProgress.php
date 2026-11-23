@@ -11,8 +11,9 @@ use Drift\Dev\Lint\SourceQuery;
 /**
  * 会 `JobProgress::report()` 的 Job 被 `await()` 时，必须传第二参订进度。
  *
- * ★ 真事故（§68）：`DownloadResultsJob` 每张结果图都报进度，`downloadResults()`
- *   的 `$co->await($this->exec(new DownloadResultsJob($urls)))` 没传第二参 ⇒
+ * ★ 真事故（§68）：`DownloadResultsJob`（已随下载职责迁到 `Image` 删除，同构的
+ *   `UploadBatchJob` 仍在）每张结果图都报进度，`downloadResults()` 的
+ *   `$co->await($this->exec(new DownloadResultsJob($urls)))` 没传第二参 ⇒
  *   「Job 发了、没人订」，N 张图下载阶段界面只有转圈。不抛异常、不改结果，
  *   单元测试若只断言落地结果也全绿 —— 本仓老话：**未消费的分支 = 未实现**。
  *   上传侧 `$co->await($future, fn(float $f) => ...)` 是现成模板。

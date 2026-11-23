@@ -134,10 +134,10 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             $images = $store->selected();
             if ($images === []) {
-                return SizedBox::make()->size(0.0, 0.0);
+                return SizedBox::zero();
             }
 
             $thumbs = [];
@@ -156,7 +156,7 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static fn (): Widget => Row::make()->spacing(12)->children([
+        return Bind::make(static fn (BuildContext $ctx): Widget => Row::make()->spacing(12)->children([
             Button::primary('上传')
                 ->enabled($store->canUpload())
                 ->onPressed(static function () use ($store): void {
@@ -177,9 +177,9 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             if (!$store->isUploading()) {
-                return SizedBox::make()->size(0.0, 0.0);
+                return SizedBox::zero();
             }
 
             return Progress::make($store->uploadProgress())->height(8.0);
@@ -190,7 +190,7 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static fn (): Widget => MessageLine::make($store->uploadMessage()));
+        return Bind::make(static fn (BuildContext $ctx): Widget => MessageLine::make($store->uploadMessage()));
     }
 
     /** 已上传的对象键列表（原文 `.uploaded-item`：✅ + 等宽路径） */
@@ -198,10 +198,10 @@ final class UploadCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             $keys = $store->uploadedKeys();
             if ($keys === []) {
-                return SizedBox::make()->size(0.0, 0.0);
+                return SizedBox::zero();
             }
 
             // ★ `Each` 的 `keyFn` 与 `builder` 都只收**一个**参数（item），

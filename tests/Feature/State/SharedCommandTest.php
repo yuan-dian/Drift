@@ -9,6 +9,7 @@ use Drift\Async\Future;
 use Drift\Errors;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Widget\Bind;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 use Drift\Widget\Text;
@@ -213,7 +214,7 @@ final class SharedCommandTest extends SmokeTestCase
         $ctx = smokeContext();
 
         $element = Bind::make(
-            static fn(): Widget => Text::make($store->page()->value()->stateName()),
+            static fn (BuildContext $ctx): Widget => Text::make($store->page()->value()->stateName()),
         )->createElement();
         $element->mount(null, $ctx);
         self::settle($element);

@@ -25,7 +25,7 @@ use Drift\Core\Tracker;
  *
  * ★ **读即订阅**：实现 `Readable` ⇒ `value()` / `get()` /
  *   `isRunning()` 在 build 期读都会登记依赖，与 `Cell::get()` 走同一条采集。
- *   于是页面可以直接 `Bind::make(fn () => …$cmd->value()…)`，不必让 Store 先
+ *   于是页面可以直接 `Bind::make(fn (BuildContext $ctx) => …$cmd->value()…)`，不必让 Store 先
  *   把四态"转发"成一次广播 —— 那层转发是每一处都要手写、漏一处就静默陈旧的活。
  *   ★ 三个读法**都得记**：`Subject` 自身不采集，漏一个就出现"这条读法不重建"
  *     的分裂语义 —— 那比没有采集更难查。

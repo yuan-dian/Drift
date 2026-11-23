@@ -7,7 +7,6 @@ use App\Watermark\Api\Config;
 use App\Watermark\Api\SignInfo;
 use App\Watermark\Api\TaskResult;
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;

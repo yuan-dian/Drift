@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Watermark;
 
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\JobRegistry;
 use App\Watermark\Jobs\PollResultJob;
@@ -22,22 +21,16 @@ use PHPUnit\Framework\TestCase;
  *
  * Store 的每个动作都有两半：`$host === null` 走同步（解释器 / 单测），
  * `$host !== null` 走后台。此前**所有**测试都构造 `host = null` ⇒ 后台那半行
- * 代码从没被执行过。于是：
- *
- * ```text
- * 下载结果图失败：class 'App\Watermark\Store\DownloadResultsJob' is undefined
- * ```
- *
- * 一行漏 `use` 活到了用户点下载。`php -l` / smoke / phpunit / lint 四道闸门全绿，
- * 因为**没有一条判据落在被真机执行的那个分支上**（本仓的老话：未被消费的分支 =
- * 未实现）。lint 现在有 `class-missing-use` 挡这一类，但"分支有没有被执行过"
+ * 代码从没被执行过。于是一个漏 `use` 的类名能一路活到用户点按钮，
+ * 而 `php -l` / smoke / phpunit / lint 四道闸门全绿 —— 因为**没有一条判据落在
+ * 被真机执行的那个分支上**（本仓的老话：未被消费的分支 = 未实现）。
+ * lint 现在有 `class-missing-use` 挡这一类，但"分支有没有被执行过"
  * 仍得由测试回答 —— 那是静态规则替代不了的。
  *
- * ## 钉住三件事
+ * ## 钉住两件事
  *
- * ① **链路顺序**：取签名 → 上传 → 建任务 → 查结果 → 下载，五个任务一个不少；
- * ② **`DownloadResultsJob` 的入参就是结果里那批 URL**（不是空数组、不是上一批）；
- * ③ **每个任务都能被 `JobRegistry` 从 `args()` 重建** —— 这是 `NamedJob` 的
+ * ① **链路顺序**：取签名 → 上传 → 建任务 → 查结果，四个任务一个不少；
+ * ② **每个任务都能被 `JobRegistry` 从 `args()` 重建** —— 这是 `NamedJob` 的
  *   跨进程契约（worker 侧只有名字 + 参数）。只判 ① 的话，"参数形状漂了"
  *    要等真机 worker 才炸。
  *
@@ -109,11 +102,6 @@ final class StoreHostChainTest extends TestCase
     /** @param list<string> $urls */
     private function host(array $urls): RecordingTaskHost
     {
-        $paths = [];
-        foreach ($urls as $i => $url) {
-            $paths[$url] = '/tmp/drift-r' . ($i + 1) . '.png';
-        }
-
         return new RecordingTaskHost([
             FetchSignJob::class => [
                 'account' => 'acc',
@@ -136,7 +124,6 @@ final class StoreHostChainTest extends TestCase
                 'errorMsg' => '',
                 'downloadUrls' => $urls,
             ],
-            DownloadResultsJob::class => ['paths' => $paths, 'failed' => []],
         ]);
     }
 

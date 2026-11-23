@@ -13,8 +13,7 @@ use Drift\App\JobProgress;
  *   不用任何后端就能跑通整条 UI 闭环，且仓库里没有任何真实后端地址。
  *
  * ★ 示例图用 base64 内嵌、运行时写临时文件：规避 AOT 下"资源目录在哪"的不确定。
- *   `DownloadResultsJob` 已对本地已存在文件走直通（{@see DownloadResultsJob::fetchOne()}），
- *   所以这里直接回本地路径即可被 `Image` 显示。
+ *   回本地路径即可被 `Image` 显示 —— `asset()` 收本地路径与 http(s) URL 同形。
  */
 final class MockApiClient implements WatermarkApi
 {

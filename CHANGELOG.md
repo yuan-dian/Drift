@@ -46,8 +46,32 @@
 - 诊断工具的相应路径假设同步更新（`probe_win.py` / `probe-window.py` /
   `probe-two-windows.py` / `probe-hotreload-p15.php`）。
 
+- **`Bind` 的 builder 收 `BuildContext`**：原先要求 `fn (): Widget`，于是任何"细粒度
+  订阅 + 需要当前主题色"的段落都得额外造一个只为了把 ctx 带进 `build()` 的
+  `StatelessWidget` 壳（watermark 里这样的壳有 4 个）。现在统一为
+  `fn (BuildContext $ctx): Widget`，与 `build()` / `LayoutBuilder` 同一条约定
+  （Flutter 的 `ValueListenableBuilder` / `AnimatedBuilder` 同样带 `BuildContext`）。
+  所有调用点需补参数。
+
 ### 已实现
 
+- **删除随下载职责迁走而遗留的 331 行**：`DownloadResultsJob` / `DownloadReport` 在
+  "结果图交给 `Image` 控件自治"之后没有任何派发点（`WatermarkStore` 里只剩一句 `use`，
+  `JobRegistry` 却仍注册着），四个测试文件则在断言它**不该**被调用 ——「测试断言某段
+  代码不该执行」是死代码的强信号。连同 `DownloadReportTest`、`BatchJobTimeoutTest` 的
+  下载用例、`MockApiClient` 的过时注释一并删除。`SelectedImage` 的
+  `looksLikeImage()` / `sizeLabel()`（零消费者）与 `$size` 字段（只写不读）同时删掉 ——
+  `fromPath()` 现在真的零 IO，与它的类注释一致。
+- **`SizedBox::zero()`**：`build()` 必须返回 Widget，条件渲染只能写
+  `SizedBox::make()->size(0.0, 0.0)`（全仓 9 处）。命名构造让"这一块这帧不存在"
+  自解释。不叫 `shrink()` —— 那个名字在 `WidgetModifiers` 里是 flex 收缩权重。
+- **状态语义档归位**：`ResultCard` 里的 `status → StatusTone` 映射搬回
+  `TaskResult::statusTone()`，与 `StatusMessage::tone()` 同一层职责（业务语义住在
+  值对象上，视图只把档位翻成主题色）。
+- **`FetchSignJob` 删掉手写的 `name()`**：`JobArgs` trait 已提供，五个 Job 里只有它
+  多一份（早于 trait 提供该方法时写的）。`PollResultJob` 注释里引用的
+  `Application::after()` 早已不存在，改为真实的 `AsyncScope::sleep()` +
+  `Environment::delay()` 链。
 - **滚动读面单一实现**：新增 `Traits\ScrollViewHost`，`ScrollView` / `LazyList` 的
   `maxOffset` / `scrollTo` / `animateTo` / `scrollAxis` / `viewportExtent` /
   `scrollByAxis` / `glideByAxis` / `ensureVisible` 只有一份；两类各自只回答"主轴是哪个"

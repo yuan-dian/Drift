@@ -5,7 +5,6 @@ namespace Drift\Dev\Tests\Feature\Watermark;
 
 use App\Watermark\Api\Config;
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
@@ -39,7 +38,7 @@ use PHPUnit\Framework\TestCase;
  * | ① 上传进度通知不推进流水线 | 进度只改界面（`uploadProgress` / 文案） | 进度一到就开始建任务 |
  * | ② 查询每轮只排一个定时器 | 定时器只从 `sleep()` 里来 | 按 2ⁿ 增长（曾经的事故形态） |
  * | ③ 轮询中不能提交第二条 | `Phase` 是唯一一个"在忙什么" | 两条轮询互相覆盖 `lastResult` |
- * | ④ 停止轮询后不再查、不下载 | 取消打整条流水线，`finally` 归位 | 点了停止还在查，且不报错 |
+ * | ④ 停止轮询后不再查、不再提交 | 取消打整条流水线，`finally` 归位 | 点了停止还在查，且不报错 |
  *
  * ★ 未知时序一律用 `DeferredHost`（每个任务回 `Future::pending()`，逐趟手动交付）：
  *   `RecordingTaskHost` 回已结算 Future，中间态根本不存在。
@@ -143,7 +142,7 @@ final class StoreSettledEffectsTest extends TestCase
     }
 
     #[Test]
-    public function 停止轮询后迟到的查询结果不落地也不再下载(): void
+    public function 停止轮询后迟到的查询结果不落地也不再提交任务(): void
     {
         $host = new DeferredHost();
         $env = new FakeEnvironment();
@@ -170,15 +169,16 @@ final class StoreSettledEffectsTest extends TestCase
             '取消被当成"查询失败"报了出来 —— 用户点了停止，却看到一条错误'
         );
 
-        // ★ 后端还在跑，结果迟到 —— 不许落到界面，更不许触发下载。
+        // ★ 后端还在跑，结果迟到 —— 不许落到界面，也不许再提交任务。
         //   （`Future::cancel()` 让 `resolve()` 首句就 return，这是它的硬契约。）
+        $before = \count($host->queue);
         $host->futureAt(4)->resolve(self::successResult());
 
         self::assertTrue(
             $store->lastResult()?->isPending() ?? false,
             '取消之后迟到的成功结果落到了界面上'
         );
-        self::assertSame(0, $host->countOf(DownloadResultsJob::class), '停止之后还去下载了');
+        self::assertCount($before, $host->queue, '停止之后不该再提交任务');
     }
 
     // ══════════════════ 夹具 ══════════════════

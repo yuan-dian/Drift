@@ -64,7 +64,7 @@ final class ResultCard extends StatelessWidget
         // ★ `isPolling()` 必须和 `lastResult()` 在同一段里读：刚开始轮询时结果是
         //   `null → null`（那一格没变），不让这一段订阅 `phase` 的话它不会被叫醒，
         //   状态区就停在"等待任务提交后自动查询结果…"，而下面已经冒出"停止轮询"。
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             $result = $store->lastResult();
             $polling = $store->isPolling();
 
@@ -80,8 +80,41 @@ final class ResultCard extends StatelessWidget
                 return Text::make('等待任务提交后自动查询结果…')->caption();
             }
 
-            return new ResultStatusRow($result);
+            return self::statusRow($ctx, $result);
         });
+    }
+
+    /**
+     * 状态区那一行：语义档由 `TaskResult::statusTone()` 给，这里只取当前主题色。
+     *
+     * ★ 独立成 static 方法而不是另一个控件类：它是本卡片的一段排版，没有第二个
+     *   消费者。（`Bind` 的 builder 收 `BuildContext`，所以这里不再需要"只为拿到
+     *   ctx 而存在"的壳类。）
+     */
+    private static function statusRow(BuildContext $ctx, TaskResult $result): Widget
+    {
+        $tone = $result->statusTone();
+        $lines = [Text::make($result->statusLabel())->size(14.0)];
+        if ($result->taskId !== '') {
+            $lines[] = Text::make('任务 ID：' . $result->taskId)->caption();
+        }
+        $reason = $result->failureReason();
+        if ($reason !== '' && !$result->isSuccess()) {
+            $lines[] = Text::make($reason)->caption();
+        }
+
+        return Row::make()
+            ->spacing(12)
+            ->padding(EdgeInsets::symmetric(18.0, 14.0))
+            ->background($ctx->color($tone->surfaceToken()))
+            ->radius(10.0)
+            ->children([
+                SizedBox::make()
+                    ->size(12.0, 12.0)
+                    ->background($ctx->color($tone->foregroundToken()))
+                    ->radius(6.0),
+                Column::make()->spacing(4)->children($lines),
+            ]);
     }
 
     /** 结果元信息（模板 / 尺寸 / 耗时 / 创建 / 完成） */
@@ -89,10 +122,10 @@ final class ResultCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             $result = $store->lastResult();
             if (!$result instanceof TaskResult || !$result->isSuccess()) {
-                return SizedBox::make()->size(0.0, 0.0);
+                return SizedBox::zero();
             }
 
             return Column::make()
@@ -115,7 +148,7 @@ final class ResultCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static fn (): Widget => self::imagesFor(self::urlsOf($store->lastResult())));
+        return Bind::make(static fn (BuildContext $ctx): Widget => self::imagesFor(self::urlsOf($store->lastResult())));
     }
 
     /**
@@ -127,7 +160,7 @@ final class ResultCard extends StatelessWidget
     public static function imagesFor(array $urls): Widget
     {
         if ($urls === []) {
-            return SizedBox::make()->size(0.0, 0.0);
+            return SizedBox::zero();
         }
 
         $items = [];
@@ -156,9 +189,9 @@ final class ResultCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             if (!$store->canStop()) {
-                return SizedBox::make()->size(0.0, 0.0);
+                return SizedBox::zero();
             }
 
             return Row::make()->spacing(10)->children([

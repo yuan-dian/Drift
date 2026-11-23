@@ -20,6 +20,6 @@ final class LeafBoxState extends State
     {
         LeafBoxWidget::$buildCalls++;
 
-        return \Drift\Widget\SizedBox::make()->size(0.0, 0.0);
+        return \Drift\Widget\SizedBox::zero();
     }
 }

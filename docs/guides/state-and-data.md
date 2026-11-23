@@ -74,7 +74,7 @@ Text::of($this->count, '计数 ')->body();             // 读：读点就在这�
 |---|---|---|
 | 页面 `build()` 里 `$cell->get()` | 整页 | 状态少、页面小；默认 |
 | `Text::of($cell)` | 那一个 State（约 3 个元素） | 局部热点，低频变 |
-| `Bind::make(fn(): Widget => …)` | 闭包那一小段 | 要拼多个值，或不是纯文本 |
+| `Bind::make(fn (BuildContext $ctx): Widget => …)` | 闭包那一小段 | 要拼多个值，或不是纯文本 |
 | `LiveText::of($cell)` | **零 build**，只换渲染盒 | 高频：时钟 / 进度 / 实时读数 |
 | 控件参数收通道（`Table::selectionFrom($cell)`） | 控件自己的 `State` | 受控高频参数：点行选中 |
 | `Computed::of(fn)` | 不自带重建，跟着依赖走 | 派生值（`clicks × 2`） |

@@ -17,6 +17,7 @@ use Drift\Dev\Lint\SourceQuery;
  * `DownloadResultsJob` ⇒ `new DownloadResultsJob($urls)` 解析成
  * `App\Watermark\Store\DownloadResultsJob`。真机任务完成、点下载时报
  * `class 'App\Watermark\Store\DownloadResultsJob' is undefined`。
+ * （该类已随下载职责迁到 `Image` 而删除；事故形态与现存任何 Job 相同。）
  *
  * **四道闸门全绿**：`php -l` 只查语法；lint 当时只查 `instanceof`；smoke / phpunit
  * 走的是 `$host === null` 的**降级分支**（同步下载），`$host->submit(new …)` 那行

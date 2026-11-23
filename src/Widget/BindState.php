@@ -26,6 +26,6 @@ final class BindState extends State
             return SizedBox::make();
         }
 
-        return ($widget->builderClosure())();
+        return ($widget->builderClosure())($ctx);
     }
 }

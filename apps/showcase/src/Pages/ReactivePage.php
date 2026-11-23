@@ -185,7 +185,7 @@ final class ReactivePage extends ShowcasePage
 
             // ── B：段级 ──
             Text::make('B · 段级：Bind（只重跑这一小段）')->heading(),
-            Bind::make(function (): Widget {
+            Bind::make(function (BuildContext $ctx): Widget {
                 ++$this->bindBuilds;
 
                 return Text::make('clicks = ' . $this->clicks->get() . ' ｜ 本段 build 次数 = ' . $this->bindBuilds);

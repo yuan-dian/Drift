@@ -53,6 +53,19 @@ final class SizedBox extends NullableChildRenderObjectWidget
         return $this->kid;
     }
 
+    /**
+     * 零尺寸 —— "这一块这一帧不存在"。
+     *
+     * ★ `build()` 必须返回 Widget，条件渲染没有 `null` 可交；而空 `Text` 会在
+     *   `Column` 里占一行高度。这是表达"不显示"的唯一写法，给它一个自解释的名字。
+     * ★ **不能叫 `shrink()`**：那个名字在 `WidgetModifiers` 里是 flex 收缩权重
+     *   （`shrink(int $weight)`），含义完全不同。
+     */
+    public static function zero(): self
+    {
+        return self::make()->size(0.0, 0.0);
+    }
+
     /** 两轴一起定（等价于 `->width($w)->height($h)`，只是少一次 mutate） */
     public function size(float $width, float $height): static
     {

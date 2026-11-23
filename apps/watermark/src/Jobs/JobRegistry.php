@@ -37,7 +37,6 @@ final class JobRegistry
             UploadBatchJob::NAME => static fn (array $args): Job => UploadBatchJob::fromArgs($args),
             AddTaskJob::NAME => static fn (array $args): Job => AddTaskJob::fromArgs($args),
             PollResultJob::NAME => static fn (array $args): Job => PollResultJob::fromArgs($args),
-            DownloadResultsJob::NAME => static fn (array $args): Job => DownloadResultsJob::fromArgs($args),
         ];
     }
 }

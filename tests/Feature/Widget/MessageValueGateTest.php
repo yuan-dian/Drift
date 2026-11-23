@@ -9,6 +9,7 @@ use Drift\Dev\Smoke\LeafProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\State\Cell;
 use Drift\Widget\Bind;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Widget;
 
 /**
@@ -40,7 +41,7 @@ final class MessageValueGateTest extends SmokeTestCase
         $elements = [];
         foreach ($readers as $field => $read) {
             // ★ 读点就在 builder 里：`Bind` 采集它读到的格子，不用 `select` 声明。
-            $widget = Bind::make(static function () use ($read, $store, &$runs, $field): Widget {
+            $widget = Bind::make(static function (BuildContext $ctx) use ($read, $store, &$runs, $field): Widget {
                 $read($store);
                 $runs[$field]++;
 

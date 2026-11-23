@@ -100,7 +100,7 @@ $this->flow = $this->asyncCommand(fn (array $paths): Future => AsyncScope::task(
 
 ```php
 // 页面直接读命令，不需要 Store 先转发一次广播
-Bind::make(fn(): Widget => $this->list($this->store->page()->value()))
+Bind::make(fn (BuildContext $ctx): Widget => $this->list($this->store->page()->value()))
 ```
 
 - 事件处理器里读**不**订阅（帧外没有采集帧）：`run()` 前"看一眼当前值"是正常需求。

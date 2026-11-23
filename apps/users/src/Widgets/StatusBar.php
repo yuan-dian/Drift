@@ -5,6 +5,7 @@ namespace App\Users\Widgets;
 
 use App\Users\Store\AppStore;
 use Drift\Widget\Bind;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Row;
 use Drift\Widget\Spacer;
 use Drift\Widget\Text;
@@ -25,7 +26,7 @@ final class StatusBar
     /** 状态栏（读 `statusLine` 一格） */
     public static function make(AppStore $store): Widget
     {
-        return Bind::make(static fn(): Widget => Row::make()->children([
+        return Bind::make(static fn (BuildContext $ctx): Widget => Row::make()->children([
             Text::make($store->statusLine())->caption(),
             Spacer::make(),
         ]));

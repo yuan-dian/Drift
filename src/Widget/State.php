@@ -593,6 +593,6 @@ abstract class State
      */
     public function build(BuildContext $ctx): Widget
     {
-        return SizedBox::make()->size(0.0, 0.0);
+        return SizedBox::zero();
     }
 }

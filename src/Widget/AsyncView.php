@@ -125,7 +125,7 @@ final class AsyncView
             };
         }
 
-        return Bind::make(static function () use ($source, $idle, $loading, $data, $error): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($source, $idle, $loading, $data, $error): Widget {
             $raw = $source->get();
             if (!$raw instanceof AsyncValue) {
                 Errors::report(

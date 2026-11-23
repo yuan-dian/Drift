@@ -14,13 +14,8 @@ use Drift\Async\Future;
  *
  * `WatermarkStore` 的每个动作都有两半：`$host === null` 走同步（测试与解释器），
  * `$host !== null` 走后台（**真机唯一走的那一半**）。而此前所有测试都构造
- * `host = null` ⇒ 后台那半行代码**从没被执行过**。于是
- * `new DownloadResultsJob($urls)` 漏 `use` 这种错，能一路活到用户点下载：
- *
- * ```text
- * 下载结果图失败：class 'App\Watermark\Store\DownloadResultsJob' is undefined
- * ```
- *
+ * `host = null` ⇒ 后台那半行代码**从没被执行过**。于是漏一个 `use` 的类名能
+ * 一路活到用户点按钮，`php -l` / smoke / phpunit / lint 四道闸门全绿。
  * ⇒ 这个替身让"后台那一半"在 phpunit 里可达：不碰网络、不跨进程，只回答
  * "你到底提交了哪个任务、参数是什么"。
  *

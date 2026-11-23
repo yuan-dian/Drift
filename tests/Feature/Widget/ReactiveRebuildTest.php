@@ -71,7 +71,7 @@ final class BindPageS extends State
 
         return Column::make()->children([
             Text::make('静态标题'),
-            Bind::make(function (): Widget {
+            Bind::make(function (BuildContext $ctx): Widget {
                 $this->bindBuilds++;
 
                 return Text::make('b=' . $this->count->get());
@@ -105,7 +105,7 @@ final class BranchPageS extends State
 
     public function build(BuildContext $ctx): Widget
     {
-        return Bind::make(function (): Widget {
+        return Bind::make(function (BuildContext $ctx): Widget {
             $this->bindBuilds++;
 
             return Text::make($this->flag->get() ? 'L' . $this->left->get() : 'R' . $this->right->get());

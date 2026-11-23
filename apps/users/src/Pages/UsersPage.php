@@ -67,7 +67,7 @@ final class UsersPage extends StatelessWidget
 
                     Row::make()->spacing(8)->children([
                         // ── 搜索框：读 `query` 格 ⇒ 只这一段跟着输入重建 ──
-                        Bind::make(static fn(): Widget => TextField::make()
+                        Bind::make(static fn (BuildContext $ctx): Widget => TextField::make()
                             ->value($store->query())
                             ->label('搜索')
                             ->placeholder('输入姓名')
@@ -76,7 +76,7 @@ final class UsersPage extends StatelessWidget
                         // ★★ 「刷新」的可用态必须在订阅里读（2026-10-31 真机抓到的 bug）。
                         //   读的是命令：`isRunning()` 变化总是伴随一次 `emit()` ⇒
                         //   版本一定跟着动，不会漏帧。
-                        Bind::make(static function () use ($store): Widget {
+                        Bind::make(static function (BuildContext $ctx) use ($store): Widget {
                             $running = $store->page()->isRunning();
 
                             $items = [
@@ -108,7 +108,7 @@ final class UsersPage extends StatelessWidget
                             $store->page(),
                             // 行只在这一段里读：搜索词变 ⇒ 只重画列表，搜索框不动。
                             static fn(AsyncValue $v): Widget => Bind::make(
-                                static fn(): Widget => Each::make(
+                                static fn (BuildContext $ctx): Widget => Each::make(
                                     static fn(User $u): int => $u->id, // ★ key 必填（R4）
                                 )->items(
                                     $store->visible(),

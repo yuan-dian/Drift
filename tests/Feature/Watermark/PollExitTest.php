@@ -5,7 +5,6 @@ namespace Drift\Dev\Tests\Feature\Watermark;
 
 use App\Watermark\Api\Config;
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
@@ -92,7 +91,6 @@ final class PollExitTest extends TestCase
         self::assertStringContainsString('停止', $store->statusLine()->text);
         self::assertFalse($store->isPolling());
         self::assertTrue($store->canSubmit());
-        self::assertCount(0, $host->ofClass(DownloadResultsJob::class), '没拿到终态不该去下载');
     }
 
     /**
@@ -115,7 +113,6 @@ final class PollExitTest extends TestCase
             ],
             UploadBatchJob::class => ['keys' => ['k1']],
             AddTaskJob::class => ['taskId' => 'T-1'],
-            DownloadResultsJob::class => ['paths' => [], 'failed' => []],
         ];
         if ($pollAnswer !== null) {
             $answers[PollResultJob::class] = static fn(): array => $pollAnswer();

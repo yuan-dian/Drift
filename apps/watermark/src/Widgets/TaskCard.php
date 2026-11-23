@@ -57,7 +57,7 @@ final class TaskCard extends StatelessWidget
 
         return Column::make()->spacing(6)->cross(FlexAlign::Stretch)->children([
             Text::make('时间')->size(13.0),
-            Bind::make(static fn (): Widget => TextField::make()
+            Bind::make(static fn (BuildContext $ctx): Widget => TextField::make()
                 ->value($store->time())
                 ->placeholder('例如：2024-01-01 12:00:00')
                 ->onChanged(static function (string $next) use ($store): void {
@@ -72,7 +72,7 @@ final class TaskCard extends StatelessWidget
 
         return Column::make()->spacing(6)->cross(FlexAlign::Stretch)->children([
             Text::make('地址')->size(13.0),
-            Bind::make(static fn (): Widget => TextField::make()
+            Bind::make(static fn (BuildContext $ctx): Widget => TextField::make()
                 ->value($store->address())
                 ->placeholder('例如：北京市朝阳区')
                 ->onChanged(static function (string $next) use ($store): void {
@@ -87,7 +87,7 @@ final class TaskCard extends StatelessWidget
 
         return Column::make()->spacing(6)->cross(FlexAlign::Stretch)->children([
             Text::make('图片尺寸')->size(13.0),
-            Bind::make(static fn (): Widget => Row::make()->children([
+            Bind::make(static fn (BuildContext $ctx): Widget => Row::make()->children([
                 Select::make(['2K' => '2K', '4K' => '4K'])
                     ->value($store->imageSize())
                     ->triggerWidth(140.0)
@@ -113,7 +113,7 @@ final class TaskCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static function () use ($store): Widget {
+        return Bind::make(static function (BuildContext $ctx) use ($store): Widget {
             $blocker = $store->submitBlocker();
 
             // ★ 提交中给一个转圈：只禁用按钮的话，用户看到的是"按钮变灰了"
@@ -149,6 +149,6 @@ final class TaskCard extends StatelessWidget
     {
         $store = $this->store;
 
-        return Bind::make(static fn (): Widget => MessageLine::make($store->taskMessage()));
+        return Bind::make(static fn (BuildContext $ctx): Widget => MessageLine::make($store->taskMessage()));
     }
 }

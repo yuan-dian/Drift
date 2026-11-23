@@ -79,6 +79,7 @@ final class Linter
             // 同类病，另外三处语境（2026-11-02 真事故）：`new` / `::` / `catch (X $e)`
             //   ★ 事故：`WatermarkStore` 漏 `use DownloadResultsJob` ⇒ 真机点下载报
             //     `class 'App\Watermark\Store\DownloadResultsJob' is undefined`。
+            //     （该类已随下载职责迁到 `Image` 而删除，事故形态与现存任何 Job 相同。）
             //     四道闸门全绿的原因：该分支只在 `$host !== null`（真机）可达，
             //     smoke / phpunit 全走 `$host === null` 的同步降级路径。
             new ClassMissingUse(),
@@ -125,7 +126,8 @@ final class Linter
             //   在 AOT 嵌套函数里拦不住越界 ⇒ 作用域必须显式传参，静态可判。
             new AwaitScope(),
             // 进度断链（§68）：Job 报了 JobProgress 却没人订，界面静默退化成转圈。
-            //   ★ 真事故：DownloadResultsJob 每张图报进度，await 漏第二参 ⇒ 无报错、
+            //   ★ 真事故：DownloadResultsJob 每张图报进度（该类已删除，现由
+            //     `UploadBatchJob` 同构承担），await 漏第二参 ⇒ 无报错、
             //     落地结果也对，只有「下载阶段没有进度条」这一个可见症状。
             new AwaitProgress(),
             // 取消守卫顺序（§68）：宽 catch 吞掉 AsyncCancelled 后循环会多跑一轮，

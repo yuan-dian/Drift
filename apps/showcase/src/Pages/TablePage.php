@@ -248,7 +248,7 @@ final class TablePage extends ShowcasePage
      */
     private function selectionBar(): Widget
     {
-        return Bind::make(fn(): Widget => $this->selectionReadout());
+        return Bind::make(fn (BuildContext $ctx): Widget => $this->selectionReadout());
     }
 
     /**

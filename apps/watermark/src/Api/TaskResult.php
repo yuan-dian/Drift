@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Watermark\Api;
 
 use Drift\App\Wire;
+use Drift\Rendering\StatusTone;
 
 /**
  * 一次任务查询的结果（`/task/getResult` 的 `data`）。
@@ -153,6 +154,28 @@ final class TaskResult
 
         // ★ 未知状态把原始码带上：用户截图给运维时这是唯一线索
         return '未知状态 ' . (string) $status;
+    }
+
+    /**
+     * 业务状态 → 语义档（界面据此取主题色）。
+     *
+     * ★ 与 `StatusMessage::tone()` 同一层职责：**业务语义住在值对象上**，视图只负责
+     *   把档位翻成当前主题的颜色。放在 `ResultCard` 里会让"什么算成功"多一份判据。
+     * ★ 未知状态（含 `-1`）落 `Idle`：颜色不对可以查，静默崩掉不行。
+     */
+    public function statusTone(): StatusTone
+    {
+        if ($this->isSuccess()) {
+            return StatusTone::Success;
+        }
+        if ($this->isPending()) {
+            return StatusTone::Info;
+        }
+        if ($this->status === self::STATUS_FAILED) {
+            return StatusTone::Error;
+        }
+
+        return StatusTone::Idle;
     }
 
     /**

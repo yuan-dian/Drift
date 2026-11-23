@@ -5,7 +5,6 @@ namespace Drift\Dev\Tests\Feature\Watermark;
 
 use App\Watermark\Api\Config;
 use App\Watermark\Jobs\AddTaskJob;
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Jobs\PollResultJob;
 use App\Watermark\Jobs\UploadBatchJob;
@@ -37,7 +36,7 @@ use PHPUnit\Framework\TestCase;
  * | 用例 | 钉住的不变式 | 坏了的现象 |
  * |---|---|---|
  * | ① 未完 ⇒ 按固定间隔排下一拍 | 间隔就是 `Config::POLL_INTERVAL_MS` | 改一处常量、另一处写死 ⇒ 快慢两套节奏 |
- * | ② 终结 ⇒ **不再排** + 只下载一次 | 轮询会自己停 | 停不下来：每 10s 查一次到天荒地老 |
+ * | ② 终结 ⇒ **不再排**也不再提交任务 | 轮询会自己停 | 停不下来：每 10s 查一次到天荒地老 |
  * | ③ 手动停 ⇒ 已排的那一拍作废 | 取消是幂等的 | 点了"停止"之后还在查（且不报错） |
  * | ④ 没有 scheduler ⇒ 只查一次 | 测试/解释器里没有"自己转起来的定时器" | 单测里凭空起一个定时器，时序全乱 |
  *
@@ -80,20 +79,21 @@ final class PollRhythmTest extends TestCase
     }
 
     #[Test]
-    public function 终结的查询不再排期且只触发一次下载(): void
+    public function 终结的查询不再排期也不再提交任务(): void
     {
         [$store, $host, $timers] = $this->running(pending: 1);
 
         // 第 1 次（建任务后立刻查）仍是 pending ⇒ 排了 1 拍；跑它 ⇒ 第 2 次是终态
         self::assertSame(1, $timers->count());
+        $before = \count($host->submitted);
         $timers->run(0);
 
         self::assertFalse($store->isPolling(), '终态之后还在轮询 ⇒ 每 10 秒空转一次，永远停不下来');
         self::assertSame(1, $timers->count(), '终态之后**不许**再排下一拍');
         self::assertTrue($store->lastResult()?->isSuccess() ?? false);
 
-        // 终态后不排期也不再提交任务：结果图由 Image 控件自己加载。
-        self::assertSame([], $host->ofClass(DownloadResultsJob::class), '结果图该由 Image 控件自治，不是 Store 批量下载');
+        // 终态后不再提交任务：结果图由 `Image` 控件自己加载；那一拍查询本身算一个。
+        self::assertCount($before + 1, $host->submitted, '终态之后除了那一次查询，不该再提交任务');
     }
 
     #[Test]
@@ -187,10 +187,6 @@ final class PollRhythmTest extends TestCase
                     'downloadUrls' => ['https://oss.example.com/r/1.png'],
                 ];
             },
-            DownloadResultsJob::class => [
-                'paths' => ['https://oss.example.com/r/1.png' => '/tmp/drift-r1.png'],
-                'failed' => [],
-            ],
         ]);
 
         $file = (string) \tempnam(\sys_get_temp_dir(), 'drift-wm-');

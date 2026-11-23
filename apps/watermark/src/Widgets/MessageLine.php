@@ -34,7 +34,7 @@ final class MessageLine extends StatelessWidget
     public function build(BuildContext $ctx): Widget
     {
         if (!$this->message->isVisible()) {
-            return SizedBox::make()->size(0.0, 0.0);
+            return SizedBox::zero();
         }
 
         return Row::make()

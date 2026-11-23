@@ -27,7 +27,7 @@ use Drift\Core\Tracker;
  *     public function build(BuildContext $ctx): Widget
  *     {
  *         return Column::make()->children([
- *             Bind::make(fn(): Widget => Text::make('计数 ' . $this->count->get())),
+ *             Bind::make(fn (BuildContext $ctx): Widget => Text::make('计数 ' . $this->count->get())),
  *             Button::make('+1')->onPressed(fn() => $this->count->update(
  *                 static fn(int $n): int => $n + 1,
  *             )),

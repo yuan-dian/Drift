@@ -11,7 +11,7 @@ use Drift\Text\TextRole;
  * 内容来自 `Readable` 的文本：**读点就在自己这一层**，不需要包一层 builder 闭包。
  *
  * ```php
- * Text::of($this->count, '计数 ')->body()      // 取代 Bind::make(fn() => Text::make(...))
+ * Text::of($this->count, '计数 ')->body()      // 取代 Bind::make(fn (BuildContext $ctx) => Text::make(...))
  * ```
  *
  * ★ 它是 `Bind` 的专用形态，不是第二个机制：依赖采集与订阅仍在 `State` /

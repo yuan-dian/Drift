@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Watermark;
 
-use App\Watermark\Jobs\DownloadResultsJob;
 use App\Watermark\Jobs\FetchSignJob;
 use App\Watermark\Store\WatermarkStore;
 use Drift\Async\Future;
@@ -19,7 +18,7 @@ use PHPUnit\Framework\TestCase;
  * |---|---|
  * | ① 提交按钮的可用态 == 守卫 | 上传中 / 轮询中按钮亮着，点下去才被告知"还有一步没做完" |
  * | ② 忙时加文件被拒 | 界面显示 3 张、任务里只有 1 张，**没有任何报错** |
- * | ③ 结果终结后流水线收工 | 拿到终态还挂着"在忙"，且多提交一条批量下载 |
+ * | ③ 结果终结后流水线收工 | 拿到终态还挂着"在忙"，且多提交一条任务 |
  * | ④ 预热不占"在忙"位 | 首屏那一两秒里用户点了「上传」毫无反应 |
  *
  * ★ 用 `DeferredHost`（每任务回 `Future::pending()`，逐趟手动交付）：这些判据
@@ -106,7 +105,7 @@ final class BusyGateTest extends TestCase
         // 结果图下载已归 Image 控件自治：Store 拿到终态就收工，不再提交第五条任务。
         self::assertFalse($store->isBusy(), '终态后阶段没归位 ⇒ 按钮永远挂着');
         self::assertFalse($store->canStop());
-        self::assertSame(0, $host->countOf(DownloadResultsJob::class), '结果图不该再走批量下载');
+        self::assertCount(4, $host->queue, '终态后不该再提交任务（结果图由 Image 自治）');
         self::assertTrue($store->canUpload(), '终态后应该回到可操作态');
     }
 
