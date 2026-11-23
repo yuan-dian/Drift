@@ -1277,7 +1277,7 @@ $routeAnchors = [
     [$reducerStatePhp, '$this->view->apply($effect, $this->dispatch)', '壳没执行 effect —— 通知永远不会弹'],
     // 样板页：导航注解在 Page 上 + 动作回调回主路
     [$snackbarPagePhp, "#[Route(id: 'snackbar'", '样板页 Page 没标导航注解'],
-    [$snackbarPagePhp, 'new SnackbarReducer(new SnackbarServices($this->caps))', 'Page 没把能力束投影成服务'],
+    [$snackbarPagePhp, 'new SnackbarReducer(new SnackbarServices($this->env))', 'Page 没把环境门面投影成服务'],
     [$snackbarReducerPhp, 'return match ($event->intent) {', 'update 不再是穷尽分派'],
     [$snackbarReducerPhp, 'fn () => $dispatch(new SnackbarEvent(SnackbarIntent::UndoClicked))', '动作回调没回主路 —— 计数会卡住'],
     // 应用侧：一页一行清单 + 导航从描述符派生（不手写 PAGES）
