@@ -124,7 +124,7 @@ final class ComboBoxApplication extends Application
     /** 当前焦点 Element（`$focus` 是 protected） */
     public function focusedElement(): ?Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 
     /** 面板里的候选按钮（按视觉顺序；"无匹配项"那行是 `Text`，不在其中） */

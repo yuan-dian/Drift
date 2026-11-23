@@ -38,7 +38,7 @@ final class ScrollApplication extends Application
     /** 夹具用：找出树里的滚动盒（断言偏移有没有进子盒 offset —— 坐标链判据） */
     public function scrollBox(): ?RenderScrollView
     {
-        return $this->root === null ? null : $this->findBox($this->root);
+        return $this->root() === null ? null : $this->findBox($this->root());
     }
 
     private function findBox(Element $element): ?RenderScrollView

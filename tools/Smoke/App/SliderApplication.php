@@ -57,6 +57,6 @@ final class SliderApplication extends Application
     /** 当前焦点 Element（`$focus` 是 protected） */
     public function focusedElement(): ?Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 }

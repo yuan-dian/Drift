@@ -65,13 +65,13 @@ final class LazyApplication extends Application
     /** 夹具用：树里的滚动盒（断言窗的起点有没有进子盒 offset） */
     public function scrollBox(): ?RenderScrollView
     {
-        return $this->root === null ? null : $this->findBox($this->root);
+        return $this->root() === null ? null : $this->findBox($this->root());
     }
 
     /** 夹具用：列表的 State（断言偏移真的被滚轮改了） */
     public function lazyState(): ?LazyListState
     {
-        return $this->root === null ? null : $this->findState($this->root);
+        return $this->root() === null ? null : $this->findState($this->root());
     }
 
     private function findBox(Element $element): ?RenderScrollView

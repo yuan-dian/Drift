@@ -53,7 +53,7 @@ final class ThemeApplication extends Application
     /** 夹具用：拿到根 Element（断言 context 有没有被换掉） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

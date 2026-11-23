@@ -204,7 +204,8 @@ final class CommandGateTest extends TestCase
     public function testProductionWiring(): void
     {
         $root = dirname(__DIR__, 3);
-        $application = (string) file_get_contents($root . '/src/App/Application.php');
+        // 门控接线住每窗口运行时（`AppShell`）；`Application` 只是转发门面。
+        $application = (string) file_get_contents($root . '/src/App/AppShell.php');
         $router = (string) file_get_contents($root . '/src/Commands/CommandRouter.php');
 
         $enabled = strpos($application, '$this->router->enabled($name, $arg)');

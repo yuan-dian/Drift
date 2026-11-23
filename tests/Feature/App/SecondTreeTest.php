@@ -85,7 +85,8 @@ final class SecondTreeTest extends SmokeTestCase
 
     public function testOverlayWalkHasASingleExitPoint(): void
     {
-        $source = (string) \file_get_contents(repoRoot() . '/src/App/Application.php');
+        // 运行时住 `AppShell`；`OverlayLayout` 另有自己的遍历（布局要看每层尺寸），不算出口。
+        $source = (string) \file_get_contents(repoRoot() . '/src/App/AppShell.php');
 
         // ★ 只数"遍历浮层条目"这一种写法。`Frame::run()` 的两处参数是**条目本身**
         //   （绘制要看 barrier / scrim / ancestor），不是"每棵树都要走"，不该算进来。

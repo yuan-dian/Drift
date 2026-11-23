@@ -37,6 +37,7 @@ require_once __DIR__ . '/../../tools/fakes/win32.php';
 require_once __DIR__ . '/../../tools/fakes/skia.php';
 
 use Drift\App\Application;
+use Drift\App\AppShell;
 use Drift\App\Frame;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Computed;
@@ -245,12 +246,13 @@ $cases = [
     // 必须 Fatal —— 静默放行等于给数据竞争留缝，而那类 bug 只在压力下偶发。
     //
     // ★ 解释器面的 `drift_thread_id()` 是固定值（`tools/autoload.php` 的替身），
-    //   造不出第二个真线程 ⇒ 用反射把 `uiThreadId` 改成一个"别的线程"，等价于
-    //   "当前线程不是 UI 线程"。
+    //   造不出第二个真线程 ⇒ 用反射把壳上的 `uiThreadId` 改成一个"别的线程"，
+    //   等价于"当前线程不是 UI 线程"。
     'ui-thread-mismatch' => static function (): void {
         $app = new ScrollApplication();
-        (new \ReflectionProperty(Application::class, 'uiThreadId'))
-            ->setValue($app, \drift_thread_id() + 1);
+        $shell = (new \ReflectionProperty(Application::class, 'shell'))->getValue($app);
+        (new \ReflectionProperty(AppShell::class, 'uiThreadId'))
+            ->setValue($shell, \drift_thread_id() + 1);
         $app->assertUiThread('fatal-case');
         echo "no-fatal\n";
         exit(0);

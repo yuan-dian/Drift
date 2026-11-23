@@ -64,6 +64,12 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 焦点是一个受控例外：控件请求焦点走 `Element::requestFocus()` 到 `Pipeline::focusHost()` 注册的回调槽，这是框架内部通道，不是给控件开访问 App 层的口子。
 
+## 每窗口运行时
+
+`Application` 是应用声明与兼容门面：应用只覆写 `buildRoot()` / `title()` / `commands()` / 生命周期钩子。每窗口的根树、帧循环、焦点链、输入路由与浮层栈住 `AppShell`；它实现 `TextEditingHost` / `InputHost` / `OverlayHost` / `PumpHostHost` / `FocusHost`，应用代码不直接引用。
+
+`AppContext` 只收本窗服务：主题、度量、端口、异步提交。它不暴露 `frame()` / `attach()` / 输入与浮层入口，避免“能力门面”再次长成第二个组合根。`Application` 的原有 public 方法保留一行转发，所以应用、组合根与测试的调用方式不变。
+
 ## 依赖方向 Core < Widget < App
 
 - Widget 不依赖 App；`BuildContext` 是 `final readonly` 的环境快照，承载宽高、主题、字体度量与颜色 token，**没有 `of()` 式向上查找**。

@@ -23,7 +23,7 @@ final class TfApplication extends Application
     /** 夹具用：拿到根 Element（坐标链断言要直接走盒，不经 Application） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

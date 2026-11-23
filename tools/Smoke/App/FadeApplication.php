@@ -44,7 +44,7 @@ final class FadeApplication extends Application
     /** @internal 夹具读根元素（`Application::$root` 是 protected） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 }
 

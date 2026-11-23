@@ -51,7 +51,7 @@ final class NavApplication extends Application
     /** 挂载后的根 Element（指针夹具据此取控件盒坐标） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

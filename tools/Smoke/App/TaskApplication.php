@@ -48,7 +48,7 @@ final class TaskApplication extends Application
     /** 夹具用：拿 watcher 的 State（读 `builds` / `seen`） */
     public function watcherState(): ?TaskWatcherState
     {
-        $state = $this->root?->childAt(0)?->state();
+        $state = $this->root()?->childAt(0)?->state();
 
         return $state instanceof TaskWatcherState ? $state : null;
     }

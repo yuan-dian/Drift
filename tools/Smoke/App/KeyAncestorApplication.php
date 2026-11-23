@@ -48,7 +48,7 @@ final class KeyAncestorApplication extends Application
     /** 第一个 `TextField` 的 Element（点它拿焦点） */
     public function fieldElement(): ?Element
     {
-        return self::findField($this->root);
+        return self::findField($this->root());
     }
 
     /**

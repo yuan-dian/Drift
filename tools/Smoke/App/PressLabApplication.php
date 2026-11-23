@@ -67,7 +67,7 @@ final class PressLabApplication extends Application
      */
     public function focusedElement(): ?Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 
     public function buildRoot(): Widget

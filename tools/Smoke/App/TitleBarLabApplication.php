@@ -75,6 +75,6 @@ final class TitleBarLabApplication extends Application
     /** 当前焦点 Element（`$focus` 是 protected ⇒ 夹具开一个只读口子） */
     public function focusedElement(): ?Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 }

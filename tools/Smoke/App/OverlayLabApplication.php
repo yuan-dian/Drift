@@ -144,18 +144,18 @@ final class OverlayLabApplication extends Application
     public function focusForTest(?\Drift\Widget\Element $element): void
     {
         if ($element !== null) {
-            $this->focus?->focus($element);
+            $this->focus()?->focus($element);
         }
     }
 
     public function focusedForTest(): ?\Drift\Widget\Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 
     /** @return list<\Drift\Widget\Element> */
     public function focusOrderForTest(): array
     {
-        return $this->focus?->order() ?? [];
+        return $this->focus()?->order() ?? [];
     }
 }

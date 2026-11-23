@@ -68,7 +68,7 @@ final class EditApplication extends Application
     /** 夹具用：坐标断言要直接走盒（与 `TfApplication` 同一形态） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 }
 

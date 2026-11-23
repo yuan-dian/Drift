@@ -30,7 +30,7 @@ final class AccelApplication extends Application
     /** 夹具用：断言要读字段的选区状态（同 `TfApplication` 形态） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

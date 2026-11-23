@@ -43,6 +43,6 @@ final class WordSelectApplication extends Application
     /** 夹具用：坐标与盒断言要直接走树（与 `EditApplication` 同一形态） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 }

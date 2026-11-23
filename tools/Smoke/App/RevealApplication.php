@@ -48,19 +48,19 @@ final class RevealApplication extends Application
     /** 夹具用：树里的滚动盒（断言 `revealDelta()` 的几何基准） */
     public function scrollBox(): ?RenderScrollView
     {
-        return $this->root === null ? null : $this->findBox($this->root);
+        return $this->root() === null ? null : $this->findBox($this->root());
     }
 
     /** 夹具用：滚动偏移的持有者（断言 Tab 之后偏移真的变了） */
     public function scrollState(): ?ScrollViewState
     {
-        return $this->root === null ? null : $this->findState($this->root);
+        return $this->root() === null ? null : $this->findState($this->root());
     }
 
     /** 夹具用：当前焦点按钮的标签（断言 Tab 真的走到了预期那一行） */
     public function focusedLabel(): ?string
     {
-        $widget = $this->focus?->focused()?->widget();
+        $widget = $this->focus()?->focused()?->widget();
 
         return $widget instanceof Button ? $widget->label() : null;
     }

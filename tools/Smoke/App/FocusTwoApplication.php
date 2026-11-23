@@ -37,7 +37,7 @@ final class FocusTwoApplication extends Application
     /** 夹具用：当前焦点按钮的标签（断言 Tab 真的把焦点移走了） */
     public function focusedLabel(): ?string
     {
-        $widget = $this->focus?->focused()?->widget();
+        $widget = $this->focus()?->focused()?->widget();
 
         return $widget instanceof Button ? $widget->label() : null;
     }

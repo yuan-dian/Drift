@@ -113,8 +113,8 @@ final class ScrollKeyApplication extends Application
     {
         $found = [];
         $seen = [];
-        if ($this->root !== null) {
-            $this->collectBoxes($this->root, $found, $seen);
+        if ($this->root() !== null) {
+            $this->collectBoxes($this->root(), $found, $seen);
         }
 
         return $found;

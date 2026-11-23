@@ -28,7 +28,7 @@ final class SemValueApplication extends Application
     /** 夹具用：拿到根 Element（语义树要直接建在它上面） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

@@ -31,7 +31,7 @@ final class SegmentedApplication extends Application
     /** @internal 夹具用：拿根 Element（盒级断言不走 Application） */
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget

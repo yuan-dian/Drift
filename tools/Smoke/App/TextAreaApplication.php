@@ -40,13 +40,13 @@ final class TextAreaApplication extends Application
     /** 夹具用：树里的多行输入盒 */
     public function areaBox(): ?RenderTextArea
     {
-        return $this->root === null ? null : $this->findBox($this->root);
+        return $this->root() === null ? null : $this->findBox($this->root());
     }
 
     /** 夹具用：多行输入的 State（读选区 / 偏移用） */
     public function areaState(): ?TextAreaState
     {
-        $state = $this->root === null ? null : $this->findState($this->root);
+        $state = $this->root() === null ? null : $this->findState($this->root());
 
         return $state instanceof TextAreaState ? $state : null;
     }

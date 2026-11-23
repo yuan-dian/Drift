@@ -144,7 +144,7 @@ final class SelectApplication extends Application
     /** 当前焦点 Element（`$focus` 是 protected） */
     public function focusedElement(): ?Element
     {
-        return $this->focus?->focused();
+        return $this->focus()?->focused();
     }
 
     /** 浮层面板里的全部选项按钮（按视觉顺序） */

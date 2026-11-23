@@ -111,7 +111,7 @@ final class ScopeThemeApplication extends Application
 
     public function rootElement(): ?Element
     {
-        return $this->root;
+        return $this->root();
     }
 
     public function buildRoot(): Widget
