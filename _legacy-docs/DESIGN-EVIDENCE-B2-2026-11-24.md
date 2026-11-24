@@ -132,11 +132,13 @@
 
 ```json
 {"protocol":1,"sessions":[
-  {"id":"9f2c…","pid":12345,"port":51234,"token":"a71e…","target":"table","state":"running","startedAt":"…"}
+  {"id":"9f2c…","pid":12345,"port":51234,"token":"a71e…","target":"table","startedAt":"…"}
 ]}
 ```
 
 **是数组，即使现在只有一个会话。** S2 的多窗口会让同一进程有多个窗口，那时「一个文件一个对象」必须变成「一个文件一个数组」——而格式变更的代价不在改代码，在「老版本写的文件新版本读不了」这类兼容尾巴。现在写成数组多花五分钟，S2 时省一次迁移（§十二）。
+
+**文件里不放运行状态。** 活的 `state` / `reason` 只有 `state` 查询一个出口——写进文件就是两处真相，而文件那份必然滞后（只在启动与退出时写）。S2 多窗口时更糟：要么每次状态变化都重写文件（多进程并发写同一个文件，还得处理写坏），要么承认同名字段有两种时效（文件里是「启动时的快照」，查询里是「现在」）。后者是那种一年后没人敢删的坑。因此文件只回答一个问题：**怎么连上**。六个字段各就各位——`port` / `token` / `pid` / `id` 是连接所需（后两个用于诊断），`target` / `startedAt` 给人看。
 
 - **token 必须有**：loopback 端口在本机对任何进程可见，没有 token 等于把调试面开给全机器。Jupyter 与 Node inspector 都带这个；
 - **文件要能失效**：宿主退出时删除该条目（数组空了删文件）；观察者连不上时先看 `pid` 是否还活着，报「宿主已退出（pid 12345）」而不是「连接被拒绝」；
@@ -198,16 +200,29 @@ return ['frames' => $out, 'window' => $window, 'dropped' => $dropped, 'since' =>
 
 | # | 判据 | 防的是 |
 |---|---|---|
-| 1 | 三种 `--speed` 跑同一脚本，**结构指纹逐值相同** | 自走偷换时间源（墙钟混进 `t`） |
+| 1 | 三种 `--speed` 跑同一脚本，**帧时间序列与结构指纹都逐值相同** | 自走偷换时间源（墙钟混进 `t`） |
 | 2 | 同一会话：观察者查 `frames()` 得到的末帧 = `stats().lastFrame`（停机后），且两者都带同一个 `session` 令牌 | 观察者连到了另一个会话 |
 | 3 | 自走循环的帧耗时增幅 < 5%（对比从属模式同脚本） | 循环本身成了瓶颈，或者 `select` 用了阻塞超时 |
 | 4 | 第二个驱动者（`frame` 在非 `paused` 时）被拒，错误码是 `NOT_PAUSED` 而不是静默排队 | 两套时间线交错 |
 | 5 | 观察者落后到窗口外时，`frames(since)` 的 `dropped` 给出被裁掉的条数、`window` 给出当前窗口——**不返回空数组**（这两个键已经存在，见 §5.4(b) 的「别造同义词」） | 把「被裁掉」读成「那时没有」 |
-| 6 | 会话重启后：`session` 变化被观察者检出，视图清空并显示「已重启」，**不拼接帧号**；用旧会话的 `since` 去查新会话，报会话不符而不是算出一个 `dropped` | 两个会话被拼成一条连续时间线 |
+| 6 | 会话重启后：`session` 变化被观察者检出（`frames` 响应带令牌，`Cursor` 据此归零重取），视图清空并显示「已重启」，**不拼接帧号** | 两个会话被拼成一条连续时间线 |
 | 7 | 宿主退出后：观察者报「宿主已退出（pid=N）」，不是「连接被拒绝」 | 发现机制把最常见的失败说成最含糊的错误 |
-| 8 | 无 token 的连接在 `hello` 阶段被拒 | loopback 端口对全机器可见 |
+| 8 | 没有令牌或令牌不对的连接在 `open` 阶段被拒（`unauthorized`），而正确令牌能接上 | loopback 端口对全机器可见 |
 
-第 1 条是整套方案的立足点，也是最容易实现错的一条（`--speed` 想当然地写成「sleep 在 pump 前」就会把 `now()` 混进去）。第 3 条只能人工基准，不进 CI（它测机器）。
+第 1 条是整套方案的立足点，也是最容易实现错的一条（`--speed` 想当然地写成「sleep 在 pump 前」就会把 `now()` 混进去）。**它必须同时比时间序列，只比指纹是无效判据**：`Digest` 刻意不含时间（它就是为跨进程比对设计的），实测把 `now()` 当 `t` 时，三种速度的指纹一个字节都没变，只有 `t` 序列全变了 —— 只比指纹的那一版会恒绿，而它本该防的正是这件事。第 3 条只能人工基准，不进 CI（它测机器）。**首次实测**（2026-11-24，同一脚本 30 帧）：自走 `cost` 均值 0.046ms / 最大 0.364ms，从属 0.204ms / 2.253ms —— 自走没有让帧耗时变差。`cost` 只量 `pump()` 内部，调度方式进不到这个数里，这正是这条判据能成立的前提（循环在 `pump()` 外面加的活，不会体现成 `cost` 上升；所以它还配了判据 1）。
+
+### 两个令牌，不是同一个
+
+实现时发现这里必须先分清，混用会让两件事变成一件：
+
+| | 访问令牌 | 会话令牌 |
+|---|---|---|
+| 回答 | 这个进程的调试面开给谁 | 这是不是同一条时间线 |
+| 存放 | 发现文件 `.drift/session.json` | `state` 查询、`frames` 响应、`open` 回执 |
+| 何时变 | 宿主进程换一个变一次 | 每次 `open` 换一次 |
+| 用途 | `open` 时校验（`unauthorized`） | 写进 `Cursor`，判跨会话的游标 |
+
+合并成一个的话，"宿主重启"与"重新录制"就分不开了：读屏的人只想知道"我那个游标还算数吗"，而他不该因此被要求重新拿一次连接凭据。
 
 ## 八、DX
 
@@ -240,16 +255,20 @@ drift debug brief --attach --follow        # 跟着游标翻页
 
 本轮：
 
-1. `Protocol\Server` / `Protocol\Channel` 接口（`Channel implements Transport`，`Server::accept()`）。**接口进 `src/Debug/Protocol`，实现留 `tools/Debug`**——照 `Transport` / `StdioTransport` 的既有分层；S2 的 AOT 侧要能只依赖接口就接上（§十二）。
-2. `Host` 的循环里加一个**可选的 tick 回调**，不要另写一个「自走宿主」：`serve(callable $open, ?callable $tick = null)`。`tick` 为 `null` 时行为与本轮之前**逐字节一致**（现有 `--remote` 测试要照旧全绿）。自走逻辑住 `tools/debug-serve.php`，由它传 tick。S2 没有脚本，传 `null`，因此不用拆 `Host`。
-3. 会话发现文件 `.drift/session.json`：`{protocol, sessions: [{id, pid, port, token, target, state, startedAt}]}`，token 校验走 `open` 的 `params`（不新增 `hello` 方法，见 §十二）。
+1. `Protocol\Server` / `Protocol\Channel` 接口（`Channel implements Transport`，`Server::wait()` + `canPoll()`）。**`wait()` 而不是 `accept()`**：宿主真正要问的是「有没有新连接，或者老连接上有没有新消息」合起来那一件事 —— 拆成两个方法的话，循环里就得用一次 `select` 的语义去凑两次调用。**接口进 `src/Debug/Protocol`，实现留 `tools/Debug`**——照 `Transport` / `StdioTransport` 的既有分层；S2 的 AOT 侧要能只依赖接口就接上（§十二）。
+2. `Host` 的循环里加一个**可选的 tick 回调**，不要另写一个「自走宿主」：`serve(callable $open, ?callable $tick = null, ?Script $autoStart = null)`。`tick` 为 `null` 时行为与本轮之前**逐字节一致**（现有 `--remote` 测试要照旧全绿）。自走逻辑住 `tools/debug-serve.php`，由它传 tick。S2 没有脚本，传 `null`，因此不用拆 `Host`。
+   **第三参是落地时才发现的必需项**：自走宿主没有客户端来发 `open`，会话只能由自己先建起来；少了它，`tick` 永远等不到会话，自走会安静地不推进任何一帧（不是报错，是看起来在跑）。同一条也决定了「跑完之后不退进程」：判断条件是 `$autoStart === null`。
+3. 会话发现文件 `.drift/session.json`：`{protocol, sessions: [{id, pid, port, token, target, startedAt}]}`，token 校验走 `open` 的 `params`（不新增 `hello` 方法，见 §十二）。不放 `state`——活状态只有 `state` 查询一个出口（§5.3）。
 4. `open` 回执加 `session`（令牌）；`stats` 查询加 `lastFrame` 与 `{state, reason}`——**放查询面而不是回执**，因为 `open` 只发生一次，而状态一直在变。
 5. `Cursor` 值对象（住 `tools/Debug/`，消费者状态）。`frames(since)` 的 `dropped` / `window` **已经有了**，本轮只补「先比 `session` 再算 `dropped`」，不新增同义键。
-6. `drift debug serve` 子命令 + `--attach` 挂 `brief` 一个出口先试（其余出口下一轮）。
-7. `Source` 解析抽成一处（`Page` / `--from` / `--attach` / `--replay` 四选一），`brief` 与 `network` 里现在各有一份 `--from` 分支，加 `--attach` 就成三份（§十二）。
-8. 判据 1–8，其中 3 人工基准。
+6. `drift debug serve` 子命令 + `--attach` 挂 `brief` 一个出口先试（其余出口下一轮）。`serve` 跑完**不退进程**：它阻塞等人来查，退出的时机是「没有观察者了」——先退的话，下一个人看到的是「连接被拒绝」，而他什么都没做错。
+7. `Source` 解析抽成一处（`Page` / `--remote` / `--from` / `--attach` 四选一），`brief` 与 `network` 里现在各有一份 `--from` 分支，加 `--attach` 就成三份（§十二）。落地时它收的是**意图**（`from` / `attach` / `remote` / `drive` / `out`），**不是 argv**：argv 里各出口有自己的词（`--request` / `--speed`），收 argv 等于把出口词表也塞进共用层，那样它就不再是「来源选择」，而是「又一个参数解析器」。
+8. 判据 1–8，其中 3 人工基准、4 属 S6（本轮 `paused` 只是宿主自己的停机状态，客户端还发不了 `paused` 请求）。
+9. `Replay::advance()`：把「推一步」从 `apply()` 里抽出来。自走是「没消息时推一步」，`apply()` 是「一口气跑完」——两者的**动作**必须只有一份，否则 `--at` 的边界、步号报错、效果参数剥离会在两条路径上各漂一次。
 
 不做：`--watch` 自动重跑（S-live-b）；attach 真窗口（S2）；干预（高亮/暂停控制，S6——本轮的 `paused` 是宿主自己的停机状态，不是客户端发起的暂停）。
+
+**本轮留下的欠账**（不改，但记下来）：驱动词表（`--page` / `--frames` / `--rows` / `--click` / `--hold` …）在 `brief` / `network` / `serve` 三处各有一份解析，约 40 行 × 3。它们必须逐词一致（同一个 `--click=` 在三个出口里语义相同），却没有任何判据钉住这件事 —— 判据在形态上根本够不着（那是 CLI 参数解析，不是可断言的形状）。正确形态是抽一个 `DriveOptions`：只认驱动词，把不认识的留给出口（`--request` / `--speed` 是各自的话）。放到下一轮：它是纯搬迁、不改变任何行为，而现在改会让"哪一处坏"难定位 —— 本轮已经动了四个出口与协议层，再加两个 CLI 的解析段，红了分不清是谁。
 
 ## 十、放弃与代价
 
