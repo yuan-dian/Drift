@@ -75,7 +75,10 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 
 `hotspots` 只聚合 `kind=state` 的边。`parent` 与 `unknown` 只计数，不参与排序——一个状态写入会让整棵子树逐层产生 `parent` 边，把它们算进根因会让排名全是传播，不是原因。
 
-命令行用法见[命令速查](../reference/cli.md)里的 `composer debug`。
+命令行用法见[命令速查](../reference/cli.md)里的 `composer debug`。两条经验来自真页面跑出来的手感：
+
+- **目标是路由 id 时才能跑真实页面**（`--page=async-table`）。依赖页由组合根同款的页面工厂表装配，不必为了看一眼因果另写一个 `Application` 夹具。夹具类名照样可用，但它只覆盖无参构造的那几页。
+- **异步要看"数据落地那一帧"**：取数先挂住（`--rows=N`），再 `--resolve` 结算。结算发生在帧外，由下一帧的 settle 消费——这不是工具的将就，正是因果方向本身（写入在帧外，边归入消费它的那一帧）。
 
 ## 三种形态，一套查询
 
