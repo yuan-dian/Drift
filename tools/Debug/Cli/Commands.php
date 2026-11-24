@@ -92,6 +92,25 @@ final class Commands
         return OptionSet::for($command, self::extras()[$command] ?? []);
     }
 
+    /**
+     * 两级 `--help` 共用这一段：出口自己问、从 `drift debug <verb> --help` 问，
+     * 拿到的必须是同一串字节。参数表来自 schema，示例来自脚本文档块。
+     */
+    public static function helpFor(string $verb): string
+    {
+        $entry = Registry::get($verb);
+        $examples = Registry::examples($entry);
+
+        if (!$entry->driver) {
+            return $examples === null
+                ? "（{$entry->script} 的文档块里没有「用法：」段）\n"
+                : "用法：\n{$examples}\n";
+        }
+
+        return self::set($verb)->help()
+            . ($examples === null ? '' : "\n示例：\n{$examples}\n");
+    }
+
     /** @param list<string> $argv 含脚本名 */
     public static function parseOrExit(string $command, array $argv): Parsed
     {
@@ -102,7 +121,7 @@ final class Commands
         try {
             $parsed = self::set($command)->parse($argv);
             if ($parsed->bool('help')) {
-                \fwrite(\STDOUT, self::set($command)->help());
+                \fwrite(\STDOUT, self::helpFor($command));
                 exit(0);
             }
 

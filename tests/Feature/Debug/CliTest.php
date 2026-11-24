@@ -7,6 +7,7 @@ use Drift\Dev\Debug\Cli\CliError;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Cli\Opt;
 use Drift\Dev\Debug\Cli\OptionSet;
+use Drift\Dev\Debug\Cli\Registry;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -163,6 +164,126 @@ final class CliTest extends SmokeTestCase
             check("{$name} 真跑一次", $code === 0, \trim($err . $out));
         }
         $this->flushChecks();
+    }
+
+    public function testRegistryIsTheOnlyListOfDebugScripts(): void
+    {
+        $root = \dirname(__DIR__, 3);
+        $onDisk = [];
+        foreach (\glob($root . '/tools/debug-*.php') ?: [] as $file) {
+            $onDisk[] = \basename($file);
+        }
+        \sort($onDisk);
+        $registered = \array_map(static fn($e): string => $e->script, \array_values(Registry::all()));
+        \sort($registered);
+
+        check('注册表的出口 == 磁盘脚本', $onDisk === $registered, \implode(' ', \array_diff($onDisk, $registered)) . ' | ' . \implode(' ', \array_diff($registered, $onDisk)));
+        foreach (Registry::all() as $verb => $entry) {
+            check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
+        }
+        check('12 个出口', \count(Registry::all()) === 12, (string) \count(Registry::all()));
+        $this->flushChecks();
+    }
+
+    public function testBothHelpSurfacesAreViewsOfTheRegistry(): void
+    {
+        [$code, $top, $err] = $this->drift(['help']);
+        check('总帮助能跑', $code === 0, \trim($err . $top));
+        [$code, $verbs, $err] = $this->drift(['debug', '--help']);
+        check('debug --help 能跑', $code === 0, \trim($err . $verbs));
+
+        foreach (Registry::lines(8) as $line) {
+            check('总帮助含注册表行', \str_contains($top, $line . "\n"), \trim($line));
+        }
+        foreach (Registry::lines(2) as $line) {
+            check('动词表含注册表行', \str_contains($verbs, $line . "\n"), \trim($line));
+        }
+        \preg_match_all('/^  (\S+)\s{2,}/m', $verbs, $m);
+        check('动词表没多出未注册动词', $m[1] === \array_keys(Registry::all()), \implode(' ', $m[1]));
+        $this->flushChecks();
+    }
+
+    public function testTwoLevelsOfHelpAreByteIdentical(): void
+    {
+        foreach (Registry::all() as $verb => $entry) {
+            if (!$entry->driver) {
+                continue;
+            }
+            [$directCode, $direct] = $this->cli($verb, ['--help']);
+            [$driftCode, $via] = $this->drift(['debug', $verb, '--help']);
+            check("{$verb} 两级 help 逐字节相同", $directCode === 0 && $driftCode === 0 && $direct === $via);
+
+            $schemaHelp = Commands::set($verb)->help();
+            foreach (\explode("\n", $schemaHelp) as $line) {
+                if (\str_starts_with($line, '  --')) {
+                    $name = \trim(\explode(' ', $line)[0]);
+                    check("{$verb} 两级 help 都含 {$name}", \str_contains($direct, $name) && \str_contains($via, $name));
+                }
+            }
+        }
+        $this->flushChecks();
+    }
+
+    public function testExamplesNeverNameAnUndeclaredOption(): void
+    {
+        foreach (Registry::all() as $verb => $entry) {
+            if (!$entry->driver) {
+                continue;
+            }
+            $examples = Registry::examples($entry);
+            if ($examples === null) {
+                continue;
+            }
+            $schemaHelp = Commands::set($verb)->help();
+            \preg_match_all('/--([A-Za-z][A-Za-z0-9-]*)/', $examples, $m);
+            foreach ($m[1] as $name) {
+                check("{$verb} 示例里的 --{$name} 在 schema 里", \str_contains($schemaHelp, '--' . $name));
+            }
+        }
+        $this->flushChecks();
+    }
+
+    public function testDispatchUsesTheRegisteredScript(): void
+    {
+        [$code, $out, $err] = $this->drift(['debug', 'brief', '--page=table', '--frames=1', '--json']);
+        check('总入口分发到注册脚本', $code === 0 && \str_contains($out, 'digest'), \trim($err . $out));
+
+        [$code, $out, $err] = $this->drift(['debug', 'loop', '--page=table', '--runs=1', '--json']);
+        check('新出口 loop 已注册可分发', $code === 0 && \str_contains($out, 'consistent'), \trim($err . $out));
+
+        foreach (['ctl', 'host'] as $verb) {
+            $entry = Registry::get($verb);
+            check("{$verb} 是协议出口", !$entry->driver);
+            [$code, $out, $err] = $this->drift(['debug', $verb, '--help']);
+            check("{$verb} --help 有内容", $code === 0 && \trim($out) !== '', \trim($err . $out));
+        }
+
+        [$code, $out, $err] = $this->drift(['debug', 'nope']);
+        check('未知动词退出 2', $code === 2, \trim($err . $out));
+        check('未知动词列出可用清单', \str_contains($out, 'brief') && \str_contains($out, 'loop'));
+        $this->flushChecks();
+    }
+
+    /** @return array{int, string, string} */
+    private function drift(array $args): array
+    {
+        $root = \dirname(__DIR__, 3);
+        $proc = \proc_open(
+            \array_merge([\PHP_BINARY, $root . '/bin/drift'], $args),
+            [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+            $root,
+            null,
+            ['bypass_shell' => true],
+        );
+        self::assertIsResource($proc, 'bin/drift 起不来');
+        \fclose($pipes[0]);
+        $out = (string) \stream_get_contents($pipes[1]);
+        $err = (string) \stream_get_contents($pipes[2]);
+        \fclose($pipes[1]);
+        \fclose($pipes[2]);
+
+        return [\proc_close($proc), $out, $err];
     }
 
     /** @return array{int, string, string} */

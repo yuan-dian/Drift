@@ -32,6 +32,9 @@ declare(strict_types=1);
  */
 require dirname(__DIR__) . '/tools/autoload.php';
 
+use Drift\Dev\Debug\Cli\Commands;
+use Drift\Dev\Debug\Cli\Registry;
+
 $root = dirname(__DIR__);
 $args = array_slice($argv, 1);
 $name = $args[0] ?? 'help';
@@ -51,75 +54,39 @@ $verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
  * 只有"问什么"不同。平级子命令时这套词表要背八遍，且拼错一个只能靠
  * "未知参数"报错猜；收进一个动词后，`drift debug` 本身就是可发现的地方。
  *
- * `host` / `serve` / `ctl` 是个例外：前两个不开会话，第三个接别人的会话，
- * 所以它们不认驱动词表（`ctl` 认的是 `--session` / `--frames`）。
+ * `host` / `ctl` 不是驱动出口：前者是 stdio 进程，后者接别人的会话，
+ * 参数各归各（见各自文档块）。出口清单住 Registry，两处帮助都由它生成。
  *
  * 无 verb（或第一项是选项）时退化成 `report`：`drift debug --page=table` 这类
  * 既有写法继续工作 —— 收敛入口不该顺手把人的肌肉记忆废掉。
  */
 $debug = static function (array $rest, string $root): array {
-    $verbs = [
-        'brief' => ['debug-brief.php', '预算内的证据简报：哪里不对、为什么、下一步查哪'],
-        'report' => ['debug-report.php', '帧因果报告：哪些节点重建了、因为谁'],
-        'panel' => ['debug-panel.php', '同一个会话上反复追问：时间轴 + 因果树 + 原因'],
-        'network' => ['debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）'],
-        'node' => ['debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络'],
-        'pick' => ['debug-pick.php', '按视口坐标点选，给命中链与每层路径'],
-        'props' => ['debug-props.php', '按节点读 Widget / State 配置'],
-        'host' => ['debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）'],
-        'serve' => ['debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看'],
-        'ctl' => ['debug-ctl.php', '控制面：让自走的宿主停一下 / 走一步 / 接着跑'],
-        'web' => ['debug-web.php', '浏览器视图：同一份证据的第三个消费者（几何画布 + 发现）'],
-        'loop' => ['debug-loop.php', '重开 N 次：证明关掉这一页再打开是等价的'],
-    ];
+    $entries = Registry::all();
 
-    $list = static function (array $verbs): void {
+    $list = static function (): void {
         fwrite(STDOUT, "drift debug <verb> [options]\n\n");
-        foreach ($verbs as $name => [$script, $about]) {
-            fwrite(STDOUT, \sprintf("  %-8s %s\n", $name, $about));
+        foreach (Registry::lines(2) as $line) {
+            fwrite(STDOUT, $line . "\n");
         }
         fwrite(STDOUT, "\ndrift debug <verb> --help 看各自的用法；省略 <verb> 等同 report。\n");
-    };
-
-    /**
-     * 用法直接从脚本的文档块里取，不在这里另抄一份。
-     *
-     * 抄一份就会漂：加了参数忘了改这里，`--help` 就成了一份过期的说明书 ——
-     * 而"文档说支持、实际不支持"比没有 `--help` 更费时间。
-     */
-    $usage = static function (string $file): string {
-        $src = @\file_get_contents($file);
-        if ($src === false) {
-            return "（读不到脚本文件：{$file}）\n";
-        }
-        if (\preg_match('/\n \* (用法：(?:\n \* .*)*)/', $src, $m) !== 1) {
-            return "（这个脚本的文档块里没有「用法：」段）\n";
-        }
-
-        $out = [];
-        foreach (\explode("\n", \rtrim($m[1])) as $line) {
-            $out[] = (string) \preg_replace('/^ \* ?/', '', $line);
-        }
-
-        return \implode("\n", $out) . "\n\n完整参数见 " . \str_replace('\\', '/', $file) . "\n";
     };
 
     $verb = $rest[0] ?? '';
 
     if ($verb === 'help' || $verb === '--help' || $verb === '-h') {
-        $list($verbs);
+        $list();
         exit(0);
     }
 
-    if (isset($verbs[$verb])) {
-        $file = $root . '/tools/' . $verbs[$verb][0];
+    if (isset($entries[$verb])) {
+        $entry = $entries[$verb];
         $next = $rest[1] ?? '';
         if ($next === '--help' || $next === '-h') {
-            fwrite(STDOUT, $usage($file));
+            fwrite(STDOUT, Commands::helpFor($verb));
             exit(0);
         }
 
-        return [PHP_BINARY, $file, ...array_slice($rest, 1)];
+        return [PHP_BINARY, $entry->path(), ...array_slice($rest, 1)];
     }
 
     if ($verb === '' || \str_starts_with($verb, '-')) {
@@ -127,7 +94,7 @@ $debug = static function (array $rest, string $root): array {
     }
 
     // 拼错的 verb 落到这里：列出可用动词，而不是替人猜一个。
-    $list($verbs);
+    $list();
     exit(2);
 };
 
@@ -176,7 +143,7 @@ if ($cmd === null && $name !== 'help') {
 }
 
 if ($name === 'help' || $cmd === null) {
-    fwrite(STDOUT, <<<'TXT'
+    $help = <<<'TXT'
 drift —— 统一开发入口
 
   composer check           V2 日常验证（历史别名，等价于 composer verify）
@@ -194,17 +161,7 @@ drift —— 统一开发入口
   手工工具（按需调用，不进 V2 判据清单 / CI）
   composer preview -- --page=<Widget 的 php>   T0 无头 layout+paint → SVG/PNG
   composer debug -- <verb> …                  调试出口总入口（省略 <verb> 等同 report）
-        brief    预算内的证据简报：哪里不对、为什么、下一步查哪
-        report   帧因果报告：哪些节点重建了、因为谁（旧写法 `--page=…` 仍可用）
-        panel    同一个会话上反复追问：时间轴 + 因果树 + 原因
-        network  网络骨架与报文（按 requestId，脱敏 + 截断）
-        node     一个节点的三域对齐：因果 / 几何 / 网络
-        pick     按视口坐标点选，给命中链与每层路径
-        props    按节点读 Widget / State 配置
-        host     宿主进程（调试协议另一端，通常由 --remote 起）
-        serve    常驻宿主：自己推帧，另一个终端用 `brief --attach` 看
-        ctl      控制面：pause / resume / state（单步用 resume --frames=1）
-        web      浏览器视图：端口上开一个页面，画布按几何画盒、左边列发现
+__DRIFT_DEBUG_VERBS__
      旧名 composer panel / composer brief / composer debug-host 过渡期仍是别名
   composer codegen                            T1 tpc 翻译层门（秒级，不编译）
   composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价
@@ -224,7 +181,13 @@ MSVC + SDK + tpc，与 Python 无关。
 形态不能互相替代：dev 绿 ≠ AOT 绿；T2 的 DPI / WIC / UIA / 消息循环
 只能靠真机探针。分层见 docs/guides/testing.md。
 
-TXT);
+TXT;
+    // 动词清单只在注册表里写一次；总入口这份手册是它的视图，不再手抄。
+    fwrite(STDOUT, \str_replace(
+        '__DRIFT_DEBUG_VERBS__',
+        \implode("\n", Registry::lines(8)),
+        $help,
+    ));
     exit($exitOnHelp);
 }
 
