@@ -168,8 +168,7 @@ Web 端的纪律只有一条：**它不知道自己看的是什么**。
 | `GET /app.js` · `/style.css` | 静态（限定 `web/` 目录） |
 | `GET /api/brief` | `{label, window, digest, thresholds, findings[], omitted}` —— 与 `brief --json` 同一份 |
 | `GET /api/frames?since=N&limit=M` | `frames` 查询原样 + `session` |
-| `GET /api/boxes?frame=N` | `boxes` 查询原样 |
-| `GET /api/tree?frame=N&node=K` | `tree` 查询原样 + `hit` |
+| `GET /api/boxes?frame=N` | `boxes` 查询原样（含 `rect` 绝对矩形）；结构树由每行的 `parent` 给出 |
 | `GET /api/node?node=K&frame=N` | `boxModel` + `props` 合并（选中节点的事实卡） |
 | `POST /api/ctl` | 透传 `pause` / `resume`（只对自走宿主有效，从属宿主回 `not_applicable`） |
 
@@ -204,8 +203,8 @@ Web 端的纪律只有一条：**它不知道自己看的是什么**。
 | 2 | `Brief::project()` 的返回**不含** `lines` / `width` / `budget` 键 | 排版漏回投影 |
 | 3 | `--slow=5` 时 `/api/brief` 的 `thresholds.slowMs === 5` | 阈值写死在页面里 |
 | 4 | `--budget=5` 时 `omitted.findings > 0`；`--budget=300` 时 `omitted.findings === 0` 且 findings 条数等于全量 | 裁剪账不报 / 裁了还报没裁 |
-| 5 | `/api/node?node=K` 的 `node` 等于 `K`，且该节点在 `/api/tree` 里唯一命中 | 忽略 node 参数 |
-| 6 | `/api/boxes?frame=N` 每行的 `node` 都能在 `/api/tree?frame=N` 找到 | 画布上出现树里没有的盒子 |
+| 5 | `/api/node?node=K` 的 `node` 等于 `K`，且 `boxModel.node` 也是 `K` | 忽略 node 参数 |
+| 6 | `boxes` 每行的 `parent` 要么 ≤0 要么在同一帧的 rows 里；每行有 `rect`；子盒不跑出父盒 | 父链断了 / 坐标累加漏了父的 padding |
 | 7 | 请求头 > 8 KB 或路径含 `..` 时连接被关，服务仍存活 | HTTP 解析不设限 |
 | 8 | `HttpServer` 默认绑定 `127.0.0.1`（非 `0.0.0.0`） | 默认对局域网开放 |
 
@@ -238,3 +237,48 @@ Web 端的纪律只有一条：**它不知道自己看的是什么**。
 - `detail()` 的文本投影仍与 `findings` 同层（只是搬了房间）。真正的结构化要等"Web 明细有
   明确需求"再做，现在做是给假需求付成本。
 - 判据 3 只能钉"阈值是数据"，钉不住"页面没写死"。这一条靠审查，文档里明说。
+
+## 十二、落地时订正的三处
+
+### 12.1 查询面没有 `tree`
+
+§8.2 原写 `GET /api/tree?frame=N&node=K`。落地时发现没有这个查询：有 `cascade`
+（深度被 `maxDepth` 截断，且它的 `children` 表达的是**重建因果**不是布局父子）与
+`boxes`（每行带 `parent`）。
+
+树改由 `boxes` 的 `parent` 给出。理由不是"省一个查询"，是**它必须与画布严格对应**：
+画布画的是 `boxes`，若树来自 `cascade`，两个面板会在被截断的层上错开——用户点树上的
+一行，画布上找不到那个盒。几何树天然是自洽的（判据 6 钉住父链闭合）。
+
+### 12.2 右侧面板从"结构树"改成"面包屑 + 直接子节点"
+
+一帧 358 个盒（表格页），整棵树摊进 DOM 既慢又读不了。DevTools 的 Elements 面板也是
+懒展开，理由相同：**树的价值在定位，不在总览**。
+
+改成：点画布上的盒 → 面包屑（根到自己）+ 直接子盒（超过 40 个自报"还有 N 个"）+
+事实卡（几何四层 + 约束 + 属性）。这与"按 id 跳到节点"是同一件事的两个方向：
+发现里的 `node:341` 能跳过来，画布上点一下也能。
+
+### 12.3 `boxes()` 少了 `offset` 与 `pad`
+
+§9 判据 6 预设"每行能画出矩形"。实际 `boxes()` 的行只有 `node / parent / type /
+applied / inner / size / box` —— **没有位置**。
+
+这不是采缺失：`GeometryRecord` 从 S3a 起就存着 `offset` 与 `pad`，是**投影没给出来**。
+B4 §1 说"S5 不需要新采集"，在采集层成立，在投影层不成立——消费者一来就暴露了缺口。
+这正是这一期该暴露的东西，而它只有真去画的时候才会显形（读 JSON 时 `size` 已经够了）。
+
+补的是两样：`offset` / `pad` 原样给出，加上 `rect`（绝对矩形）。绝对坐标**只在一处算**
+（`Query::absoluteRects()`），口径与 `pick()` 的 `hitTest` 一致：子盒原点是相对父内容盒
+原点的，所以累加时 `abs(child) = abs(parent) + parent.pad + child.offset`。让每个消费者
+自己抄一遍遍历，抄错的表现是盒子错位——而没有读者会先怀疑自己的遍历。
+
+### 12.4 `tailPath` 不属于呈现
+
+搬 `header` / `detail` 时把 `tailPath` 一起搬走了，结果 `Brief.php:370` 报"未定义方法"：
+`repeatFindings()` 用它把节点路径裁到 48 列，写进发现的标题。所以它是**规则生成结论时
+用的文本裁剪**，不是排版。
+
+移进 `Fit`（"文本度量与裁剪"的家），`Brief` 与 `BriefText` 共用。这条是本轮唯一一次
+"搬错了又搬回来"，记在这里因为它说明了一件事：`Finding` 的 `title` 是**结论的一部分**，
+它里面的裁剪尺度会进指纹——把它当排版随手改宽，发现就会跨运行漂。

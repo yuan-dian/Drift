@@ -157,6 +157,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 | headless | 显式 `frame(ts)`，虚拟时钟 | CI 断言、脚本回放 |
 | live | 真窗口帧循环 | 开发期人看 |
 | attach | 另一个进程读已有会话（现在是**宿主子进程**；真窗口托管未做） | 一次运行多次追问、将来的面板与崩溃取证；宿主自走时还能叫停与单步 |
+| web | 浏览器读同一个会话（`debug web` 起本机 HTTP，页面轮询 `frames(since)`） | 把几何画出来：终端只能印数字，而矩形能被看见 |
 
 三者的查询代码完全相同：`DebugSession` 与 `RemoteSession` 实现同一对接口
 （`SessionQueries` / `SessionDriver`），差异只在"谁执行那串步骤"。
@@ -265,6 +266,46 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 `cascade` 的 `maxDepth` / `maxChildren` 存在是因为 `debug-report.php` 要控制篇幅。面板要
 完整结构，传 `maxDepth: 64, maxChildren: 0`（`0` 表示不丢分支）。把截断当成"性能优化"
 直接沿用，用户点开第三层就发现下面没了，而界面上没有任何东西告诉他这是被截的。
+
+## Web：第三个消费者，不是第二套实现
+
+`debug web` 起一个本机 HTTP 服务，页面在浏览器里画。它存在的意义只证明一件事：**投影只有一份**。
+
+### 浏览器说不了 NDJSON
+
+协议传输是"一行进一行出"（`Transport`），三个实现都是本机管道。浏览器只会 HTTP。
+`debug web` 因此自己起一个最小 HTTP/1.1（`tools/Debug/HttpServer.php`）：一个连接一条
+请求、`Connection: close`、不做 keep-alive / 分块 / 压缩。它不用 `php -S`，因为那些请求
+要读的是**本进程里的** `SessionQueries` —— 把几百帧的数组交给另一个进程只能落盘，而落盘
+等于每个请求重做一遍采集。
+
+### 轮询，不是 SSE 也不是 WebSocket
+
+`frames(since)` 本来就是无状态游标（见上）。页面的"帧在动"就是每 250 ms 问一次
+`since=lastFrame`。SSE 要在服务端存订阅者集合，WS 要多一套帧协议与掩码 —— 两个都要引入
+"谁在看"这份状态，而这份状态会与帧推进耦合。
+
+Chrome DevTools 用 WebSocket 是因为 CDP 是**双向命令**通道；这层的控制只有 `pause` /
+`resume` 两个低频动作，普通 POST 就够。为了"像成熟工具"而引入 WS，是拿一份会漂的状态
+换一个不会用到的能力。
+
+### 页面不许有第二个数字
+
+阈值、顺序、几何、父子关系全部来自响应体：`thresholds` 随 `--slow` 变，`findings` 的顺序
+就是数组顺序，盒子用 `rect` 四值。页面的 JS 里不许出现 `16.6`、不许 `sort()`、不许自己
+从 `offset` 累加坐标。
+
+可判形式：`/api/brief` 与 `brief --json` 的 `findings` 逐值相同。两份要是各算一遍，那些
+数字迟早对不上，而对不上时读者不知道信谁。
+
+### 绝对坐标归查询层
+
+画布要的是绝对矩形，而记录里存的是"相对父内容盒原点的偏移" —— 绝对坐标会"因为祖先挪了
+一像素"而整片失效，相对偏移只随自己的父变，几何的签名才稳。
+
+于是 `boxes()` 每行给出 `rect`：**在一处**把父链累加成视口坐标（与 `pick()` 的 `hitTest`
+同口径）。这不是判断（"这里不对"），是坐标变换；发给每个消费者自己抄一遍，抄错的表现是
+盒子错位，而没有读者会先怀疑自己的遍历。
 
 ## 边界
 
