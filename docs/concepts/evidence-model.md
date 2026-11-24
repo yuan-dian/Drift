@@ -105,7 +105,7 @@ digest(External)  ——  外部条件是否相同（不含时刻与报文）
 - 约束改写过程是**显式分步**的：`tighten`（尺寸修饰）→ `deflate`（padding）→ `loosen`（对齐）→ `performLayout`（子类量内容）→ 夹进父区间；
 - 盒上已经留着 `lastConstraints`（子类实际收到的）与 `appliedConstraints`（上次生效的），前者是"收到了什么"，后者是"和上次一样吗"。
 
-所以约束链不是采出来的近似，是记录下来的精确链：
+所以约束链不是采出来的近似——而且它也不该是**记录**出来的：中间改写值（`tighten` 之后、`deflate` 之后、`loosen` 之后）都是 `layout()` 的局部变量，方法结束就没了。但复算的输入齐全：`appliedConstraints`（父给了什么）、`lastConstraints`（子实际收到了什么）、`Modifier`（全部修饰，见下）、父链可上溯。**沿父链重算一遍 `tighten → deflate → loosen` 就能逐值复现这条链**——这正是"复算优于采样"的又一次应用，和 `digest` 是同一个哲学：
 
 ```
 TableBox 800×600
@@ -114,6 +114,8 @@ TableBox 800×600
   ← Column flex 3/5（总 flex 5）
   ← PageShell：窗口 800×600 减去标题栏 200
 ```
+
+**为什么复算优于在 `layout()` 里插记录钩子**：钩子会污染纯函数（`LayoutSelfCheck` 靠"同约束连排两遍比尺寸"判纯函数，钩子有状态第二遍就不等了）、把每帧 O(节点数) 的存储挂在热路径上、而且存下来的链和真正发生的链可能不同步（钩子忘了记一步，链就静默缺一跳）。复算则随时可验证：重算两次逐值相同即证明复算器是对的——判据免费。代价是查询时 O(深度) 的一次遍历，发生在**查询路径**上而不是帧路径上，这正是证据模型"采集要便宜、消费可以贵"的分工。
 
 这和 `why` 是同一个形状：`why` 在重建域回答"谁让它脏了"，`constraints` 在布局域回答"谁限定了它"。两者都是"边 + 来源"，可以共用链式折叠与投影——**同一个底座用第二次，不是第二套机制**。
 
@@ -124,6 +126,18 @@ TableBox 800×600
 正确的做法在一行代码里：`Element::syncBox()` 是**造盒与同步的唯一写点**，在那里顺手写 `$box->debugOwner = $this->debugId`。盒换代表时自然跟着更新，不需要按帧重建映射，也不需要遍历。代价是一个属性写入，且只在录制开启时写（与三个静态 tap 同一个开关形态）。
 
 **缺口二：`layout()` 里没有节点身份。** 有了 `debugOwner` 就同时解决了——约束链的每个节点都能自己报出"我是谁"。
+
+### 盒模型不需要任何底层改动
+
+Chrome Elements 的盒模型（content / padding / border / margin 四层可视化、每层可点）初看是我们缺的——**原料其实全都在**。每个盒都挂着 `Modifier`（`RenderBox::$mods`）：四边 padding、`BoxStyle`（含 border）、inset（即 margin）、width/height 修饰、alignment。四层就是：margin = `inset`、border = `BoxStyle`、padding = 四边 pad、content = `size` 减 padding。检查器要做的只是暴露一个只读投影（`boxModel()`），**不新增字段、不改 layout**。上一轮评估说"padding 没保留成字段"是错的：它在 `Modifier` 里，只是没暴露成"盒的四层"这个形状。
+
+### 事件监听是声明制，反而更可枚举
+
+Chrome 能列出"元素上挂了哪些监听器"，因为 DOM 有 `addEventListener` 这个注册动作；注册是运行时的，所以 Chrome 靠枚举事件属性反推。我们的输入是声明制的：`pointerOwner` / `draggableOwner` / `windowDragOwner` 沿父链查 Widget 的**构造参数**（`pointerOwnsPressValue()`、`draggableValue()`、`pointerHandlerValue()`），还带让位规则（`isFocusable()` / `Activatable` 让位给更近的声明者）。这意味着"这个点的事件被谁处理、有哪些候选、谁让位了"**全部可以静态枚举**——不需要任何注册面改造。Chrome 的注册制回答不了"如果没有命中，**本来会**轮到谁"；声明制沿父链一列就出来。
+
+### 源码跳转按构建态分开
+
+之前写"不做源码跳转"是把构建态差异写成了绝对结论。`Recorder::callSite()` 已经在用 `debug_backtrace` 取 `file:line`（AOT 下缺则返回空串）；dev 形态下"跳到这个 Widget 的类定义"一行反射（`ReflectionClass::getFileName()`）就有。正确表述与"实时 attach / 反射读 State"同一条线：**dev 做（运行时栈 + 反射），AOT 不做（无源码映射）**。
 
 ### 反射只影响一半
 
@@ -361,7 +375,7 @@ S2 之前必须先处理一个已知缺陷：录制器是全局单例，多窗�
 | 一个录制器服务多个窗口 | 帧内状态是单份的，交错即错；要么单窗口，要么按应用隔离 |
 | 记录请求体与响应体 | 体积与隐私；抓包做得好得多。证据只要骨架 + 帧对齐 + 发起者 |
 | 每帧遍历树建"盒 → 元素"映射 | 2000 节点每帧一次，代价超过它要诊断的东西；在造盒的唯一写点写一次 `debugOwner` 即可 |
-| 源码跳转 | AOT 没有源码映射；dev 形态下能给出 `site`（文件:行），跳转交给编辑器 |
+| 源码跳转 | dev 形态做（`callSite()` 的运行时栈 + 反射拿类定义位置）；AOT 无源码映射，不做 |
 | 用框架自己的树控件画检查器 | 用被观测的框架去观测自己，故障时观测面先塌；高亮走绘制后叠加，面板在进程外 |
 
 ## 与既有裁决的关系
