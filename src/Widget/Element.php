@@ -5,6 +5,7 @@ namespace Drift\Widget;
 
 use Drift\Core\Pipeline;
 use Drift\Core\PipelineAccess;
+use Drift\Debug\Session\Recorder;
 use Drift\Errors;
 use Drift\Layout\RenderBox;
 
@@ -41,6 +42,14 @@ abstract class Element
 
     /** 本节点是否在动效活跃表里（语义："表里现在有没有我"，由收/出表两处写）。 */
     protected bool $animationActive = false;
+
+    /**
+     * 调试录制用的稳定节点号（`0` = 还没登记）。
+     *
+     * 元素生命周期内不变，跨帧 diff 与 `why()` 寻址都用它；`key` 属于调和身份，
+     * 位置一变就不稳，不能拿来当调试引用。
+     */
+    public int $debugId = 0;
 
     public function __construct(Widget $widget)
     {
@@ -502,6 +511,7 @@ abstract class Element
     protected function settlePass(): void
     {
         if ($this instanceof StatefulElement && $this->state()?->needsBuild()) {
+            Recorder::tapRebuild($this); // 帧因果：重建的唯一入口
             $this->rebuild(); // rebuild() 内部消费脏标记
         }
 

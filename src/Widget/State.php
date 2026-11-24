@@ -7,6 +7,7 @@ use Drift\Commands\CommandArg;
 use Drift\Core\Computed;
 use Drift\Core\Pipeline;
 use Drift\Core\PipelineAccess;
+use Drift\Debug\Session\Recorder;
 use Drift\Errors;
 use Drift\State\AsyncCommand;
 use Drift\State\Subject;
@@ -144,6 +145,7 @@ abstract class State
             return;                  // ★ 已经脏 ⇒ 不重复计数
         }
         $this->dirty = true;
+        Recorder::tapStateWrite($this); // 帧因果：状态写入的 clean→dirty 跳变
 
         $pipeline = Pipeline::current();
         $pipeline->markDirty();

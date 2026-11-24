@@ -1,0 +1,355 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Debug\Session;
+
+use Drift\Widget\Element;
+use Drift\Widget\State;
+
+/**
+ * 帧因果录制器：一帧一条记录，边指向"为什么重建"。
+ *
+ * ## 为什么是这三个挂点
+ *
+ * 全框架只有三处会产生"可归因的变化"，别处都是它们的下游：
+ *
+ * | 挂点 | 位置 | 记什么 |
+ * |---|---|---|
+ * | 状态写入 | `State::markDirty()` 的 clean→dirty 跳变 | 谁写的、在哪一行写的 |
+ * | 节点重建 | `Element::settlePass()` 里真正调 `rebuild()` 前 | 本帧重建了哪些节点 |
+ * | 帧边界 | `Application::frame()` 进出 | 帧号、跑的段、是否跳过 settle/paint |
+ *
+ * 写入与重建**不在同一时刻**：`setState` 多数发生在帧外，由下一帧的 settle 消费。
+ * 所以边先攒着，帧末统一归到"消费它的那一帧"——这正是因果的方向。
+ *
+ * 未安装时每个挂点只多一次静态空判断，热路径可忽略。装了才建对象。
+ *
+ * ## 为什么不持有 Element
+ *
+ * 记录里只有 id 与父 id：环形缓冲裁剪时不能拖住一棵已卸载的树。元素被销毁后
+ * 它的 id 仍能在历史帧里解释清楚（`pathOf()` 读的是登记时记下的类名与父链）。
+ *
+ * @api
+ */
+final class Recorder
+{
+    /** 保留的最大帧数；超出丢最旧的一帧 */
+    public const int DEFAULT_CAPACITY = 600;
+
+    /** 单帧最多记多少条因果边（防御：装了录制却不跑帧） */
+    private const int MAX_CAUSES = 512;
+
+    private static ?self $current = null;
+
+    /** @var array<int, FrameRecord> 帧号 => 记录，键升序 */
+    private array $frames = [];
+
+    /** @var array<int, array{p: int, c: string}> 节点 id => 父 id（`-1` 根、`-2` 未解析）/ Widget 短类名 */
+    private array $nodes = [];
+
+    /** @var list<Edge> 待归入下一帧的因果边（帧外 `setState` 也算，帧末统一落账） */
+    private array $openCauses = [];
+
+    /** @var list<int> 待归入下一帧的重建节点，先序 */
+    private array $openRebuilt = [];
+
+    /** @var array<int, true> 本帧已记过 state 边的节点（同帧去重） */
+    private array $openWrote = [];
+
+    /** @var array<int, true> 本帧已重建过的节点（同帧去重） */
+    private array $openSaw = [];
+
+    private int $seq = 0;
+
+    private int $frameId = 0;
+
+    private bool $open = false;
+
+    private float $openT = 0.0;
+
+    public function __construct(private readonly int $capacity = self::DEFAULT_CAPACITY)
+    {
+    }
+
+    // ---------------------------------------------------------------- 生命周期
+
+    public static function install(int $capacity = self::DEFAULT_CAPACITY): self
+    {
+        return self::$current = new self($capacity);
+    }
+
+    public static function uninstall(): void
+    {
+        self::$current = null;
+    }
+
+    public static function current(): ?self
+    {
+        return self::$current;
+    }
+
+    public static function installed(): bool
+    {
+        return self::$current !== null;
+    }
+
+    // -------------------------------------------------------------- 热路径挂点
+
+    /**
+     * 帧开始：只记时间，**不清缓冲**。
+     *
+     * 缓冲里可能有上一帧结束后攒下的状态写入（帧外 `setState`），它们属于本帧。
+     */
+    public function beginFrame(float $t): void
+    {
+        ++$this->frameId;
+        $this->open = true;
+        $this->openT = $t;
+    }
+
+    /**
+     * 帧结束：落成不可变记录并按容量裁剪。
+     *
+     * @param array{stages?: list<string>, settleSkipped?: bool, paintSkipped?: bool} $facts
+     */
+    public function endFrame(array $facts, float $costMs): void
+    {
+        if (!$this->open) {
+            return;
+        }
+        $this->open = false;
+        $this->frames[$this->frameId] = new FrameRecord(
+            $this->frameId,
+            $this->openT,
+            $costMs,
+            $this->openCauses,
+            $this->openRebuilt,
+            $facts['stages'] ?? [],
+            (bool) ($facts['settleSkipped'] ?? false),
+            (bool) ($facts['paintSkipped'] ?? false),
+        );
+        $this->openCauses = [];
+        $this->openRebuilt = [];
+        $this->openWrote = [];
+        $this->openSaw = [];
+        $this->trim();
+    }
+
+    /** 状态写入（clean→dirty 跳变时调；同帧同节点只记第一条）。 */
+    public function noteStateWrite(State $state): void
+    {
+        // ★ **不受 `open` 约束**：`setState` 多数发生在帧外（输入回调 / 定时器 /
+        //   异步结算），由**下一帧**的 settle 消费。丢弃它们就等于丢掉了因果链的起点。
+        $element = $state->element();
+        if ($element === null) {
+            return;
+        }
+        $id = $this->idOf($element);
+        if (isset($this->openWrote[$id])) {
+            return;
+        }
+        if (\count($this->openCauses) >= self::MAX_CAUSES) {
+            return; // 防御：装了录制却一直不跑帧时，不让缓冲无界增长
+        }
+        $this->openWrote[$id] = true;
+        $this->openCauses[] = new Edge('state', null, $id, self::callSite(), self::shortClass($state));
+    }
+
+    /** 节点真的调了 `rebuild()`。父先于子（settlePass 前序），所以父的分类一定已知。 */
+    public function noteRebuild(Element $element): void
+    {
+        if (!$this->open) {
+            return;
+        }
+        $id = $this->idOf($element);
+        if (isset($this->openSaw[$id])) {
+            return;
+        }
+        $this->openSaw[$id] = true;
+        $this->openRebuilt[] = $id;
+
+        if (isset($this->openWrote[$id])) {
+            return; // 自己的 state 边已经记过
+        }
+
+        $parent = $element->parent();
+        $parentId = $parent === null ? 0 : $this->idOf($parent);
+        $kind = $parentId !== 0 && isset($this->openSaw[$parentId]) ? 'parent' : 'unknown';
+        $this->openCauses[] = new Edge($kind, $parentId === 0 ? null : $parentId, $id, '', '');
+    }
+
+    // ------------------------------------------------------------------ 查询
+
+    /** 节点 id；首次见到时登记父链与类名（父 id 解析一次，`-1` = 根）。 */
+    public function idOf(Element $element): int
+    {
+        if ($element->debugId === 0) {
+            $element->debugId = ++$this->seq;
+            // 记 **Widget** 名而不是 Element 子类名：面板上要看到 `Table` / `Column`，
+            // 不是一屏 `StatefulElement` / `MultiChildElement`。
+            $this->nodes[$element->debugId] = ['p' => -2, 'c' => self::shortClass($element->widget())];
+        }
+
+        $meta = $this->nodes[$element->debugId];
+        if ($meta['p'] === -2) {
+            $parent = $element->parent();
+            $meta['p'] = $parent === null ? -1 : $this->idOf($parent);
+            $this->nodes[$element->debugId] = $meta;
+        }
+
+        return $element->debugId;
+    }
+
+    /** 从根到该节点的类名路径，用于面板显示与"这是哪个节点"的自证。 */
+    public function pathOf(int $nodeId): string
+    {
+        $parts = [];
+        $cursor = $nodeId;
+        $guard = 0;
+        while ($cursor > 0 && isset($this->nodes[$cursor]) && $guard++ < 32) {
+            \array_unshift($parts, $this->nodes[$cursor]['c']);
+            $cursor = $this->nodes[$cursor]['p'];
+        }
+
+        return \implode(' > ', $parts);
+    }
+
+    /**
+     * 为什么这个节点在这一帧变了。
+     *
+     * @return array<string, mixed>
+     */
+    public function why(int $nodeId, ?int $frameId = null): array
+    {
+        $frame = $this->frame($frameId ?? $this->lastFrameId());
+        $causes = [];
+        if ($frame !== null) {
+            foreach ($frame->causes as $edge) {
+                if ($edge->toId === $nodeId) {
+                    $causes[] = $edge->toArray();
+                }
+            }
+        }
+
+        return [
+            'node' => $nodeId,
+            'path' => $this->pathOf($nodeId),
+            'frame' => $frame?->id,
+            'rebuilt' => $frame?->rebuilt($nodeId) ?? false,
+            'causes' => $causes,
+        ];
+    }
+
+    public function frame(?int $id = null): ?FrameRecord
+    {
+        if ($id === null) {
+            return null;
+        }
+
+        return $this->frames[$id] ?? null;
+    }
+
+    public function lastFrameId(): int
+    {
+        $key = \array_key_last($this->frames);
+
+        return $key === null ? 0 : (int) $key;
+    }
+
+    /** @return array<int, FrameRecord> */
+    public function frames(): array
+    {
+        return $this->frames;
+    }
+
+    /** 给性能预算与面板概览用：帧数、节点数、最近帧耗时。 */
+    public function stats(): array
+    {
+        $last = $this->frame($this->lastFrameId());
+
+        return [
+            'frames' => \count($this->frames),
+            'nodes' => \count($this->nodes),
+            'capacity' => $this->capacity,
+            'lastCostMs' => $last?->costMs ?? 0.0,
+            'lastRebuilt' => $last === null ? 0 : \count($last->rebuilt),
+        ];
+    }
+
+    /** 清空帧记录（保留节点登记，id 仍可用）。测试与"重新开始录"用。 */
+    public function reset(): void
+    {
+        $this->frames = [];
+        $this->frameId = 0;
+        $this->open = false;
+        $this->openCauses = [];
+        $this->openRebuilt = [];
+        $this->openWrote = [];
+        $this->openSaw = [];
+    }
+
+    // ------------------------------------------------------------ 静态热路径入口
+
+    public static function tapStateWrite(State $state): void
+    {
+        self::$current?->noteStateWrite($state);
+    }
+
+    public static function tapRebuild(Element $element): void
+    {
+        self::$current?->noteRebuild($element);
+    }
+
+    // ------------------------------------------------------------------ 内部
+
+    private function trim(): void
+    {
+        while (\count($this->frames) > $this->capacity) {
+            $oldest = \array_key_first($this->frames);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->frames[$oldest]);
+        }
+    }
+
+    private static function shortClass(object $value): string
+    {
+        $class = $value::class;
+        $pos = \strrpos($class, '\\');
+
+        return $pos === false ? $class : \substr($class, $pos + 1);
+    }
+
+    /**
+     * 调用点：跳过录制器与 State 自身，取第一个业务帧。
+     *
+     * AOT 下 `debug_backtrace` 可能缺 file/line，缺了就返回空串——宁可少一条线索，
+     * 也不要为了它让热路径报错。
+     */
+    private static function callSite(): string
+    {
+        if (!\function_exists('debug_backtrace')) {
+            return '';
+        }
+        $trace = \debug_backtrace(\DEBUG_BACKTRACE_IGNORE_ARGS, 8);
+        foreach ($trace as $frame) {
+            $class = isset($frame['class']) ? (string) $frame['class'] : '';
+            if ($class !== '' && (\str_starts_with($class, 'Drift\\Debug\\') || $class === 'Drift\\Widget\\State')) {
+                continue;
+            }
+            $file = isset($frame['file']) ? (string) $frame['file'] : '';
+            if ($file === '') {
+                continue;
+            }
+            $cwd = \getcwd();
+            if ($cwd !== false && \str_starts_with($file, $cwd)) {
+                $file = \ltrim(\substr($file, \strlen($cwd)), '/\\');
+            }
+
+            return $file . ':' . (isset($frame['line']) ? (string) $frame['line'] : '0');
+        }
+
+        return '';
+    }
+}

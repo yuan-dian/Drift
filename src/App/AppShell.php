@@ -8,6 +8,7 @@ use Drift\Commands\CommandArg;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Pipeline;
+use Drift\Debug\Session\Recorder;
 use Drift\Errors;
 use Drift\Geometry\Axis;
 use Drift\Geometry\BoxConstraints;
@@ -162,6 +163,9 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      * @var list<string>|null
      */
     private ?array $frameTrace = null;
+
+    /** 本帧事实（段名 / 是否跳过 settle、paint），仅录制开启时建；`null` = 没开录制 */
+    private ?array $devFacts = null;
 
     /**
      * 被跳过的零视口帧数。只用于观测，不参与决策。
@@ -576,6 +580,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
         // 段名与分段计时同源：两者都只经 `stage()` 推一次，手写两份必漂。
         $this->frameTrace = FramePhase::begin();
+        $this->devFacts = Recorder::installed() ? ['stages' => [], 'settleSkipped' => false, 'paintSkipped' => false] : null;
 
         // ① 外部数据先到，回调里 setState 的脏标记由紧随的 settle 消费。
         $this->stage(FrameStage::PUMP_IO, function (): void {
@@ -619,6 +624,9 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         // 这里只补位置。它是唯一不经 `stage()` 的段名。
         if ($this->frameTrace !== null) {
             $this->frameTrace[] = FrameStage::SETTLE;
+        }
+        if ($this->devFacts !== null) {
+            $this->devFacts['stages'][] = FrameStage::SETTLE;
         }
 
         // 本帧要不要画：`Frame` 只看树，看不见应用级叠加 —— 焦点环目标变了没画、
@@ -703,6 +711,9 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         if ($this->frameTrace !== null) {
             $this->frameTrace[] = $stage;
         }
+        if ($this->devFacts !== null) {
+            $this->devFacts['stages'][] = $stage;
+        }
 
         return SurfaceProfile::time($stage, $body);
     }
@@ -720,6 +731,12 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      */
     private function continueFrame(int $settleSkipBefore, int $paintSkipBefore): void
     {
+        // 两条出口（正常 / 零视口）都会到这里，跳过标记只在这里落一次。
+        if ($this->devFacts !== null) {
+            $this->devFacts['settleSkipped'] = $this->pipeline->settleSkipCount() > $settleSkipBefore;
+            $this->devFacts['paintSkipped'] = $this->pipeline->paintSkipCount() > $paintSkipBefore;
+        }
+
         if ($this->animating || $this->pumps->hasPolledAsync()) {
             $this->pipeline->scheduleNextFrame();
         }
@@ -869,6 +886,12 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     public function frameCount(): int
     {
         return $this->frameSerial;
+    }
+
+    /** 本帧事实（段名 / 跳过标记）；没开录制时为空数组。 */
+    public function frameFacts(): array
+    {
+        return $this->devFacts ?? [];
     }
 
     /**

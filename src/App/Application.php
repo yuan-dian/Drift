@@ -11,6 +11,7 @@ use Drift\Commands\CommandGate;
 use Drift\Commands\CommandHandler;
 use Drift\Commands\CommandRouter;
 use Drift\Core\Pipeline;
+use Drift\Debug\Session\Recorder;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
@@ -272,7 +273,19 @@ abstract class Application
     /** 跑一帧：平台每帧调一次。 */
     public function frame(float $timestampMs, BoxConstraints $constraints): void
     {
+        $recorder = Recorder::current();
+        if ($recorder === null) {
+            $this->shell->frame($timestampMs, $constraints);
+
+            return;
+        }
+
+        // 录制只在装了之后才多这两次调用；帧边界必须成对，故收在这里而不是壳里
+        // （壳有零视口提前返回，散在壳里会漏掉那一帧）。
+        $t0 = \hrtime(true);
+        $recorder->beginFrame($timestampMs);
         $this->shell->frame($timestampMs, $constraints);
+        $recorder->endFrame($this->shell->frameFacts(), (\hrtime(true) - $t0) / 1e6);
     }
 
     /** 拖动 resize 专用的轻量重绘。 */

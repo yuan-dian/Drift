@@ -61,7 +61,7 @@ final class DependencyDirection implements Rule
         'Text'      => ['Text', 'Geometry'],
         'Rendering' => ['Rendering', 'Geometry', 'Text', 'Core'],
         'Input'     => ['Input', 'Geometry', 'Text'],
-        'Widget'    => ['Widget', 'Layout', 'State', 'Async', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
+        'Widget'    => ['Widget', 'Layout', 'State', 'Async', 'Rendering', 'Text', 'Geometry', 'Input', 'Core', 'Debug'],
         'Layout'    => ['Widget', 'Layout', 'Rendering', 'Text', 'Geometry', 'Input', 'Core'],
         // `State`：纯反应式内核（`Subject` / `Cell` / `Machine` / `AsyncCommand`）。
         // 2026-11-24 `SubjectBuilder` 退役后它**不再引用 `Widget`** —— 原先那条
@@ -85,7 +85,11 @@ final class DependencyDirection implements Rule
         // 互不依赖 —— 命名解耦（A14）的分层守卫：任一侧 import 另一侧都红。
         'Reducer'   => ['Reducer', 'Widget'],
         'Async'     => ['Async'],
-        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'Commands', 'Theme', 'Core'],
+        'App'       => ['App', 'Async', 'Geometry', 'Platform', 'Text', 'Rendering', 'Input', 'Widget', 'Layout', 'Commands', 'Theme', 'Core', 'Debug'],
+        // `Debug`：诊断层，只读控件对象模型（`Element` / `State`）并记录帧因果。
+        // 它**不参与渲染**，也不被渲染依赖；安装与否只影响一个静态空判断。
+        // 与 `Widget` 的环见 DOCUMENTED_CYCLES。
+        'Debug'     => ['Debug', 'Widget'],
         'Logging'   => ['Logging'],
     ];
 
@@ -105,6 +109,13 @@ final class DependencyDirection implements Rule
     private const DOCUMENTED_CYCLES = [
         'Layout|Widget',
         'Theme|Widget',
+        // ★ `Debug|Widget`（2026-11-24，D0）：诊断层要读 `Element` / `State` 的类型
+        //   （记录谁重建、谁写了状态），控件层要在两个**唯一漏斗**里通知它：
+        //   `State::markDirty()` 与 `Element::settlePass()`。这两处的调用是诊断能力的地基，
+        //   挪走就只能靠弱类型（`object`）或 Core 里的静态钩子偷偷传，环消失但真相也消失。
+        //   移除条件：控件层改为向 `Core` 的事件总线发结构化事实、诊断层只订阅总线时，
+        //   两侧不再互认 ⇒ 降成单向。在那之前把它写在表里，不假装没有环。
+        'Debug|Widget',
     ];
 
     /**
