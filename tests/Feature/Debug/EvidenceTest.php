@@ -15,6 +15,7 @@ use Drift\Debug\Session\NetworkBodyRecord;
 use Drift\Debug\Session\NetworkRecord;
 use Drift\Debug\Session\PropSnapshot;
 use Drift\Debug\Session\Query;
+use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -444,6 +445,38 @@ final class EvidenceTest extends SmokeTestCase
                 ),
             );
         } finally {
+            @\unlink($path);
+        }
+    }
+
+    /**
+     * 离线会话自报 `offline`，且**没有令牌**。
+     *
+     * 令牌空串是刻意的：它不是"某个进程里的会话"，而是一份已经结束的记录的读视图。
+     * 给它一个真令牌，观察者就会拿它的帧号去跟活会话比，而那条比较永远得出
+     * "落后了几千帧"这种看起来像故障、实际毫无意义的结论。
+     */
+    public function testOfflineSessionReportsItselfAsOffline(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+        $path = self::tempFile('.evidence');
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            $app->frame(16.0, $this->constraints());
+            Evidence::write($recorder, $path);
+            $last = $recorder->lastFrameId();
+
+            $offline = QueryRouter::offline(Recorder::hydrate(Evidence::read($path)));
+            $state = $offline->query('state');
+
+            check('状态是 offline', $state['state'] === 'offline', (string) $state['state']);
+            check('没有令牌', $state['session'] === '', \json_encode($state['session']));
+            check('offline 没有原因', $state['reason'] === null, \json_encode($state['reason']));
+            check('末帧仍是包里的末帧', $state['lastFrame'] === $last, \sprintf('state=%d 记录=%d', $state['lastFrame'], $last));
+        } finally {
+            Recorder::uninstall();
             @\unlink($path);
         }
     }

@@ -8,6 +8,7 @@ use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Session;
+use Drift\Debug\Session\SessionState;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
 
@@ -74,6 +75,7 @@ final class DebugSession implements Session
         private readonly Query $queries,
         private readonly QueryRouter $router,
         private readonly Script $script,
+        private readonly SessionState $state,
     ) {
     }
 
@@ -110,15 +112,43 @@ final class DebugSession implements Session
         $recorder = Recorder::install($capacity, $script, $redactBodies);
         $queries = new Query($recorder);
 
+        // 令牌每次 open 新生成：帧号与节点号都是每会话重发的，观察者只能靠它
+        // 判"时间线换了"。放在 open 而不是进程启动，是因为 close 之后再 open
+        // 是另一个会话，沿用旧令牌会让"换了时间线"这件事看不出来。
+        $state = new SessionState(\bin2hex(\random_bytes(8)));
+
         // 活树根走闭包注入：`QueryRouter` 住在 `Debug\Session`，那一层不该知道有"应用"。
         $router = new QueryRouter(
             $recorder,
             $queries,
             static fn(): array => $app->treeRoots(),
             static fn(): array => $app->treeRootOrigins(),
+            static fn(): SessionState => $state,
         );
 
-        return new self($app, $constraints, $recorder, $queries, $router, $script);
+        return new self($app, $constraints, $recorder, $queries, $router, $script, $state);
+    }
+
+    /** 本会话的令牌：跨进程观察时用它判断"是不是同一条时间线"。 */
+    public function sessionToken(): string
+    {
+        return $this->state->token;
+    }
+
+    /**
+     * 标记会话状态。`reason` 是"为什么停"，而不是"谁让停的"的近义词：
+     * `at`（到了 `--at`）与 `requested`（客户端按了暂停）对观察者的含义相反——
+     * 前者是"你要看的就在这"，后者是"一会儿还动"。
+     *
+     * `crashed` 留给常驻黑匣子（S2）：它和 `finished` 的区别正是"跑完了"与"炸了"。
+     */
+    public function markState(string $state, ?string $reason = null): void
+    {
+        if (!\in_array($state, ['running', 'paused', 'finished', 'crashed'], true)) {
+            throw new \InvalidArgumentException("不认识的状态：{$state}");
+        }
+        $this->state->state = $state;
+        $this->state->reason = $reason;
     }
 
     /**

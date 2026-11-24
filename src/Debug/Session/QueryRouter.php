@@ -50,6 +50,7 @@ final class QueryRouter implements SessionQueries
         'pick' => '按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
+        'state' => '会话身份与状态：令牌 / 末帧 / running|paused|finished|offline',
     ];
 
     /**
@@ -131,15 +132,26 @@ final class QueryRouter implements SessionQueries
         private readonly Query $queries,
         private readonly mixed $treeRoots = null,
         private readonly mixed $treeRootOrigins = null,
+        private readonly mixed $state = null,
     ) {
     }
 
     /**
      * 只要读能力的会话：给导入的证据包用（没有活应用，也不需要驱动力）。
+     *
+     * 状态是 `offline` 且令牌为空：它不是"某个进程里的会话"，看它的人不该拿它
+     * 去跟活会话的游标比。
      */
     public static function offline(Recorder $recorder): self
     {
-        return new self($recorder, new Query($recorder));
+        $state = new SessionState('');
+        $state->state = 'offline';
+
+        return new self(
+            $recorder,
+            new Query($recorder),
+            state: static fn(): SessionState => $state,
+        );
     }
 
     /**
@@ -159,10 +171,34 @@ final class QueryRouter implements SessionQueries
             'digest' => Digest::of($this->recorder),
             // 包没带脚本域时返回空数组：明确"这次录制没有脚本"，而不是崩在 null 上。
             'script' => $this->recorder->script()?->toArray() ?? [],
+            // 会话状态不是证据事实（`Query` 只认 `Recorder`），所以走这里而不是
+            // `stats`：`stats` 答的是"录到了什么"，`state` 答的是"这个会话还在动吗"。
+            'state' => $this->stateQuery(),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
             ),
         };
+    }
+
+    /**
+     * 会话身份 + 末帧号 + 状态。
+     *
+     * 末帧放在这里而不是让观察者从 `frames()` 自己数：两个数必须**同一时刻读**，
+     * 分两次查时中间可能又推进了一帧，于是"观察者看到的末帧"与"宿主报的末帧"
+     * 天然对不上——而那条判据（#2）正是要证明它们同源。
+     *
+     * @return array{session: string, state: string, reason: ?string, lastFrame: int}
+     */
+    private function stateQuery(): array
+    {
+        $state = $this->state === null ? null : ($this->state)();
+
+        return [
+            'session' => $state instanceof SessionState ? $state->token : '',
+            'state' => $state instanceof SessionState ? $state->state : 'offline',
+            'reason' => $state instanceof SessionState ? $state->reason : null,
+            'lastFrame' => $this->recorder->lastFrameId(),
+        ];
     }
 
     /**

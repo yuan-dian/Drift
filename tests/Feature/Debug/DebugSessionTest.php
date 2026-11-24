@@ -86,6 +86,7 @@ final class DebugSessionTest extends SmokeTestCase
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'props' => ['node' => $nodeId],
                 'pick' => ['x' => 1.0, 'y' => 2.0],
+                'state' => [],
             ];
 
             foreach (DebugSession::QUERIES as $name => $_) {
@@ -106,11 +107,15 @@ final class DebugSessionTest extends SmokeTestCase
             }
             check('未知查询抛异常，不返回空数组', $threw);
 
-            // 双向闭合：能力面（QUERIES）与协议形状（QUERY_SPECS + 会话自产的两条）
+            // 双向闭合：能力面（QUERIES）与协议形状（QUERY_SPECS + 会话自产的三条）
             // 必须一一对应。少一条 → 有查询派发不了；多一条 → 名单在吹牛。
             // 旧判据是靠正则读源码里的 `match` 分支，改成规格表后就永远失配 ——
             // 而"失配时假绿"比没有判据更糟。
-            $selfServed = ['digest', 'script'];
+            //
+            // 自产的三条不进规格表，是因为它们没有 `Query` 方法可转发：`digest` 算
+            // 指纹、`script` 回脚本、`state` 回会话身份与状态。把它们塞进规格表就得
+            // 给 `Query` 造三个假方法，而 `Query` 只认 `Recorder`。
+            $selfServed = ['digest', 'script', 'state'];
             $declared = \array_keys(DebugSession::QUERIES);
             $shaped = \array_merge(\array_keys(DebugSession::QUERY_SPECS), $selfServed);
             \sort($declared);
@@ -333,6 +338,56 @@ final class DebugSessionTest extends SmokeTestCase
         $pump(16.0);
         QueryState::$last?->increment();
         $pump(32.0);
+    }
+
+    /**
+     * `state` 查询：令牌 + 末帧 + 状态/原因。
+     *
+     * 三条判据各自防一件事：
+     * - 令牌非空且两次 open 不同：跨进程观察者靠它判"时间线换了"；
+     * - 末帧与 `frames()` 末帧一致：两个数必须同一时刻读（分两次查时中间可能又推进
+     *   一帧），否则"观察者看到的"与"宿主报的"天然对不上；
+     * - `reason` 区分 `at` 与 `requested`：两者对观察者含义相反（去看吧 / 一会儿还动）。
+     */
+    public function testStateCarriesTokenFrameAndReason(): void
+    {
+        $app = $this->boot();
+        $session = DebugSession::open($app, $this->constraints());
+
+        try {
+            $session->pump(0.0);
+            $session->pump(16.0);
+
+            $state = $session->query('state');
+            check('令牌非空', \is_string($state['session']) && $state['session'] !== '', 'session=' . \json_encode($state['session']));
+            check('初始状态是 running', $state['state'] === 'running', (string) $state['state']);
+            check('running 没有原因', $state['reason'] === null, \json_encode($state['reason']));
+
+            /** @var list<array<string, mixed>> $frameRows */
+            $frameRows = $session->query('frames')['frames'];
+            $lastFromFrames = $frameRows === [] ? 0 : (int) $frameRows[\count($frameRows) - 1]['id'];
+            check(
+                '末帧与 frames() 末帧同源',
+                $state['lastFrame'] === $lastFromFrames && $lastFromFrames > 0,
+                \sprintf('state=%d frames=%d', $state['lastFrame'], $lastFromFrames),
+            );
+
+            $session->markState('paused', 'at');
+            $paused = $session->query('state');
+            check('状态改成 paused', $paused['state'] === 'paused', (string) $paused['state']);
+            check('原因保留 at（与 requested 区分）', $paused['reason'] === 'at', \json_encode($paused['reason']));
+            check('令牌不随状态变', $paused['session'] === $state['session']);
+
+            $threw = false;
+            try {
+                $session->markState('nonsense');
+            } catch (\InvalidArgumentException) {
+                $threw = true;
+            }
+            check('不认识的状态当场拒绝', $threw);
+        } finally {
+            $session->close();
+        }
     }
 
     /**

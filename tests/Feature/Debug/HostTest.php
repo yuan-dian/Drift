@@ -12,6 +12,7 @@ use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Host;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\SingleServer;
 use Drift\Dev\Tests\Support\FakeTransport;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
@@ -49,7 +50,7 @@ final class HostTest extends SmokeTestCase
         }
 
         $transport = new FakeTransport($lines);
-        $host = new Host($transport);
+        $host = new Host(new SingleServer($transport));
         $host->serve($open ?? static fn(Script $s): array => Runner::open(
             $s->target,
             $s->width,
@@ -190,7 +191,7 @@ final class HostTest extends SmokeTestCase
     public function testMalformedLineGetsAnErrorWithoutID(): void
     {
         $transport = new FakeTransport(['{"id":1,"method":']);
-        (new Host($transport))->serve(static fn(Script $s): array => Runner::open(
+        (new Host(new SingleServer($transport)))->serve(static fn(Script $s): array => Runner::open(
             $s->target,
             $s->width,
             $s->height,

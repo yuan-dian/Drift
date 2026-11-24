@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Support;
 
-use Drift\Debug\Protocol\Transport;
+use Drift\Debug\Protocol\Channel;
 
 /**
  * 内存里的一条通道：读队列 + 写记录。
@@ -14,7 +14,7 @@ use Drift\Debug\Protocol\Transport;
  *
  * `read()` 在队列耗尽时返回 `null` —— 与真实管道的 EOF 同义，宿主据此退出。
  */
-final class FakeTransport implements Transport
+final class FakeTransport implements Channel
 {
     /** @var list<string> 写出去的消息（按序） */
     public array $sent = [];
@@ -50,6 +50,11 @@ final class FakeTransport implements Transport
     public function close(): void
     {
         $this->closed = true;
+    }
+
+    public function peer(): string
+    {
+        return 'fake';
     }
 
     /** @return list<array<string, mixed>> 已发出的消息解成数组 */

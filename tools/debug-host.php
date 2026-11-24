@@ -23,6 +23,7 @@ use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Host;
 use Drift\Dev\Debug\OutputGuard;
 use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\SingleServer;
 use Drift\Dev\Debug\StdioTransport;
 
 // ★ 先接管输出再干任何事：stdout 从此只属于协议。页面里的 echo、PHP 警告都会被
@@ -30,7 +31,7 @@ use Drift\Dev\Debug\StdioTransport;
 OutputGuard::start();
 
 try {
-    $host = new Host(StdioTransport::standard());
+    $host = new Host(new SingleServer(StdioTransport::standard()));
     $host->serve(static function (Script $script): array {
         return Runner::open($script->target, $script->width, $script->height, $script->meta(), $script);
     });

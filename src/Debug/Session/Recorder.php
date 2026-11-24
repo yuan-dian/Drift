@@ -158,8 +158,14 @@ final class Recorder
      */
     private int $seq = 0;
 
-    /** 本会话的代号；与 {@see Element::$debugSession} 比对，判断元素身上的号是不是本会话发的。 */
-    private readonly int $tag;
+    /**
+     * 本轮的**发号批次**；与 {@see Element::$debugSession} 比对，判断元素身上的号是不是这一批发的。
+     *
+     * 不是 `readonly`：{@see self::reset()} 会开新批次。判"号是不是这一批发的"而不是
+     * "元素有没有号"，是因为 reset 之后元素还带着上一批的号、而登记表已经空了——
+     * 只看 `debugId === 0` 会把旧号当新号用。
+     */
+    private int $tag;
 
     /** 会话代号发号器：只用来区分"谁发的号"，不参与证据。 */
     private static int $sessionSeq = 0;
@@ -1149,7 +1155,7 @@ final class Recorder
         ];
     }
 
-    /** 清空帧记录（保留节点登记，id 仍可用）。测试与"重新开始录"用。 */
+    /** 清空这一轮的全部记录，节点号从 1 重新发。测试与"重新开始录"用。 */
     public function reset(): void
     {
         ++$this->generation;
@@ -1174,7 +1180,16 @@ final class Recorder
         // 属性是旧会话的活树读数，重开会话后一句都不能留（帧号会从头开始，
         // 残留快照会被读成"这一帧的属性"，且不会报 stale）。
         $this->props = [];
-        // `$nodes` / `$boxless` 描述的是**树**，不描述帧，保留（id 仍可用）。
+        // ★ 节点登记与发号计数器必须一起清，否则「重新开始录」只做到一半：
+        //   `$seq` 接着上一轮涨，重跑后的号就从 365 起，而 `Element::$debugId`
+        //   的契约是"每个会话从 1 开始、按首次出现顺序递增"——结构指纹跨跑
+        //   永远对不上。清表 + 换批次 + 归零，三件事缺一不可：只清表不换 tag，
+        //   元素见 `debugSession === tag` 会沿用旧号并撞上已发出的号；只换 tag
+        //   不清表，旧号的父指针会指向上一棵树的节点。
+        $this->nodes = [];
+        $this->boxless = [];
+        $this->seq = 0;
+        $this->tag = ++self::$sessionSeq;
     }
 
     // ------------------------------------------------------------ 静态热路径入口

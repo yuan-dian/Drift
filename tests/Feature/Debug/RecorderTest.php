@@ -331,6 +331,46 @@ final class RecorderTest extends SmokeTestCase
             Recorder::uninstall();
         }
     }
+
+    /**
+     * `reset()` 是「重新开始录」，不是「清空帧记录」：节点号也得从 1 重发。
+     *
+     * 上面那个用例走的是「换一个录制器实例」，天然从 1 开始；同一个实例 `reset()`
+     * 之后是另一回事 —— 改之前它只清帧，`$seq` 接着上一轮涨，第二轮从 365 起。
+     * 这不会报错，只是 `Digest` 的「两次重放逐值相同」悄悄失效：id 序列是全仓
+     * 「同一批控件」的唯一证据（`Element::$debugId` 的契约）。
+     *
+     * 判据写成「两轮号序列逐值相同」而不是「两轮都有号」：后者在累加时同样通过，
+     * 而那正是要防的那件事。
+     */
+    public function testResetRestartsNodeNumbering(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            $first = \array_keys($recorder->nodeIndex());
+
+            $recorder->reset();
+            $app->frame(16.0, $this->constraints());
+            $second = \array_keys($recorder->nodeIndex());
+
+            check('一轮里确实登记了节点（否则下面恒真）', $first !== [], 'nodes=0');
+            check(
+                'reset 后号从 1 重新开始',
+                $second !== [] && \min($second) === 1,
+                'min=' . ($second === [] ? 0 : \min($second)),
+            );
+            check(
+                '两轮号序列逐值相同（结构指纹跨跑可比的前提）',
+                $first === $second,
+                \sprintf('第一轮 %d 个 / 第二轮 %d 个，首轮 1..%d 次轮 1..%d', \count($first), \count($second), \max($first ?: [0]), \max($second ?: [0])),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
 }
 
 /** @internal 判据夹具：一次 setState 波及 600 个节点，用来撞因果边上限 */

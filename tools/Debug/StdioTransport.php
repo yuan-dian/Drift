@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Transport;
+use Drift\Debug\Protocol\Channel;
 
 /**
  * 走进程自己的标准输入输出。宿主进程用的就是它。
@@ -20,7 +20,7 @@ use Drift\Debug\Protocol\Transport;
  *
  * @internal 手工工具；不进 V2 判据清单
  */
-final class StdioTransport implements Transport
+final class StdioTransport implements Channel
 {
     /** @var resource */
     private $in;
@@ -80,5 +80,11 @@ final class StdioTransport implements Transport
         if (\is_resource($this->out)) {
             \fflush($this->out);
         }
+    }
+
+    /** 管道对端就是起我的那个进程：它没有"地址"，只有父子关系。 */
+    public function peer(): string
+    {
+        return 'stdio';
     }
 }
