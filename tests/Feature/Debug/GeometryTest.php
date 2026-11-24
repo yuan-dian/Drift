@@ -269,7 +269,7 @@ final class GeometryTest extends SmokeTestCase
     {
         $session = $this->session(360.0, 640.0)['session'];
         $findings = Brief::findings([
-            'frames' => $session->query('frames', ['limit' => 0]),
+            'frames' => $session->query('frames', ['limit' => 0])['frames'],
             'geometry' => $session->query('boxes', ['frame' => 1]),
         ]);
 

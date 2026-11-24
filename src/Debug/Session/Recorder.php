@@ -166,6 +166,15 @@ final class Recorder
 
     private int $frameId = 0;
 
+    /**
+     * 代际号：每次 {@see self::reset()} 自增。
+     *
+     * `reset()` 会把帧号归零，于是下一帧又从 1 开始；任何"按帧号缓存"的派生物
+     * （`Query::$shapeCache`）都会命中上一轮同号帧。缓存以代际为键，
+     * 与 A41 的 `debugSession` 戳同源 —— 那条裁决处理的正是"号码重用"。
+     */
+    private int $generation = 0;
+
     private bool $open = false;
 
     private float $openT = 0.0;
@@ -227,6 +236,12 @@ final class Recorder
     public static function installed(): bool
     {
         return self::$current !== null;
+    }
+
+    /** 代际号：`reset()` 自增。派生缓存以它为键，帧号重用也不会命中旧数据。 */
+    public function generation(): int
+    {
+        return $this->generation;
     }
 
     // -------------------------------------------------------------- 热路径挂点
@@ -1034,6 +1049,7 @@ final class Recorder
     /** 清空帧记录（保留节点登记，id 仍可用）。测试与"重新开始录"用。 */
     public function reset(): void
     {
+        ++$this->generation;
         $this->frames = [];
         $this->frameId = 0;
         $this->open = false;

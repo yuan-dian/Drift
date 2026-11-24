@@ -71,6 +71,84 @@ final class DebugSession implements Session
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
 
+    /**
+     * 查询的**协议形状**：转发到哪个 `Query` 方法、按什么顺序收哪些参数。
+     *
+     * ## 为什么要有这张表
+     *
+     * 参数默认值原先写两处：一次在 `Query` 的方法签名里（给同进程直调），一次在
+     * `query()` 的 `intArg($name, $args, 'limit', 30)` 里（给协议面填缺省）。两处
+     * 一旦漂开**不会报错**，只会让"同一次调用在本地与远端给出不同结果"——而两条
+     * 路径各自看起来都正常，这是最难发现的一类错。
+     *
+     * 表里只有一处是权威：`query()` 按它把命名参数摊成位置参数。`Query` 签名里的
+     * 默认值仍在（它就是 PHP 默认参数，直调时是便利），两者的一致性由判据用反射
+     * 钉住（`DebugSessionTest::testQuerySpecsMatchQuerySignatures`）——漂了立即红。
+     *
+     * ## 写法
+     *
+     * `参数名 => [类型, 默认值?]`，顺序即调用位置顺序：
+     *
+     * - `['int']` —— 必填
+     * - `['int', 30]` —— 可选，缺省 30
+     * - `['?int']` —— 可选，缺省 `null`（**"没给"与"给了 0"是两件事**）
+     * - `['inject', 'treeRoots']` —— 由会话注入，不暴露给协议面
+     *
+     * 参数名必须与 `Query` 方法的形参名**逐字相同**：协议键、规格键、形参名三处
+     * 同一个词，规格表才不需要一张别名映射，而别名表本身就会漂。
+     *
+     * 公开是刻意的：它和 {@see self::QUERIES} 一样是**能力面**——CLI 拿它生成
+     * `--help`、协议层拿它校验入参、判据拿它比对 `Query` 签名。私有的表只能被
+     * 一份代码看见，也就只能被一份代码遵守。
+     *
+     * @var array<string, array{0: string, 1: array<string, array{0: string, 1?: mixed}>}>
+     */
+    public const QUERY_SPECS = [
+        'stats' => ['stats', []],
+        'frames' => ['frames', [
+            'limit' => ['int', 30],
+            'rebuiltOnly' => ['bool', false],
+            'since' => ['?int'],
+        ]],
+        'explain' => ['explain', ['frame' => ['int']]],
+        'why' => ['why', ['node' => ['int'], 'frame' => ['?int']]],
+        'hotspots' => ['hotspots', ['frames' => ['int', 300], 'limit' => ['int', 10]]],
+        'nodes' => ['nodes', ['frames' => ['int', 300], 'limit' => ['int', 10]]],
+        'cascade' => ['cascade', [
+            'frame' => ['int'],
+            'maxDepth' => ['int', 5],
+            'maxChildren' => ['int', 8],
+        ]],
+        'boxes' => ['boxes', ['frame' => ['?int']]],
+        'boxModel' => ['boxModel', ['node' => ['int'], 'frame' => ['?int']]],
+        'constraints' => ['constraints', [
+            'node' => ['int'],
+            'frame' => ['?int'],
+            'maxDepth' => ['int', 12],
+        ]],
+        'network' => ['network', ['request' => ['?int'], 'limit' => ['int', 50]]],
+        'networkBody' => ['networkBody', [
+            'request' => ['int'],
+            'part' => ['string', 'both'],
+            'maxBytes' => ['int', 8192],
+        ]],
+        'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
+        'props' => ['props', [
+            'node' => ['int'],
+            'roots' => ['inject', 'treeRoots'],
+            'maxDepth' => ['int', 3],
+            'maxFields' => ['int', 120],
+        ]],
+        'pick' => ['pick', [
+            'x' => ['float'],
+            'y' => ['float'],
+            'roots' => ['inject', 'treeRootOrigins'],
+        ]],
+    ];
+
+    /** 规格表里的参数项没有第二元素 = 必填。用哨兵而不是 `null`：`?int` 的缺省正是 `null`。 */
+    private const REQUIRED = "\0required";
+
     private bool $closed = false;
 
     /** 最近一次 `pump()` 的时间戳：给"帧外副作用"一个可重放的时刻。 */
@@ -211,76 +289,24 @@ final class DebugSession implements Session
     /**
      * 按名字分派查询。名字必须在 {@see self::QUERIES} 里。
      *
+     * 形状全从 {@see self::QUERY_SPECS} 来：加一个查询是加一行表，不是同时改
+     * `match`、改形参默认值、改参数校验三处。`digest` / `script` 不在表里 ——
+     * 它们不是 `Query` 的方法，是会话自身的状态，走下面两条短路。
+     *
      * @param array<string, mixed> $args
      * @return array<string, mixed>|list<array<string, mixed>>
      */
     public function query(string $name, array $args = []): array
     {
+        $spec = self::QUERY_SPECS[$name] ?? null;
+        if ($spec !== null) {
+            [$method, $params] = $spec;
+
+            return $this->queries->{$method}(...$this->positional($name, $args, $params));
+        }
+
         return match ($name) {
-            'stats' => $this->queries->stats(),
-            'frames' => $this->queries->frames(
-                self::intArg($name, $args, 'limit', 30),
-                self::boolArg($args, 'rebuiltOnly'),
-                self::optIntArg($name, $args, 'since'),
-            ),
-            'explain' => $this->queries->explain(self::needInt($name, $args, 'frame')),
-            'why' => $this->queries->why(
-                self::needInt($name, $args, 'node'),
-                isset($args['frame']) ? (int) $args['frame'] : null,
-            ),
-            'hotspots' => $this->queries->hotspots(
-                self::intArg($name, $args, 'frames', 300),
-                self::intArg($name, $args, 'limit', 10),
-            ),
-            'nodes' => $this->queries->nodes(
-                self::intArg($name, $args, 'frames', 300),
-                self::intArg($name, $args, 'limit', 10),
-            ),
-            'cascade' => $this->queries->cascade(
-                self::needInt($name, $args, 'frame'),
-                self::intArg($name, $args, 'maxDepth', 5),
-                self::intArg($name, $args, 'maxChildren', 8),
-            ),
-            'boxes' => $this->queries->boxes(
-                isset($args['frame']) ? (int) $args['frame'] : null,
-            ),
-            'boxModel' => $this->queries->boxModel(
-                self::needInt($name, $args, 'node'),
-                isset($args['frame']) ? (int) $args['frame'] : null,
-            ),
-            'constraints' => $this->queries->constraints(
-                self::needInt($name, $args, 'node'),
-                isset($args['frame']) ? (int) $args['frame'] : null,
-                self::intArg($name, $args, 'maxDepth', 12),
-            ),
-            'network' => $this->queries->network(
-                isset($args['request']) ? (int) $args['request'] : null,
-                self::intArg($name, $args, 'limit', 50),
-            ),
-            'networkBody' => $this->queries->networkBody(
-                self::needInt($name, $args, 'request'),
-                isset($args['part']) ? (string) $args['part'] : 'both',
-                self::intArg($name, $args, 'maxBytes', 8 * 1024),
-            ),
-            'align' => $this->queries->align(
-                self::needInt($name, $args, 'node'),
-                self::needInt($name, $args, 'frame'),
-            ),
-            'props' => $this->queries->props(
-                self::needInt($name, $args, 'node'),
-                $this->app->treeRoots(),
-                self::intArg($name, $args, 'maxDepth', 3),
-                self::intArg($name, $args, 'maxFields', 120),
-            ),
-            'pick' => $this->queries->pick(
-                self::needFloat($name, $args, 'x'),
-                self::needFloat($name, $args, 'y'),
-                $this->app->treeRootOrigins(),
-            ),
             'digest' => Digest::of($this->recorder),
-            // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像
-            // 因此不必为它加一个动词 —— 一次会话里"怎么驱动的"和"为什么这样"
-            // 从同一个管道取，顺序也就天然一致。
             'script' => $this->script->toArray(),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
@@ -352,69 +378,99 @@ final class DebugSession implements Session
 
     // ------------------------------------------------------------------ 参数
 
-    /** @param array<string, mixed> $args */
-    private static function needInt(string $name, array $args, string $key): int
+    /**
+     * 按规格把命名参数摊成位置参数。
+     *
+     * 顺序来自规格表的键序（PHP 关联数组保序），所以调用形态是
+     * `$this->queries->frames(...)` —— 没有第二套位置映射要维护。
+     *
+     * @param array<string, mixed>                       $args
+     * @param array<string, array{0: string, 1?: mixed}> $params
+     * @return list<mixed>
+     */
+    private function positional(string $name, array $args, array $params): array
     {
-        if (!isset($args[$key]) || (!\is_int($args[$key]) && !\is_string($args[$key]))) {
-            throw new \InvalidArgumentException("查询 {$name} 需要整型参数 {$key}");
+        $out = [];
+        foreach ($params as $key => $spec) {
+            $type = $spec[0];
+
+            // 注入参数不出现在协议面上：调用方无从伪造一棵树的根。
+            if ($type === 'inject') {
+                $out[] = match ($spec[1] ?? '') {
+                    'treeRoots' => $this->app->treeRoots(),
+                    'treeRootOrigins' => $this->app->treeRootOrigins(),
+                    default => throw new \LogicException('规格表里的未知注入源：' . (string) ($spec[1] ?? '')),
+                };
+                continue;
+            }
+
+            // `?int` 不带第二元素就是"可选、缺省 null"—— 可空类型本身已经表达了缺省。
+            $absent = \array_key_exists(1, $spec)
+                ? $spec[1]
+                : (\str_starts_with($type, '?') ? null : self::REQUIRED);
+            $out[] = self::coerce($name, $key, $type, $absent, $args);
         }
 
-        return (int) $args[$key];
+        return $out;
     }
 
     /**
-     * 坐标必须是数（整数或浮点）；`0` 是合法坐标，不能用 `?:` 兜成缺失。
+     * 取一个参数并按规格转成目标类型。
      *
+     * `?int` 缺省为 `null` 而不是 `0`：游标 `since=0` 是"从头给"，"没给 since"
+     * 是"给最近 N 帧"，合并这两件事会让"从头取"变成"取最近的"，差集正好是历史帧。
+     *
+     * @param mixed                $absent 缺省值，或 {@see self::REQUIRED}
      * @param array<string, mixed> $args
      */
-    private static function needFloat(string $name, array $args, string $key): float
+    private static function coerce(string $name, string $key, string $type, mixed $absent, array $args): mixed
     {
-        if (!isset($args[$key]) || (!\is_int($args[$key]) && !\is_float($args[$key]) && !\is_string($args[$key]))) {
+        $nullable = \str_starts_with($type, '?');
+        $base = $nullable ? \substr($type, 1) : $type;
+
+        if (!\array_key_exists($key, $args)) {
+            if ($absent !== self::REQUIRED) {
+                return $absent;
+            }
+            throw new \InvalidArgumentException("查询 {$name} 需要参数 {$key}");
+        }
+
+        $value = $args[$key];
+        if ($value === null) {
+            if ($nullable) {
+                return null;
+            }
+            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 不能为空");
+        }
+
+        return match ($base) {
+            'int' => self::asInt($name, $key, $value),
+            'float' => self::asFloat($name, $key, $value),
+            'bool' => (bool) $value,
+            'string' => (string) $value,
+            default => throw new \LogicException("规格表里的未知参数类型：{$base}"),
+        };
+    }
+
+    private static function asInt(string $name, string $key, mixed $value): int
+    {
+        if (!\is_int($value) && !\is_string($value)) {
+            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是整数");
+        }
+
+        return (int) $value;
+    }
+
+    /** 坐标必须是数；`0` 是合法坐标，不能用 `?:` 兜成缺失。 */
+    private static function asFloat(string $name, string $key, mixed $value): float
+    {
+        if (!\is_int($value) && !\is_float($value) && !\is_string($value)) {
             throw new \InvalidArgumentException("查询 {$name} 需要数值参数 {$key}");
         }
-        if (\is_string($args[$key]) && !\is_numeric($args[$key])) {
+        if (\is_string($value) && !\is_numeric($value)) {
             throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是数值");
         }
 
-        return (float) $args[$key];
-    }
-
-    /** @param array<string, mixed> $args */
-    private static function intArg(string $name, array $args, string $key, int $default): int
-    {
-        if (!isset($args[$key])) {
-            return $default;
-        }
-        if (!\is_int($args[$key]) && !\is_string($args[$key])) {
-            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是整数");
-        }
-
-        return (int) $args[$key];
-    }
-
-    /** @param array<string, mixed> $args */
-    private static function boolArg(array $args, string $key): bool
-    {
-        return (bool) ($args[$key] ?? false);
-    }
-
-    /**
-     * 可选整型：**缺省与 0 是两件事**。
-     *
-     * 游标 `since=0` 是"从头给"，而"没给 since"是"给最近 N 帧"。用 `intArg` 的默认值
-     * 把两者合并，会让"从头取"变成"取最近的"——差集正好是历史帧，而报告看起来完整。
-     *
-     * @param array<string, mixed> $args
-     */
-    private static function optIntArg(string $name, array $args, string $key): ?int
-    {
-        if (!isset($args[$key])) {
-            return null;
-        }
-        if (!\is_int($args[$key]) && !\is_string($args[$key])) {
-            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是整数");
-        }
-
-        return (int) $args[$key];
+        return (float) $value;
     }
 }

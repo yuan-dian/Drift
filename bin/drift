@@ -44,6 +44,86 @@ $build = static function (string $script, array $rest, string $root): array {
 
 $verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
 
+/**
+ * `drift debug <verb> …` —— 八个调试出口共用一个动词。
+ *
+ * 它们共享同一套驱动词表（`--page` / `--frames` / `--click` / `--hold` …），
+ * 只有"问什么"不同。平级子命令时这套词表要背八遍，且拼错一个只能靠
+ * "未知参数"报错猜；收进一个动词后，`drift debug` 本身就是可发现的地方。
+ *
+ * 无 verb（或第一项是选项）时退化成 `report`：`drift debug --page=table` 这类
+ * 既有写法继续工作 —— 收敛入口不该顺手把人的肌肉记忆废掉。
+ */
+$debug = static function (array $rest, string $root): array {
+    $verbs = [
+        'brief' => ['debug-brief.php', '预算内的证据简报：哪里不对、为什么、下一步查哪'],
+        'report' => ['debug-report.php', '帧因果报告：哪些节点重建了、因为谁'],
+        'panel' => ['debug-panel.php', '同一个会话上反复追问：时间轴 + 因果树 + 原因'],
+        'network' => ['debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）'],
+        'node' => ['debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络'],
+        'pick' => ['debug-pick.php', '按视口坐标点选，给命中链与每层路径'],
+        'props' => ['debug-props.php', '按节点读 Widget / State 配置'],
+        'host' => ['debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）'],
+    ];
+
+    $list = static function (array $verbs): void {
+        fwrite(STDOUT, "drift debug <verb> [options]\n\n");
+        foreach ($verbs as $name => [$script, $about]) {
+            fwrite(STDOUT, \sprintf("  %-8s %s\n", $name, $about));
+        }
+        fwrite(STDOUT, "\ndrift debug <verb> --help 看各自的用法；省略 <verb> 等同 report。\n");
+    };
+
+    /**
+     * 用法直接从脚本的文档块里取，不在这里另抄一份。
+     *
+     * 抄一份就会漂：加了参数忘了改这里，`--help` 就成了一份过期的说明书 ——
+     * 而"文档说支持、实际不支持"比没有 `--help` 更费时间。
+     */
+    $usage = static function (string $file): string {
+        $src = @\file_get_contents($file);
+        if ($src === false) {
+            return "（读不到脚本文件：{$file}）\n";
+        }
+        if (\preg_match('/\n \* (用法：(?:\n \* .*)*)/', $src, $m) !== 1) {
+            return "（这个脚本的文档块里没有「用法：」段）\n";
+        }
+
+        $out = [];
+        foreach (\explode("\n", \rtrim($m[1])) as $line) {
+            $out[] = (string) \preg_replace('/^ \* ?/', '', $line);
+        }
+
+        return \implode("\n", $out) . "\n\n完整参数见 " . \str_replace('\\', '/', $file) . "\n";
+    };
+
+    $verb = $rest[0] ?? '';
+
+    if ($verb === 'help' || $verb === '--help' || $verb === '-h') {
+        $list($verbs);
+        exit(0);
+    }
+
+    if (isset($verbs[$verb])) {
+        $file = $root . '/tools/' . $verbs[$verb][0];
+        $next = $rest[1] ?? '';
+        if ($next === '--help' || $next === '-h') {
+            fwrite(STDOUT, $usage($file));
+            exit(0);
+        }
+
+        return [PHP_BINARY, $file, ...array_slice($rest, 1)];
+    }
+
+    if ($verb === '' || \str_starts_with($verb, '-')) {
+        return [PHP_BINARY, $root . '/tools/debug-report.php', ...$rest];
+    }
+
+    // 拼错的 verb 落到这里：列出可用动词，而不是替人猜一个。
+    $list($verbs);
+    exit(2);
+};
+
 $cmd = match ($name) {
     // S4：V1 gate 已退役，三个历史脚本名作别名一律转发 V2 runner。
     //     V1 专有参数（--fast / --only=… / --group=…）不再存在，传入由 verify 判为未知参数。
@@ -61,11 +141,10 @@ $cmd = match ($name) {
         $root . '/tools/probe-window.py',
         ...$rest,
     ],
-    // 帧因果：无头驱动 + 查询，属手工工具（按需调用、不进 CI）。
-    'debug' => $build('debug-report.php', $rest, $root),
-    // 帧因果的面板：在一次会话上反复追问（时间轴 + 因果树 + 原因）。
+    // 调试：一个动词 + 八个出口，见 $debug。下面两个平级名（`panel` / `brief`）
+    // 是收敛前的旧入口，过渡期保留薄转发，下一轮删。
+    'debug' => $debug($rest, $root),
     'panel' => $build('debug-panel.php', $rest, $root),
-    // 证据简报：把一次会话压成"哪里不对、为什么、下一步查哪"。
     'brief' => $build('debug-brief.php', $rest, $root),
     // 帧因果的宿主进程：由 `debug --remote` 起，也可手工对着 stdio 发消息。
     'debug-host' => $build('debug-host.php', $rest, $root),
@@ -107,10 +186,16 @@ drift —— 统一开发入口
 
   手工工具（按需调用，不进 V2 判据清单 / CI）
   composer preview -- --page=<Widget 的 php>   T0 无头 layout+paint → SVG/PNG
-  composer debug -- <AppClass> --key=Tab      无头跑 N 帧，看哪些节点重建、因为谁
-  composer panel -- --page=table --click=x,y  同一个会话里反复追问：时间轴 + 因果树 + 原因
-  composer debug-host                         帧因果宿主进程（调试协议的另一端，通常由 --remote 起）
-  composer brief -- --page=table              证据简报：跑一遍，压成预算内的发现 + 裁剪账
+  composer debug -- <verb> …                  调试出口总入口（省略 <verb> 等同 report）
+        brief    预算内的证据简报：哪里不对、为什么、下一步查哪
+        report   帧因果报告：哪些节点重建了、因为谁（旧写法 `--page=…` 仍可用）
+        panel    同一个会话上反复追问：时间轴 + 因果树 + 原因
+        network  网络骨架与报文（按 requestId，脱敏 + 截断）
+        node     一个节点的三域对齐：因果 / 几何 / 网络
+        pick     按视口坐标点选，给命中链与每层路径
+        props    按节点读 Widget / State 配置
+        host     宿主进程（调试协议另一端，通常由 --remote 起）
+     旧名 composer panel / composer brief / composer debug-host 过渡期仍是别名
   composer codegen                            T1 tpc 翻译层门（秒级，不编译）
   composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价
   composer dual-equiv                         T2 解释器 ↔ dev 壳逐值语义等价

@@ -106,19 +106,81 @@ final class DebugSessionTest extends SmokeTestCase
             }
             check('未知查询抛异常，不返回空数组', $threw);
 
-            // 反向：`match` 里的分支不能有名单外的名字（否则能力面漏报）。
-            $path = \dirname(__DIR__, 3) . '/src/App/DebugSession.php';
-            $src = \is_file($path) ? (string) \file_get_contents($path) : '';
-            check('能读到会话源码（路径漂了就别假装通过）', $src !== '', $path);
+            // 双向闭合：能力面（QUERIES）与协议形状（QUERY_SPECS + 会话自产的两条）
+            // 必须一一对应。少一条 → 有查询派发不了；多一条 → 名单在吹牛。
+            // 旧判据是靠正则读源码里的 `match` 分支，改成规格表后就永远失配 ——
+            // 而"失配时假绿"比没有判据更糟。
+            $selfServed = ['digest', 'script'];
+            $declared = \array_keys(DebugSession::QUERIES);
+            $shaped = \array_merge(\array_keys(DebugSession::QUERY_SPECS), $selfServed);
+            \sort($declared);
+            \sort($shaped);
+            check(
+                'QUERIES 与 QUERY_SPECS 双向闭合',
+                $declared === $shaped,
+                'declared=' . \json_encode($declared) . ' shaped=' . \json_encode($shaped),
+            );
 
-            // 查询名有 camelCase（boxModel / networkBody）：只匹配小写会漏掉它们，
-            // 判据就成了摆设。这里覆盖全字母名。
-            \preg_match_all("/'([a-zA-Z]+)' => \\\$this->queries->/", $src, $m);
-            $found = $m[1] ?? [];
-            check('正则至少命中一条分支（失配时不许假绿）', $found !== [], 'found=' . \json_encode($found));
+            // 规格表是协议面的唯一事实源：它说有几个参数、什么类型、缺省多少，
+            // `Query` 的方法签名就必须是那个样子。两处谈不拢时不会报错，只会让
+            // "同一次调用在本地与远端给出不同结果"——两条路径各自看起来都正常。
+            $mismatch = [];
+            $reflection = new \ReflectionClass(\Drift\Debug\Session\Query::class);
+            foreach (DebugSession::QUERY_SPECS as $name => [$method, $params]) {
+                if (!$reflection->hasMethod($method)) {
+                    $mismatch[] = "{$name}: Query 上没有方法 {$method}";
+                    continue;
+                }
+                $actual = $reflection->getMethod($method)->getParameters();
+                if (\count($actual) !== \count($params)) {
+                    $mismatch[] = \sprintf('%s: 参数个数 %d ≠ %d', $name, \count($params), \count($actual));
+                    continue;
+                }
 
-            $extra = \array_diff($found, \array_keys(DebugSession::QUERIES));
-            check('match 分支都在 QUERIES 名单里', $extra === [], 'extra=' . \json_encode($extra));
+                $i = 0;
+                foreach ($params as $key => $spec) {
+                    $p = $actual[$i++];
+                    $type = $spec[0];
+                    $extra = $spec[1] ?? null;
+
+                    if ($p->getName() !== $key) {
+                        $mismatch[] = "{$name}.{$key}: 形参名是 \${$p->getName()}";
+                        continue;
+                    }
+
+                    $rt = $p->getType();
+                    $want = $type === 'inject' ? 'array' : \ltrim($type, '?');
+                    if (!$rt instanceof \ReflectionNamedType || $rt->getName() !== $want
+                        || ($type !== 'inject' && \str_starts_with($type, '?') !== $rt->allowsNull())) {
+                        $mismatch[] = \sprintf('%s.%s: 类型不是 %s', $name, $key, $type);
+                        continue;
+                    }
+                    if ($type === 'inject') {
+                        continue;
+                    }
+
+                    $optional = \array_key_exists(1, $spec) || \str_starts_with($type, '?');
+                    if ($p->isOptional() !== $optional) {
+                        $mismatch[] = \sprintf(
+                            '%s.%s: 可选性应为「%s」',
+                            $name,
+                            $key,
+                            $optional ? '可选' : '必填',
+                        );
+                        continue;
+                    }
+                    if ($optional && $p->isDefaultValueAvailable() && $p->getDefaultValue() !== $extra) {
+                        $mismatch[] = \sprintf(
+                            '%s.%s: 缺省 %s ≠ %s',
+                            $name,
+                            $key,
+                            \json_encode($p->getDefaultValue()),
+                            \json_encode($extra),
+                        );
+                    }
+                }
+            }
+            check('QUERY_SPECS 与 Query 签名逐参一致', $mismatch === [], \implode('；', $mismatch));
         } finally {
             $session->close();
         }
@@ -134,7 +196,7 @@ final class DebugSessionTest extends SmokeTestCase
             QueryState::$last?->increment();
             $session->pump(16.0);
 
-            $frames = $session->query('frames');
+            $frames = $session->query('frames')['frames'];
             check('帧表不是空的', $frames !== []);
             $withCost = 0;
             foreach ($frames as $frame) {

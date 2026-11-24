@@ -65,7 +65,7 @@ final class QueryTest extends SmokeTestCase
 
             $query = new Query($recorder);
 
-            $rows = $query->frames();
+            $rows = $query->frames()['frames'];
             check(
                 '帧序升序、三帧都在',
                 \array_column($rows, 'id') === [1, 2, 3],
@@ -83,8 +83,8 @@ final class QueryTest extends SmokeTestCase
             );
             check(
                 'rebuiltOnly 过滤掉静止帧',
-                \count($query->frames(30, true)) === 2,
-                'rows=' . \count($query->frames(30, true)),
+                \count($query->frames(30, true)['frames']) === 2,
+                'rows=' . \count($query->frames(30, true)['frames']),
             );
 
             $explain = $query->explain(2);
@@ -236,29 +236,39 @@ final class QueryTest extends SmokeTestCase
 
             $ids = static fn(array $rows): array => \array_map(static fn(array $r): int => (int) $r['id'], $rows);
 
-            check('从头给是全部四帧', $ids($query->frames(0, false, 0)) === [1, 2, 3, 4], \json_encode($ids($query->frames(0, false, 0))));
+            check('从头给是全部四帧', $ids($query->frames(0, false, 0)['frames']) === [1, 2, 3, 4], \json_encode($ids($query->frames(0, false, 0)['frames'])));
             check(
                 '游标只给更新的帧',
-                $ids($query->frames(0, false, 2)) === [3, 4],
-                \json_encode($ids($query->frames(0, false, 2))),
+                $ids($query->frames(0, false, 2)['frames']) === [3, 4],
+                \json_encode($ids($query->frames(0, false, 2)['frames'])),
             );
             check(
                 '游标在最新帧之后 ⇒ 空（不是退回"最近 N 帧"）',
-                $query->frames(0, false, 4) === [],
-                \json_encode($query->frames(0, false, 4)),
+                $query->frames(0, false, 4)['frames'] === [],
+                \json_encode($query->frames(0, false, 4)['frames']),
+            );
+            check(
+                '窗口自报：from / to / 容量',
+                $query->frames(0, false, 0)['window'] === ['from' => 1, 'to' => 4, 'capacity' => 600, 'frames' => 4],
+                \json_encode($query->frames(0, false, 0)['window']),
+            );
+            check(
+                '游标在窗口内时 dropped 为 0',
+                $query->frames(0, false, 2)['dropped'] === 0,
+                'dropped=' . $query->frames(0, false, 2)['dropped'],
             );
             // 没有 since 时 limit 是"最近 N 帧"；两者在 limit 恰好等于剩余帧数时
             // **看起来一样**，所以真正的区分点是上面"从头给"那一条：
             // `since=0` 给全部，而不给 since 只给最近 N 帧。
             check(
                 '无游标时是最近 N 帧',
-                $ids($query->frames(2)) === [3, 4],
-                \json_encode($ids($query->frames(2))),
+                $ids($query->frames(2)['frames']) === [3, 4],
+                \json_encode($ids($query->frames(2)['frames'])),
             );
             check(
                 '游标与过滤叠加：只要重建过的未读帧',
-                $ids($query->frames(0, true, 1)) === [2],
-                \json_encode($ids($query->frames(0, true, 1))),
+                $ids($query->frames(0, true, 1)['frames']) === [2],
+                \json_encode($ids($query->frames(0, true, 1)['frames'])),
             );
         } finally {
             Recorder::uninstall();
@@ -736,6 +746,55 @@ final class QueryTest extends SmokeTestCase
         }
 
         return $sum;
+    }
+
+    /**
+     * `reset()` 之后，旧骨架不许被同号帧命中。
+     *
+     * 骨架缓存的键是**帧号**，而 `reset()` 把帧号归零 —— 下一轮又从 1 开始。缓存
+     * 不清时，新记录会配上旧结构，`cascade` 于是交出一棵**自洽、可读、全错**的树：
+     * 每个子树规模都算得通，因为那棵树确实存在过，只是不在这一轮。这种错没有异常、
+     * 没有告警，只有"报告和刚才那次运行长得一模一样"这一个线索。
+     *
+     * 判据用最硬的一对矛盾：第二轮什么都没写，`rebuilt` 必须是 0；若缓存泄漏，
+     * `roots` 仍是非空的旧森林 —— 0 个重建却有一棵树，除了缓存没有别的解释。
+     */
+    public function testSkeletonCacheDoesNotSurviveAReset(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());   // 1：挂载
+            QueryState::$last?->increment();
+            $app->frame(16.0, $this->constraints());  // 2：一次写入 → 建骨架
+
+            $query = new Query($recorder);
+            $before = $query->cascade(2);
+            check(
+                '第一轮确实建了骨架（否则这条判据没测到东西）',
+                $before['rebuilt'] > 0,
+                'rebuilt=' . $before['rebuilt'],
+            );
+
+            $recorder->reset();
+
+            $app->frame(32.0, $this->constraints());  // 又是 1：挂载帧
+            $app->frame(48.0, $this->constraints());  // 又是 2：没有任何写入
+
+            $after = $query->cascade(2);
+            check('第二轮同号帧没有重建', $after['rebuilt'] === 0, 'rebuilt=' . $after['rebuilt']);
+            check(
+                '旧骨架不许被同号帧命中',
+                $after['roots'] === [],
+                'roots=' . \json_encode(\array_map(
+                    static fn(array $r): string => (string) $r['type'] . '×' . (int) $r['count'],
+                    $after['roots'],
+                )),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
     }
 
     /**

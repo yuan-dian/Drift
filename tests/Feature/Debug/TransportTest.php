@@ -46,7 +46,7 @@ final class TransportTest extends SmokeTestCase
     /** @return array<string, mixed> 只收"必须逐值相同"的东西 */
     private function collect(SessionQueries $session): array
     {
-        $raw = $session->query('frames', ['limit' => 10]);
+        $raw = $session->query('frames', ['limit' => 10])['frames'];
 
         return [
             'digest' => $session->query('digest'),
@@ -55,7 +55,7 @@ final class TransportTest extends SmokeTestCase
             'hotspots' => $session->query('hotspots', ['frames' => 0, 'limit' => 0]),
             'script' => $session->query('script'),
             'frames' => self::stripTime($raw),
-            'sinceOne' => self::stripTime($session->query('frames', ['since' => 1, 'limit' => 10])),
+            'sinceOne' => self::stripTime($session->query('frames', ['since' => 1, 'limit' => 10])['frames']),
             // 原始帧表另留一份：时间列不参与相等，但要证明它确实过了管道。
             'raw' => $raw,
         ];

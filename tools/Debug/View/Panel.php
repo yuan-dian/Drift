@@ -306,9 +306,9 @@ final class Panel
 
     private function refreshFrames(): void
     {
-        /** @var list<array<string, mixed>> $frames */
-        $frames = $this->session->query('frames', ['limit' => 500]);
-        $this->frames = $frames;
+        /** @var array{frames: list<array<string, mixed>>} $page */
+        $page = $this->session->query('frames', ['limit' => 500]);
+        $this->frames = $page['frames'];
     }
 
     /** 最慢的**有重建**的帧；全都没有重建就退回最后一帧。 */

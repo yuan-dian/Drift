@@ -35,6 +35,9 @@ final class Query
     /** @var array<int, array<string, mixed>> 帧号 => 该帧的森林骨架（复用于 cascade / 聚合） */
     private array $shapeCache = [];
 
+    /** `shapeCache` 属于哪一代；与 `Recorder::generation()` 不一致就整体丢弃。 */
+    private int $cacheGeneration = -1;
+
     private readonly PropReader $reader;
 
     public function __construct(private readonly Recorder $recorder)
@@ -277,11 +280,25 @@ final class Query
      *
      * @return list<array<string, mixed>>
      */
+    /**
+     * @return array{frames: list<array<string, mixed>>, window: array<string, mixed>, dropped: int, since: int|null}
+     */
     public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
+        $all = $this->recorder->frames();
+        $window = [
+            'from' => $all === [] ? 0 : (int) \array_key_first($all),
+            'to' => $all === [] ? 0 : (int) \array_key_last($all),
+            'capacity' => (int) ($this->recorder->stats()['capacity'] ?? 0),
+            'frames' => \count($all),
+        ];
+
+        $out = [];
+        $dropped = 0;
         if ($since !== null) {
-            $out = [];
-            foreach ($this->recorder->frames() as $id => $frame) {
+            // 游标落后到窗口外：中间那段真的没了，不是"这段没有重建"。
+            $dropped = $window['from'] > 0 ? \max(0, $window['from'] - $since - 1) : 0;
+            foreach ($all as $id => $frame) {
                 if ($id <= $since) {
                     continue;
                 }
@@ -293,19 +310,17 @@ final class Query
 
             // 游标语义下 `limit` 是"最多给这么多"，从**最老的未读**开始：
             // 丢弃最新的会让读者以为"就这些"，而最老的丢不掉才是真相。
-            return $limit > 0 ? \array_slice($out, 0, $limit) : $out;
-        }
-
-        $window = $this->window($limit);
-        $out = [];
-        foreach ($window as $frame) {
-            if ($rebuiltOnly && $frame->rebuilt === []) {
-                continue;
+            $out = $limit > 0 ? \array_slice($out, 0, $limit) : $out;
+        } else {
+            foreach ($this->window($limit) as $frame) {
+                if ($rebuiltOnly && $frame->rebuilt === []) {
+                    continue;
+                }
+                $out[] = $this->frameSummary($frame);
             }
-            $out[] = $this->frameSummary($frame);
         }
 
-        return $out;
+        return ['frames' => $out, 'window' => $window, 'dropped' => $dropped, 'since' => $since];
     }
 
     /** @return array<string, mixed> */
@@ -327,23 +342,27 @@ final class Query
     /**
      * 单帧展开：谁重建了、根因怎么分布。
      *
+     * 参数名与协议键同名（`frame`）：`query('explain', ['frame' => 2])` 里的键、
+     * 这里的变量、`explain(2)` 的地址，三处必须是同一个词 —— 否则规格表要靠一张
+     * 别名映射才能核对，而别名表本身就会漂。
+     *
      * @return array<string, mixed>
      */
-    public function explain(int $frameId): array
+    public function explain(int $frame): array
     {
-        $frame = $this->recorder->frame($frameId);
-        if ($frame === null) {
-            throw new \InvalidArgumentException("没有这一帧：{$frameId}（缓冲窗口之外或尚未发生）");
+        $record = $this->recorder->frame($frame);
+        if ($record === null) {
+            throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
         }
 
         $rebuilt = [];
-        foreach ($frame->rebuilt as $id) {
+        foreach ($record->rebuilt as $id) {
             $rebuilt[] = ['id' => $id, 'path' => $this->recorder->pathOf($id)];
         }
 
         $byKind = ['state' => 0, 'parent' => 0, 'unknown' => 0];
         $byRoot = [];
-        foreach ($frame->causes as $edge) {
+        foreach ($record->causes as $edge) {
             if (isset($byKind[$edge->kind])) {
                 ++$byKind[$edge->kind];
             }
@@ -359,14 +378,14 @@ final class Query
         \usort($roots, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
 
         return [
-            'id' => $frame->id,
-            't' => $frame->t,
-            'cost' => $frame->costMs,
-            'stages' => $frame->stages,
-            'stageMs' => FrameRecord::toMs($frame->stageNs),
-            'unattributedMs' => $frame->unattributedMs(),
-            'settleSkipped' => $frame->settleSkipped,
-            'paintSkipped' => $frame->paintSkipped,
+            'id' => $record->id,
+            't' => $record->t,
+            'cost' => $record->costMs,
+            'stages' => $record->stages,
+            'stageMs' => FrameRecord::toMs($record->stageNs),
+            'unattributedMs' => $record->unattributedMs(),
+            'settleSkipped' => $record->settleSkipped,
+            'paintSkipped' => $record->paintSkipped,
             'rebuilt' => $rebuilt,
             'byKind' => $byKind,
             'roots' => $roots,
@@ -378,9 +397,9 @@ final class Query
      *
      * @return array<string, mixed>
      */
-    public function why(int $nodeId, ?int $frameId = null): array
+    public function why(int $node, ?int $frame = null): array
     {
-        return $this->recorder->why($nodeId, $frameId);
+        return $this->recorder->why($node, $frame);
     }
 
     /**
@@ -420,27 +439,34 @@ final class Query
      * @param int $maxChildren  每层最多留几**组**（其余计入 `omitted` / `hidden`）
      * @return array<string, mixed>
      */
-    public function cascade(int $frameId, int $maxDepth = 5, int $maxChildren = 8): array
+    public function cascade(int $frame, int $maxDepth = 5, int $maxChildren = 8): array
     {
-        $frame = $this->recorder->frame($frameId);
-        if ($frame === null) {
-            throw new \InvalidArgumentException("没有这一帧：{$frameId}（缓冲窗口之外或尚未发生）");
+        $record = $this->recorder->frame($frame);
+        if ($record === null) {
+            throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
         }
 
-        $shape = $this->shapeOf($frame);
+        $shape = $this->shapeOf($record);
         /** @var array<int, list<int>> $children */
         $children = $shape['children'];
         /** @var array<int, int> $subtree */
         $subtree = $shape['subtree'];
-        $causeOf = $frame->causeOf();
-        $signature = $this->signatures($frame, $children, $causeOf, $subtree);
+        $causeOf = $record->causeOf();
+        $signature = $this->signatures($record, $children, $causeOf, $subtree);
 
+        // 写入 ≠ 重建：帧跳过 settle、或元素在 settle 前被卸载时，`state` 边落在这一帧
+        // 却没有对应的 rebuild。从 `rebuilt` 取会漏掉它们，而 `explain` 的 byKind 数是
+        // 全部 state 边 —— 两处差一条、且没有解释。所以从 causes 取，并标明有没有落地。
+        $rebuiltSet = [];
+        foreach ($record->rebuilt as $id) {
+            $rebuiltSet[$id] = true;
+        }
         $writes = [];
-        foreach ($frame->rebuilt as $id) {
-            $edge = $causeOf[$id] ?? null;
-            if ($edge === null || $edge->kind !== 'state') {
+        foreach ($record->causes as $edge) {
+            if ($edge->kind !== 'state') {
                 continue;
             }
+            $id = $edge->toId;
             $writes[] = [
                 'id' => $id,
                 'path' => $this->recorder->pathOf($id),
@@ -448,6 +474,7 @@ final class Query
                 'site' => $edge->site,
                 'detail' => $edge->detail,
                 'subtree' => $subtree[$id] ?? 1,
+                'rebuilt' => isset($rebuiltSet[$id]),
             ];
         }
         \usort($writes, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
@@ -460,14 +487,14 @@ final class Query
         [$tree, $omitted, $hidden] = $this->foldGroups($shape['roots'], $children, $causeOf, $subtree, $signature, 0, $maxDepth, $maxChildren);
 
         return [
-            'frame' => $frame->id,
-            'rebuilt' => \count($frame->rebuilt),
+            'frame' => $record->id,
+            'rebuilt' => \count($record->rebuilt),
             'depthMax' => (int) $shape['depthMax'],
             'roots' => $tree,
             'omitted' => $omitted,
             'hidden' => $hidden,
             'writes' => $writes,
-            'byType' => $this->byType($frame),
+            'byType' => $this->byType($record),
         ];
     }
 
@@ -1104,6 +1131,13 @@ final class Query
      */
     private function shapeOf(FrameRecord $frame): array
     {
+        // `reset()` 把帧号归零，下一轮又从 1 开始；旧骨架留在缓存里就会被同号帧命中，
+        // 于是新因果配旧结构 —— 一棵自洽、可读、全错的树。代际变了先整体丢弃。
+        $generation = $this->recorder->generation();
+        if ($generation !== $this->cacheGeneration) {
+            $this->shapeCache = [];
+            $this->cacheGeneration = $generation;
+        }
         if (isset($this->shapeCache[$frame->id])) {
             /** @var array{children: array<int, list<int>>, roots: list<int>, subtree: array<int, int>, depthMax: int, parent: array<int, int>} */
             return $this->shapeCache[$frame->id];

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
+use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Brief;
 use Drift\Dev\Debug\View\Finding;
 use PHPUnit\Framework\TestCase;
@@ -545,5 +546,113 @@ final class BriefTest extends TestCase
             \json_encode($first['findings']),
             \json_encode($second['findings']),
         );
+    }
+
+    /**
+     * 每条会真正产出的规则都要登记版本，且登记表里不许有死键。
+     *
+     * 上一轮的版本表按设计文档里的简写抄（`slow` / `group` / `reshape`），而代码
+     * 实际产出的是 `slow-frame` / `unvirtualized-group` / `constraint-tightened` ——
+     * 键名全错，`version()` 对所有真实发现返回 0。"版本"那一层看着在、实际从未
+     * 生效，且不报错、不告警。这类错只能靠**双向闭合**抓：产出侧 ⊆ 登记表，
+     * 登记表 ⊆ 产出侧，多一个少一个都红。
+     */
+    public function testEveryRuleInUseIsRegisteredWithAVersion(): void
+    {
+        $hitAll = self::facts([
+            'frames' => [['id' => 2, 'cost' => 40.0, 'rebuilt' => 200]],
+            'window' => ['from' => 1, 'to' => 2, 'count' => 6, 'capacity' => 600],
+            'explain' => ['id' => 2, 'cost' => 40.0, 'stageMs' => ['settle' => 30.0], 'unattributedMs' => 0.0, 'rebuilt' => [1]],
+            'cascade' => self::cascade([
+                self::node(5, 'PageShell', [
+                    self::node(6, 'Column', [self::node(7, 'Cell')], ['count' => 12, 'subtree' => 3]),
+                ], ['subtree' => 180]),
+            ], 200),
+            'cascadeQuery' => ['frame' => 2, 'maxDepth' => 12, 'maxChildren' => 0],
+            'nodes' => [['id' => 5, 'path' => 'PageShell > Column > Cell', 'rebuilds' => 6, 'self' => 2, 'inherited' => 4]],
+            'geometry' => self::geometry([
+                self::row(2, -1, 'Column', [
+                    'inner' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 0.0, 'maxH' => 600.0],
+                ]),
+                self::row(11, 2, 'TableBox', [
+                    'applied' => ['minW' => 240.0, 'maxW' => 240.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'size' => ['w' => 240.0, 'h' => 600.0],
+                ]),
+                self::row(3, -1, 'TableBox', [
+                    'inner' => ['minW' => 320.0, 'maxW' => 320.0, 'minH' => 0.0, 'maxH' => 600.0],
+                ]),
+                self::row(12, 3, 'Column', [
+                    'applied' => ['minW' => 536.0, 'maxW' => 536.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'size' => ['w' => 536.0, 'h' => 600.0],
+                ]),
+            ]),
+        ]);
+
+        $groups = [
+            'hit-all' => $hitAll,
+            'clean' => self::facts([
+                'cascade' => self::cascade([self::node(1, 'PageShell', [self::node(2, 'Text')])]),
+                'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 0],
+                'frames' => [['id' => 1, 'cost' => 1.0, 'rebuilt' => 1]],
+            ]),
+            'inconclusive' => self::facts([
+                'cascade' => self::cascade([self::node(1, 'PageShell', [], ['cut' => true, 'omitted' => 3])]),
+                'cascadeQuery' => ['frame' => 1, 'maxDepth' => 4, 'maxChildren' => 0],
+            ]),
+            'geometry-inconclusive' => self::facts(['geometry' => self::geometry([], ['frame' => 5, 'window' => [
+                'frames' => 1, 'capacity' => 60, 'from' => 10, 'to' => 12, 'nodes' => 1,
+            ]])]),
+        ];
+
+        $seen = [];
+        foreach ($groups as $label => $facts) {
+            foreach (self::findings($facts) as $one) {
+                $seen[$one->rule] = true;
+                self::assertGreaterThan(0, $one->version(), \sprintf(
+                    '%s 组产出的规则 %s 未在 Finding::RULE_VERSIONS 登记版本',
+                    $label,
+                    $one->rule,
+                ));
+            }
+        }
+
+        $inUse = \array_keys($seen);
+        $registered = \array_keys(Finding::RULE_VERSIONS);
+        \sort($inUse);
+        \sort($registered);
+        self::assertSame($registered, $inUse, '登记表与实际产出的规则集合必须双向闭合');
+    }
+
+    /**
+     * 阈值必须真能改：动一个数就换一组结论，且两条入口（构造 / `with()`）等价。
+     *
+     * 常量化的阈值只有一份，换个项目就错（60Hz 16.7ms、120Hz 8.3ms；表格页的扇出
+     * 阈值不是表单页的量级），而"要改代码才能用的判据"没人敢用。这条判据顺带守
+     * `with()` 的容错：拼错的键要被忽略，但不能让整条覆盖一起失效。
+     */
+    public function testThresholdsAreRecomputableNotHardcoded(): void
+    {
+        $facts = self::facts(['frames' => [['id' => 1, 'cost' => 1.0, 'rebuilt' => 0]]]);
+
+        $thresholdOfSlowFrame = static function (array $facts, Thresholds $t): ?string {
+            foreach (Brief::findings($facts, $t) as $one) {
+                if ($one->rule === 'slow-frame') {
+                    return $one->threshold;
+                }
+            }
+
+            return null;
+        };
+
+        self::assertNull($thresholdOfSlowFrame($facts, Thresholds::default()), '1.0ms 在默认 16.7ms 下不该算慢帧');
+        self::assertSame('0.5ms', $thresholdOfSlowFrame($facts, new Thresholds(slowMs: 0.5)));
+
+        $viaWith = Thresholds::default()->with(['slowMs' => 0.5]);
+        self::assertSame('0.5ms', $thresholdOfSlowFrame($facts, $viaWith), '`with()` 与构造必须等价');
+
+        $withTypo = Thresholds::default()->with(['slowMs' => 0.5, 'sloMs' => 99.0]);
+        self::assertSame('0.5ms', $thresholdOfSlowFrame($facts, $withTypo), '拼错的键忽略，不能连对的键一起丢');
+        self::assertSame(0.5, $withTypo->toArray()['slowMs']);
+        self::assertArrayNotHasKey('sloMs', $withTypo->toArray());
     }
 }

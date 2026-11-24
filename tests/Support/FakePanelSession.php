@@ -51,11 +51,21 @@ final class FakePanelSession implements Session
                 'lastCostMs' => 0.0,
                 'lastRebuilt' => 0,
             ],
-            'frames' => $this->sliceFrames(
-                (int) ($args['limit'] ?? 30),
-                isset($args['since']) ? (int) $args['since'] : null,
-                (bool) ($args['rebuiltOnly'] ?? false),
-            ),
+            'frames' => [
+                'frames' => $this->sliceFrames(
+                    (int) ($args['limit'] ?? 30),
+                    isset($args['since']) ? (int) $args['since'] : null,
+                    (bool) ($args['rebuiltOnly'] ?? false),
+                ),
+                'window' => [
+                    'from' => $this->frames === [] ? 0 : (int) $this->frames[0]['id'],
+                    'to' => $this->frames === [] ? 0 : (int) $this->frames[\count($this->frames) - 1]['id'],
+                    'capacity' => $this->capacity,
+                    'frames' => \count($this->frames),
+                ],
+                'dropped' => 0,
+                'since' => isset($args['since']) ? (int) $args['since'] : null,
+            ],
             'cascade' => $this->cascades[(int) ($args['frame'] ?? 0)]
                 ?? throw new \InvalidArgumentException('FakePanelSession 没有这一帧：' . (string) ($args['frame'] ?? '')),
             'why' => $this->whys[(int) ($args['node'] ?? 0)] ?? [

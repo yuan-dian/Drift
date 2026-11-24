@@ -171,7 +171,10 @@ try {
 function gather(SessionQueries $session, string $label): array
 {
     $stats = $session->query('stats');
-    $frames = $session->query('frames', ['limit' => 0]);
+    // `frames` 自 schema 收口后返回信封（`frames` / `window` / `dropped`）：裸列表在类型上
+    // 表达不了"漏了 N 帧"，而简报的每个数字都要能说清自己覆盖了哪一段。
+    $framePage = $session->query('frames', ['limit' => 0]);
+    $frames = $framePage['frames'];
     // `frames: 0` 与 `limit: 0` 是两件事：前者是**聚合窗口**（默认只看最近 300 帧），
     // 后者是**返回条数**（默认 10 条）。只关掉后者，聚合仍然只数最近 300 帧 ——
     // 而表头写的是整个窗口，"出现 3 帧"就会与 `frames` 的帧数对不上。

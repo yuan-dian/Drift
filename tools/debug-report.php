@@ -360,7 +360,7 @@ function run_once(array $o): array
 
         // 帧表：`limit` 就是**这一轮实际推了几帧**。原来按"--frames + 动作 × hold"推算，
         // 那是"打算推几帧"；`--at` 截断时两者不是一回事，报告会把没发生的帧也列进去。
-        $recorded = $session->query('frames', ['limit' => \max(1, \count($frameTimes))]);
+        $recorded = $session->query('frames', ['limit' => \max(1, \count($frameTimes))])['frames'];
         $wall = [];
         foreach ($frameTimes as [$id, $ms]) {
             $wall[$id] = $ms;

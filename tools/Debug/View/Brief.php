@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
+use Drift\Debug\Session\Thresholds;
+
 /**
  * 证据简报：把已经记下来的事实压成"预算内可读、且自报裁剪"的一段文本。
  *
@@ -31,34 +33,8 @@ namespace Drift\Dev\Debug\View;
  */
 final class Brief
 {
-    /** 一帧的预算（60Hz）。超了就是结论，不是排序项。 */
-    public const float SLOW_MS = 16.7;
-
-    /** 单帧重建超过这个数，才值得问"是不是扇出"。 */
-    public const int FANOUT_NODES = 100;
-
-    /** 且最大的那一支要占到六成 —— 否则是"很多支各自重建"，不是扇出。 */
-    public const int FANOUT_SHARE = 60;
-
-    /** 跨帧重复：窗口里一半以上的帧都在重建它。 */
-    public const int REPEAT_PERCENT = 50;
-
-    /** 同形兄弟达到这个数，基本就是"该虚拟化却没虚拟化"。 */
-    public const int GROUP_SAME = 8;
-
-    /**
-     * 父子约束上限相差多少才算一次改写。
-     *
-     * 8px 以下多半是浮点尾数或 1px 描边，报出来只是噪声；阈值本身要写进发现，
-     * 否则读者不知道"216px"到底算不算异常。
-     */
-    public const float RESHAPE_PX = 8.0;
-
-    /** 还要超过父内容盒的 10%，避免大盒上的小抖动被当结论。 */
-    public const float RESHAPE_PERCENT = 10.0;
-
-    /** 只看本身够大的盒：1px 图标被"从 760 收到 1"骗出来不是发现，是噪声。 */
-    public const float RESHAPE_MIN_SIZE = 100.0;
+    // 阈值不住在这里：它们随调用方走（CLI 可传、Web 可传另一组、证据包要带着它导出），
+    // 见 {@see Thresholds}。常量只有一份，换个刷新率或换类项目就只能改代码。
 
     /**
      * 从事实里算出发现（确定性规则，按固定顺序）。
@@ -66,11 +42,12 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    public static function findings(array $facts): array
+    public static function findings(array $facts, ?Thresholds $t = null): array
     {
+        $t ??= Thresholds::default();
         $found = [];
 
-        foreach (self::slowFindings($facts) as $one) {
+        foreach (self::slowFindings($facts, $t) as $one) {
             $found[] = $one;
         }
 
@@ -79,21 +56,21 @@ final class Brief
             $found[] = $stage;
         }
 
-        foreach (self::fanoutFindings($facts) as $one) {
+        foreach (self::fanoutFindings($facts, $t) as $one) {
             $found[] = $one;
         }
 
-        $group = self::groupFinding($facts);
+        $group = self::groupFinding($facts, $t);
         if ($group !== null) {
             $found[] = $group;
         }
 
-        $repeat = self::repeatFindings($facts);
+        $repeat = self::repeatFindings($facts, $t);
         foreach ($repeat as $one) {
             $found[] = $one;
         }
 
-        foreach (self::reshapeFindings($facts) as $one) {
+        foreach (self::reshapeFindings($facts, $t) as $one) {
             $found[] = $one;
         }
 
@@ -115,9 +92,9 @@ final class Brief
                     'clean',
                     \sprintf(
                         '窗口内没有触发任何规则（慢帧 %.1fms / 扇出 %d / 重复 %d%%）',
-                        self::SLOW_MS,
-                        self::FANOUT_NODES,
-                        self::REPEAT_PERCENT,
+                        $t->slowMs,
+                        $t->fanoutNodes,
+                        $t->repeatPercent,
                     ),
                     $address,
                     '0 条',
@@ -148,10 +125,11 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return array{lines: list<string>, omitted: array<string, int|string>, findings: list<Finding>}
      */
-    public static function project(array $facts, int $budget = 40, int $width = 100): array
+    public static function project(array $facts, int $budget = 40, int $width = 100, ?Thresholds $t = null): array
     {
-        $findings = self::findings($facts);
-        $head = self::header($facts, $width);
+        $t ??= Thresholds::default();
+        $findings = self::findings($facts, $t);
+        $head = self::header($facts, $width, $t);
         $detail = self::detail($facts, $width);
 
         // 固定开销：表头三行 + "发现 N 条" + 空行 + 裁剪账一行。
@@ -205,11 +183,11 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    private static function slowFindings(array $facts): array
+    private static function slowFindings(array $facts, Thresholds $t): array
     {
         $slow = [];
         foreach (self::listOf($facts, 'frames') as $frame) {
-            if ((float) ($frame['cost'] ?? 0.0) > self::SLOW_MS) {
+            if ((float) ($frame['cost'] ?? 0.0) > $t->slowMs) {
                 $slow[] = $frame;
             }
         }
@@ -223,10 +201,10 @@ final class Brief
             $cost = (float) $frame['cost'];
             $out[] = new Finding(
                 'slow-frame',
-                \sprintf('慢帧 #%d %.2fms，超预算 %.1f×', $id, $cost, $cost / self::SLOW_MS),
+                \sprintf('慢帧 #%d %.2fms，超预算 %.1f×', $id, $cost, $cost / $t->slowMs),
                 'frame:' . $id,
                 \sprintf('%.2fms', $cost),
-                \sprintf('%.1fms', self::SLOW_MS),
+                \sprintf('%.1fms', $t->slowMs),
                 \sprintf('explain(%d).cost 应给出同一数值', $id),
             );
         }
@@ -275,11 +253,11 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    private static function fanoutFindings(array $facts): array
+    private static function fanoutFindings(array $facts, Thresholds $t): array
     {
         $cascade = self::mapOf($facts, 'cascade');
         $rebuilt = (int) ($cascade['rebuilt'] ?? 0);
-        if ($rebuilt < self::FANOUT_NODES) {
+        if ($rebuilt < $t->fanoutNodes) {
             return [];
         }
 
@@ -297,7 +275,7 @@ final class Brief
         $topCount = \max(1, (int) ($top['count'] ?? 1));
         $subtree = (int) ($top['subtree'] ?? 1) * $topCount;
         $share = (int) \round($subtree * 100 / $rebuilt);
-        if ($share < self::FANOUT_SHARE) {
+        if ($share < $t->fanoutShare) {
             return [];
         }
 
@@ -314,7 +292,7 @@ final class Brief
             ),
             self::addressOf($frameId, $topId),
             (string) $rebuilt,
-            '≥ ' . self::FANOUT_NODES . ' 且单支 ≥ ' . self::FANOUT_SHARE . '%',
+            '≥ ' . $t->fanoutNodes . ' 且单支 ≥ ' . $t->fanoutShare . '%',
             \sprintf('cascade(%d).roots[0] 与 rebuilt', $frameId),
         )];
     }
@@ -328,7 +306,7 @@ final class Brief
      *
      * @param array<string, mixed> $facts
      */
-    private static function groupFinding(array $facts): ?Finding
+    private static function groupFinding(array $facts, Thresholds $t): ?Finding
     {
         $cascade = self::mapOf($facts, 'cascade');
         $roots = self::listOf($cascade, 'roots');
@@ -336,7 +314,7 @@ final class Brief
             return null;
         }
 
-        $group = self::biggestGroup($roots);
+        $group = self::biggestGroup($roots, $t);
         if ($group === []) {
             return null;
         }
@@ -355,7 +333,7 @@ final class Brief
             ),
             self::addressOf($frameId, (int) ($group['id'] ?? 0)),
             (string) $count,
-            '≥ ' . self::GROUP_SAME,
+            '≥ ' . $t->groupSame,
             \sprintf('cascade(%d).roots[].count 沿 children 往下找', $frameId),
         );
     }
@@ -371,7 +349,7 @@ final class Brief
      * @param list<array<string, mixed>> $nodes
      * @return array<string, mixed>
      */
-    private static function biggestGroup(array $nodes, int $depth = 0): array
+    private static function biggestGroup(array $nodes, Thresholds $t, int $depth = 0): array
     {
         if ($depth > 32) {
             return [];
@@ -381,7 +359,7 @@ final class Brief
         $bestCount = 0;
         foreach ($nodes as $node) {
             $count = (int) ($node['count'] ?? 1);
-            if ($count >= self::GROUP_SAME && $count > $bestCount) {
+            if ($count >= $t->groupSame && $count > $bestCount) {
                 $best = $node;
                 $bestCount = $count;
             }
@@ -389,7 +367,7 @@ final class Brief
             if ($kids === []) {
                 continue;
             }
-            $deep = self::biggestGroup($kids, $depth + 1);
+            $deep = self::biggestGroup($kids, $t, $depth + 1);
             $deepCount = (int) ($deep['count'] ?? 0);
             if ($deepCount > $bestCount) {
                 $best = $deep;
@@ -404,7 +382,7 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    private static function repeatFindings(array $facts): array
+    private static function repeatFindings(array $facts, Thresholds $t): array
     {
         $window = self::mapOf($facts, 'window');
         $count = (int) ($window['count'] ?? 0);
@@ -412,7 +390,7 @@ final class Brief
             return [];
         }
 
-        $need = (int) \ceil($count * self::REPEAT_PERCENT / 100);
+        $need = (int) \ceil($count * $t->repeatPercent / 100);
         $out = [];
         foreach (self::listOf($facts, 'nodes') as $node) {
             $rebuilds = (int) ($node['rebuilds'] ?? 0);
@@ -457,7 +435,7 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    private static function reshapeFindings(array $facts): array
+    private static function reshapeFindings(array $facts, Thresholds $t): array
     {
         $geometry = self::mapOf($facts, 'geometry');
         $rows = self::listOf($geometry, 'rows');
@@ -481,7 +459,7 @@ final class Brief
             // 两个轴各算一次。只比宽度会漏掉"行高被压到 12"那一类 —— 高度改写
             // 与宽度改写是同一个问题在不同轴上的表现，规则却只看了宽度。
             foreach (['w', 'h'] as $axis) {
-                $one = self::reshapeAxis($parent, $row, $axis);
+                $one = self::reshapeAxis($parent, $row, $axis, $t);
                 if ($one !== null) {
                     $candidates[] = $one;
                 }
@@ -527,7 +505,7 @@ final class Brief
                     $candidate['received'],
                     $candidate['delta'],
                 ),
-                \sprintf('≥ %.0fpx 且 ≥ 父内容%s %.0f%%', self::RESHAPE_PX, $axisName, self::RESHAPE_PERCENT),
+                \sprintf('≥ %.0fpx 且 ≥ 父内容%s %.0f%%', $t->reshapePx, $axisName, $t->reshapePercent),
                 \sprintf(
                     'constraints(%d, %d).chain 的 %s → %s 跳；boxModel(%d, %d)',
                     (int) $candidate['node'], $frame, $candidate['from'], $candidate['to'],
@@ -552,7 +530,7 @@ final class Brief
      * @param array<string, mixed> $row
      * @return array<string, mixed>|null
      */
-    private static function reshapeAxis(array $parent, array $row, string $axis): ?array
+    private static function reshapeAxis(array $parent, array $row, string $axis, Thresholds $t): ?array
     {
         $key = $axis === 'w' ? 'maxW' : 'maxH';
         $sizeKey = $axis === 'w' ? 'w' : 'h';
@@ -561,13 +539,13 @@ final class Brief
         $received = self::finiteMax(self::mapOf($row, 'applied'), $key);
         $actual = self::finiteMax(self::mapOf($row, 'size'), $sizeKey);
         if ($offered === null || $received === null || $actual === null
-            || $offered <= 0.0 || $actual < self::RESHAPE_MIN_SIZE) {
+            || $offered <= 0.0 || $actual < $t->reshapeMinSize) {
             return null;
         }
         // `INF` 不参与比较：父允许任意尺寸时，"子比它小"不是改写。
         $delta = $received - $offered;
-        if (\abs($delta) < self::RESHAPE_PX
-            || \abs($delta) * 100.0 < self::RESHAPE_PERCENT * $offered) {
+        if (\abs($delta) < $t->reshapePx
+            || \abs($delta) * 100.0 < $t->reshapePercent * $offered) {
             return null;
         }
         $box = self::finiteMax(self::mapOf($row, 'box'), $sizeKey);
@@ -762,7 +740,7 @@ final class Brief
      * @param array<string, mixed> $facts
      * @return list<string>
      */
-    private static function header(array $facts, int $width): array
+    private static function header(array $facts, int $width, Thresholds $t): array
     {
         $stats = self::mapOf($facts, 'stats');
         $window = self::mapOf($facts, 'window');
@@ -782,9 +760,9 @@ final class Brief
         $line = \sprintf(
             '指纹 %s · 规则 慢帧 %.1fms / 扇出 %d / 重复 %d%%',
             $finger === '' ? '—' : \substr($finger, 0, 12),
-            self::SLOW_MS,
-            self::FANOUT_NODES,
-            self::REPEAT_PERCENT,
+            $t->slowMs,
+            $t->fanoutNodes,
+            $t->repeatPercent,
         );
 
         return [
