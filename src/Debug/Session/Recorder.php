@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Debug\Session;
 
+use Drift\Input\InputEvent;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
 use Drift\Widget\State;
@@ -29,6 +30,16 @@ use Drift\Widget\State;
  *
  * 记录里只有 id 与父 id：环形缓冲裁剪时不能拖住一棵已卸载的树。元素被销毁后
  * 它的 id 仍能在历史帧里解释清楚（`pathOf()` 读的是登记时记下的类名与父链）。
+ *
+ * ## 为什么同时记一份脚本
+ *
+ * 帧记录回答"为什么变成这样"，脚本回答"当时是怎么驱动的"。缺了后者，
+ * 记录只可读、不可复现 —— 而"第 37 帧闪了一下"这种问题，重跑一遍才是终点。
+ * 脚本在**同一个挂点**上记（帧边界 + 派发入口），不另起一套旁路：
+ * 驱动方式与因果事实必须来自同一次运行，否则拼起来的现场是假的。
+ *
+ * 脚本可以为 `null`（直接 `install()` 的测试只关心因果边）。传了才记，
+ * 少一次序列化开销，也避免"没人读的脚本悄悄吃掉内存"。
  *
  * @api
  */
@@ -76,13 +87,15 @@ final class Recorder
 
     private float $openT = 0.0;
 
-    public function __construct(private readonly int $capacity = self::DEFAULT_CAPACITY)
-    {
+    public function __construct(
+        private readonly int $capacity = self::DEFAULT_CAPACITY,
+        private readonly ?Script $script = null,
+    ) {
     }
 
     // ---------------------------------------------------------------- 生命周期
 
-    public static function install(int $capacity = self::DEFAULT_CAPACITY): self
+    public static function install(int $capacity = self::DEFAULT_CAPACITY, ?Script $script = null): self
     {
         // 段耗时不用第二套计时：`SurfaceProfile` 已经是全仓唯一的"计一段"入口
         // （九段里的 settle/layout/paint 在 `Frame::run()` 里记，壳的 stage() 拿不到）。
@@ -94,7 +107,7 @@ final class Recorder
             }
         }
 
-        return self::$current = new self($capacity);
+        return self::$current = new self($capacity, $script);
     }
 
     public static function uninstall(): void
@@ -128,6 +141,9 @@ final class Recorder
         ++$this->frameId;
         $this->open = true;
         $this->openT = $t;
+        // 帧步骤带的是**注入的时间戳**，不是墙钟：脚本要能在另一台机器上重演出
+        // 同一串时刻，而墙钟每跑一次都不一样。
+        $this->script?->add(Step::frame($t));
         // 量具是累计账：不清零就会把上一帧的耗时记到这一帧头上。
         if (self::$ownsProfile) {
             SurfaceProfile::reset();
@@ -207,7 +223,50 @@ final class Recorder
         $this->openCauses[] = new Edge($kind, $parentId === 0 ? null : $parentId, $id, '', '');
     }
 
+    /**
+     * 引擎收到一条输入（`Application::dispatchInput()` 的入口）。
+     *
+     * ★ 记**标注前**的事件：`TapTracker` 会在派发链里按时间标"第几次点击"，
+     *   这里记原值，重放时由同一条链重新算。记标注后的值会让重放**再标一次**
+     *   （双击变三击），而那种偏差在报告里看不出来。
+     */
+    public function noteInput(InputEvent $event, ?float $t): void
+    {
+        $this->script?->add(InputScript::pack($event, $t));
+    }
+
+    /**
+     * 驱动方的具名副作用（异步结算、换页……）。
+     *
+     * ★ 没有它，异步页的脚本"帧和输入都对、数据永远不到"：报告会显示一整段
+     *   静止画面，看起来像"这页什么都不做"。
+     *
+     * @param array<string, scalar|null> $args
+     */
+    public function noteEffect(string $name, array $args, ?float $t): void
+    {
+        $this->script?->add(Step::effect($name, $args, $t));
+    }
+
     // ------------------------------------------------------------------ 查询
+
+    /** 录制中的脚本；没开脚本时为 `null`。 */
+    public function script(): ?Script
+    {
+        return $this->script;
+    }
+
+    /**
+     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名。
+     *
+     * 摘要与将来的跨进程传输都要它：光有一串 id，换台机器就不知道是谁。
+     *
+     * @return array<int, array{p: int, c: string}>
+     */
+    public function nodeIndex(): array
+    {
+        return $this->nodes;
+    }
 
     /** 节点 id；首次见到时登记父链与类名（父 id 解析一次，`-1` = 根）。 */
     public function idOf(Element $element): int
@@ -369,6 +428,11 @@ final class Recorder
     public static function tapStateWrite(State $state): void
     {
         self::$current?->noteStateWrite($state);
+    }
+
+    public static function tapInput(InputEvent $event, ?float $t): void
+    {
+        self::$current?->noteInput($event, $t);
     }
 
     public static function tapRebuild(Element $element): void

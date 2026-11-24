@@ -39,6 +39,10 @@ require __DIR__ . '/autoload.php';
 
 use Drift\App\Application;
 use Drift\App\DebugSession;
+use Drift\App\Replay;
+use Drift\Debug\Session\Digest;
+use Drift\Debug\Session\Script;
+use Drift\Debug\Session\Step;
 use Drift\Dev\Smoke\App\PageHostApplication;
 use Drift\Dev\Smoke\App\PendingRows;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -55,24 +59,35 @@ $page = null;
 $frames = 1;
 $width = 800;
 $height = 600;
+$widthSet = false;
+$heightSet = false;
 $json = false;
 $top = 10;
 $why = null;
 $whyFrame = null;
 $rows = 0;
+$rowsSet = false;
 $hold = 1;
+$at = null;
+$savePath = null;
+$replayPath = null;
+$verify = false;
 /** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
 $steps = [];
 
 foreach (\array_slice($argv, 1) as $arg) {
     if ($arg === '--json') {
         $json = true;
+    } elseif ($arg === '--verify') {
+        $verify = true;
     } elseif (\str_starts_with($arg, '--frames=')) {
         $frames = \max(1, (int) \substr($arg, 9));
     } elseif (\str_starts_with($arg, '--width=')) {
         $width = \max(1, (int) \substr($arg, 8));
+        $widthSet = true;
     } elseif (\str_starts_with($arg, '--height=')) {
         $height = \max(1, (int) \substr($arg, 9));
+        $heightSet = true;
     } elseif (\str_starts_with($arg, '--top=')) {
         $top = \max(1, (int) \substr($arg, 6));
     } elseif (\str_starts_with($arg, '--why=')) {
@@ -83,6 +98,13 @@ foreach (\array_slice($argv, 1) as $arg) {
         $hold = \max(1, (int) \substr($arg, 7));
     } elseif (\str_starts_with($arg, '--rows=')) {
         $rows = \max(0, (int) \substr($arg, 7));
+        $rowsSet = true;
+    } elseif (\str_starts_with($arg, '--at=')) {
+        $at = \max(1, (int) \substr($arg, 5));
+    } elseif (\str_starts_with($arg, '--save=')) {
+        $savePath = \substr($arg, 7);
+    } elseif (\str_starts_with($arg, '--replay=')) {
+        $replayPath = \substr($arg, 9);
     } elseif (\str_starts_with($arg, '--page=')) {
         $page = \substr($arg, 7);
     } elseif ($arg === '--resolve') {
@@ -103,114 +125,142 @@ foreach (\array_slice($argv, 1) as $arg) {
     }
 }
 
+// ---------------------------------------------------------------- 脚本：读入
+//
+// 脚本自带目标、视口与环境（`rows` 之类）⇒ 重放时命令行不必再重复一遍。
+// 但**命令行显式给了就以命令行为准**，然后校验两者一致：拿 `table` 的脚本跑
+// `form` 会得到一份语法正确、语义全错的报告，而报告本身看不出来 —— 这种
+// "看起来跑通了"是本项目最不想要的形态。
+$replay = null;
+if ($replayPath !== null) {
+    $raw = @\file_get_contents($replayPath);
+    if ($raw === false) {
+        \fwrite(\STDERR, "读不到脚本：{$replayPath}\n");
+        exit(2);
+    }
+    try {
+        $replay = Script::fromJson($raw);
+    } catch (\Throwable $e) {
+        \fwrite(\STDERR, "脚本不能用（{$replayPath}）：" . $e->getMessage() . "\n");
+        exit(2);
+    }
+
+    if (!$widthSet) {
+        $width = \max(1, (int) $replay->width);
+    }
+    if (!$heightSet) {
+        $height = \max(1, (int) $replay->height);
+    }
+    if (!$rowsSet && $replay->metaValue('rows') !== null) {
+        $rows = \max(0, (int) $replay->metaValue('rows'));
+    }
+    if ($page === null && $target === null) {
+        $target = $replay->target;
+    }
+}
+
 $label = $page ?? $target;
 if ($label === null) {
     \fwrite(\STDERR, "用法：drift debug <AppClass|路由id> [--page=<路由id>] [--frames=N] [--rows=N]\n");
     \fwrite(\STDERR, "              [--key=Tab] [--text=abc] [--click=x,y[,键]] [--wheel=x,y,格[,h]]\n");
     \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--frame=N] [--top=N] [--width=W] [--height=H] [--json]\n");
+    \fwrite(\STDERR, "              [--save=<脚本.json>] [--replay=<脚本.json> [--at=N] [--verify]]\n");
     exit(2);
 }
 
-$source = $rows > 0 ? new PendingRows($rows) : null;
-$fetch = $source === null ? null : $source->fetch(...);
-
-try {
-    $app = target_app($page ?? $target, $page !== null, $fetch);
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
+if ($replay !== null) {
+    $mismatch = [];
+    if ($replay->target !== $label) {
+        $mismatch[] = "脚本是给 {$replay->target} 录的，当前目标是 {$label}";
+    }
+    if ((int) $replay->width !== $width || (int) $replay->height !== $height) {
+        $mismatch[] = \sprintf(
+            '脚本视口是 %dx%d，当前是 %dx%d',
+            (int) $replay->width,
+            (int) $replay->height,
+            $width,
+            $height,
+        );
+    }
+    if ($mismatch !== []) {
+        \fwrite(\STDERR, "脚本与本次运行对不上：\n  " . \implode("\n  ", $mismatch) . "\n");
+        \fwrite(\STDERR, "（确实要换目标，请重新录一份：--save=<路径>）\n");
+        exit(2);
+    }
+    if ($steps !== []) {
+        \fwrite(\STDERR, "重放时不能再给 --key/--text/--click/--wheel/--resolve：动作已经在脚本里\n");
+        exit(2);
+    }
+    if ($replay->truncated()) {
+        \fwrite(\STDERR, '脚本被截断（超过 ' . Script::MAX_STEPS . " 步），后半段没记下来，不能重放\n");
+        exit(2);
+    }
+    // 异步脚本必须带上同样的取数替身：少了它页面会退回自己的默认源（或直接挂死），
+    // 重放就变成"一整段静止画面"，而报告本身看不出少了什么。
+    $needsResolve = false;
+    foreach ($replay->steps() as $step) {
+        if ($step->kind === Step::EFFECT && ($step->data['name'] ?? '') === 'resolve') {
+            $needsResolve = true;
+            break;
+        }
+    }
+    if ($needsResolve && $rows <= 0) {
+        \fwrite(\STDERR, "脚本里有异步结算（resolve），但本次 rows=0：重放必须用同样的 --rows=N 提供取数替身\n");
+        exit(2);
+    }
 }
 
-if (!$app instanceof Application) {
-    \fwrite(\STDERR, "{$label} 不是 Application 子类\n");
+if ($verify && $replay === null) {
+    \fwrite(\STDERR, "--verify 需要 --replay=<脚本>：它做的是\"同一脚本跑两遍\"\n");
     exit(2);
 }
 
 $constraints = BoxConstraints::tight(new Size((float) $width, (float) $height));
 
-// ★ 挂载**不在任何帧里**（`buildRoot()` + 首次 layout 都发生在 `attach()` 内），
-//   而"打开这一页要多久"恰恰是页面级调试的第二个问题。单独量、单独报，别让它
-//   混进首帧 —— 混进去会让"首帧成本"这一列骗人。
-$mountStart = \hrtime(true);
-$app->attach(new SurfaceProbe(), $constraints);
-$mountMs = (\hrtime(true) - $mountStart) / 1e6;
-
-$session = DebugSession::open($app, $constraints);
+$options = [
+    'label' => (string) $label,
+    'page' => $page !== null,
+    'rows' => $rows,
+    'constraints' => $constraints,
+    'width' => $width,
+    'height' => $height,
+    'script' => $replay,
+    'steps' => $steps,
+    'frames' => $frames,
+    'hold' => $hold,
+    'at' => $at,
+    'top' => $top,
+    'why' => $why,
+    'whyFrame' => $whyFrame,
+];
 
 try {
-    $t = 0.0;
-    /** @var array<int, float> 帧号 => 整帧墙钟（毫秒） */
-    $wall = [];
-    $ms = $session->pump($t);
-    $wall[$session->recorder()->lastFrameId()] = $ms;
-    for ($i = 1; $i < $frames; ++$i) {
-        $t += 16.0;
-        $ms = $session->pump($t);
-        $wall[$session->recorder()->lastFrameId()] = $ms;
+    if ($verify) {
+        $a = run_once($options);
+        $b = run_once($options);
+    } else {
+        $run = run_once($options);
     }
-
-    foreach ($steps as [$kind, $spec]) {
-        $t += 16.0;
-        act($session, $kind, $spec, $t, $source);
-        // ★ 动作之后推 `--hold` 帧而不是固定 1 帧：滚轮 / 回弹 / 淡出都是**动画**，
-        //   一帧只够"开始"，位移与重绘在后面几帧。固定 1 帧会让"滚了但什么都没变"。
-        for ($i = 0; $i < $hold; ++$i) {
-            $t += $i === 0 ? 0.0 : 16.0;
-            $ms = $session->pump($t);
-            $wall[$session->recorder()->lastFrameId()] = $ms;
-        }
-    }
-
-    $recorded = $session->query('frames', ['limit' => $frames + \count($steps) * $hold + 1]);
-    foreach ($recorded as $i => $frame) {
-        $recorded[$i]['wall'] = $wall[(int) $frame['id']] ?? $frame['cost'];
-    }
-
-    // 逐帧归因走 `explain`：不另读 Recorder，免得 CLI 与面板各写一份"怎么展开一帧"。
-    $attribution = [];
-    foreach ($recorded as $frame) {
-        if ((int) $frame['causes'] === 0) {
-            continue;
-        }
-        $detail = $session->query('explain', ['frame' => (int) $frame['id']]);
-        $attribution[] = [
-            'id' => (int) $detail['id'],
-            't' => (float) $detail['t'],
-            'rebuilt' => \count($detail['rebuilt']),
-            'byKind' => $detail['byKind'],
-            'roots' => $detail['roots'],
-        ];
-    }
-
-    $allHotspots = $session->query('hotspots', ['frames' => 0, 'limit' => 0]);
-    $allNodes = $session->query('nodes', ['frames' => 0, 'limit' => 0]);
-
-    // 因果森林只取最慢帧：读者问"为什么这么慢"问的是那一帧，不是平均。
-    $slowestId = slowest_frame($recorded);
-    $cascade = $slowestId > 0
-        ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => 3, 'maxChildren' => 3])
-        : null;
-
-    $report = [
-        'app' => $label,
-        'viewport' => [$width, $height],
-        'mountMs' => $mountMs,
-        'stats' => $session->query('stats'),
-        'frames' => $recorded,
-        'attribution' => $attribution,
-        // ★ 排行榜被 `--top` 截断时必须说还有多少：319 个节点各重建一次被切成
-        //   十行，读者会以为"就这十个"。这正是本项目最不想要的"看起来完整"。
-        //   `limit=0` = 全量，两次扫描算完再切，避免同一份聚合跑四遍。
-        'hotspots' => \array_slice($allHotspots, 0, $top),
-        'hiddenHotspots' => \max(0, \count($allHotspots) - $top),
-        'nodes' => \array_slice($allNodes, 0, $top),
-        'hiddenNodes' => \max(0, \count($allNodes) - $top),
-        'why' => $why === null ? null : $session->query('why', $whyFrame === null ? ['node' => $why] : ['node' => $why, 'frame' => $whyFrame]),
-        'cascade' => $cascade,
-    ];
-} finally {
-    $session->close();
+} catch (\Throwable $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
 }
+
+if ($verify) {
+    exit(report_verify($a, $b, (string) $replayPath, $json) ? 0 : 1);
+}
+
+if ($savePath !== null) {
+    if (@\file_put_contents($savePath, $run['script']->json()) === false) {
+        \fwrite(\STDERR, "写不了脚本：{$savePath}\n");
+        exit(2);
+    }
+    \fwrite(\STDERR, "脚本已存 {$savePath}（{$run['script']->count()} 步）\n");
+}
+
+$report = $run['report'];
+$report['digest'] = $run['digest'];
+$report['script'] = script_summary($run['script']);
 
 if ($json) {
     \fwrite(\STDOUT, \json_encode($report, \JSON_UNESCAPED_UNICODE | \JSON_PRETTY_PRINT) . "\n");
@@ -219,6 +269,274 @@ if ($json) {
 
 render_text($report);
 exit(0);
+
+// -------------------------------------------------------------------- 驱动
+
+/**
+ * 跑一次：建应用 → 挂表面 → 开会话 → 驱帧 → 收报告。
+ *
+ * 一次调用 = 一次完整运行。`--verify` 因此只是"调两遍再比"，
+ * 不需要另写一条"为了比对而跑的路径"—— 那种路径迟早和正常路径分叉。
+ *
+ * @param array{
+ *     label: string, page: bool, rows: int, constraints: BoxConstraints,
+ *     width: int, height: int, script: Script|null,
+ *     steps: list<array{0: string, 1: string}>, frames: int, hold: int, at: int|null,
+ *     top: int, why: int|null, whyFrame: int|null
+ * } $o
+ *
+ * @return array{report: array<string, mixed>, script: Script, digest: array<string, mixed>, canonical: array<int, array<string, mixed>>}
+ */
+function run_once(array $o): array
+{
+    $source = $o['rows'] > 0 ? new PendingRows($o['rows']) : null;
+
+    $app = target_app($o['label'], $o['page'], $source === null ? null : $source->fetch(...));
+    if (!$app instanceof Application) {
+        throw new \RuntimeException("{$o['label']} 不是 Application 子类");
+    }
+
+    // ★ 挂载**不在任何帧里**（`buildRoot()` + 首次 layout 都发生在 `attach()` 内），
+    //   而"打开这一页要多久"恰恰是页面级调试的第二个问题。单独量、单独报，别让它
+    //   混进首帧 —— 混进去会让"首帧成本"这一列骗人。
+    $mountStart = \hrtime(true);
+    $app->attach(new SurfaceProbe(), $o['constraints']);
+    $mountMs = (\hrtime(true) - $mountStart) / 1e6;
+
+    $meta = $o['rows'] > 0 ? ['rows' => $o['rows']] : [];
+    // 重放时给会话一个**分叉**（同目标同视口、步骤为空）：录制落在分叉上，原脚本
+    // 保持不可变。两次运行共用同一份脚本，谁也别偷偷改它。
+    $skeleton = $o['script'] === null
+        ? new Script($o['label'], (float) $o['width'], (float) $o['height'], $meta)
+        : $o['script']->fork();
+
+    $session = DebugSession::open($app, $o['constraints'], script: $skeleton);
+
+    try {
+        if ($source !== null) {
+            $session->defineEffect('resolve', static function () use ($source): bool {
+                return $source->resolveNext();
+            });
+        }
+
+        // ★ 墙钟按**推进顺序**收集，最后与帧号顺序对齐，不写 `$wall[lastFrameId()] = pump()`：
+        //   那种写法里下标**先于**右侧求值（实测差一帧 —— 第 1 行显示的是第 2 帧的耗时），
+        //   而且帧被容量裁剪时会错得更远。顺序是唯一可靠的对应关系。
+        /** @var list<float> $times 按推进顺序 */
+        $times = [];
+        $pump = static function (float $t) use ($session, &$times): void {
+            $times[] = $session->pump($t);
+        };
+
+        if ($o['script'] !== null) {
+            Replay::apply($session, $o['script'], [], $o['at'], static function (int $id, float $ms) use (&$times): void {
+                $times[] = $ms;
+            });
+        } else {
+            $t = 0.0;
+            $pump($t);
+            $count = 1;
+            for ($i = 1; $i < $o['frames']; ++$i) {
+                if ($o['at'] !== null && $count >= $o['at']) {
+                    break;
+                }
+                $t += 16.0;
+                $pump($t);
+                ++$count;
+            }
+
+            foreach ($o['steps'] as [$kind, $spec]) {
+                if ($o['at'] !== null && $count >= $o['at']) {
+                    break;
+                }
+                $t += 16.0;
+                act($session, $kind, $spec, $t, $source);
+                // ★ 动作之后推 `--hold` 帧而不是固定 1 帧：滚轮 / 回弹 / 淡出都是**动画**，
+                //   一帧只够"开始"，位移与重绘在后面几帧。固定 1 帧会让"滚了但什么都没变"。
+                for ($i = 0; $i < $o['hold']; ++$i) {
+                    if ($o['at'] !== null && $count >= $o['at']) {
+                        break;
+                    }
+                    $t += $i === 0 ? 0.0 : 16.0;
+                    $pump($t);
+                    ++$count;
+                }
+            }
+        }
+
+        $limit = $o['script'] !== null
+            ? \max(1, $o['at'] ?? $o['script']->count(Step::FRAME))
+            : \max(1, $o['frames'] + \count($o['steps']) * $o['hold']);
+        $recorded = $session->query('frames', ['limit' => $limit]);
+        $ids = \array_keys($session->recorder()->frames());
+        $wall = \count($ids) === \count($times) ? \array_combine($ids, $times) : [];
+        foreach ($recorded as $i => $frame) {
+            $recorded[$i]['wall'] = $wall[(int) $frame['id']] ?? (float) $frame['cost'];
+        }
+
+        // 逐帧归因走 `explain`：不另读 Recorder，免得 CLI 与面板各写一份"怎么展开一帧"。
+        $attribution = [];
+        foreach ($recorded as $frame) {
+            if ((int) $frame['causes'] === 0) {
+                continue;
+            }
+            $detail = $session->query('explain', ['frame' => (int) $frame['id']]);
+            $attribution[] = [
+                'id' => (int) $detail['id'],
+                't' => (float) $detail['t'],
+                'rebuilt' => \count($detail['rebuilt']),
+                'byKind' => $detail['byKind'],
+                'roots' => $detail['roots'],
+            ];
+        }
+
+        $allHotspots = $session->query('hotspots', ['frames' => 0, 'limit' => 0]);
+        $allNodes = $session->query('nodes', ['frames' => 0, 'limit' => 0]);
+
+        // 因果森林只取最慢帧：读者问"为什么这么慢"问的是那一帧，不是平均。
+        $slowestId = slowest_frame($recorded);
+        $cascade = $slowestId > 0
+            ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => 3, 'maxChildren' => 3])
+            : null;
+
+        $report = [
+            'app' => $o['label'],
+            'replayed' => $o['script'] !== null,
+            'viewport' => [$o['width'], $o['height']],
+            'mountMs' => $mountMs,
+            'stats' => $session->query('stats'),
+            'frames' => $recorded,
+            'attribution' => $attribution,
+            // ★ 排行榜被 `--top` 截断时必须说还有多少：319 个节点各重建一次被切成
+            //   十行，读者会以为"就这十个"。这正是本项目最不想要的"看起来完整"。
+            //   `limit=0` = 全量，两次扫描算完再切，避免同一份聚合跑四遍。
+            'hotspots' => \array_slice($allHotspots, 0, $o['top']),
+            'hiddenHotspots' => \max(0, \count($allHotspots) - $o['top']),
+            'nodes' => \array_slice($allNodes, 0, $o['top']),
+            'hiddenNodes' => \max(0, \count($allNodes) - $o['top']),
+            'why' => $o['why'] === null ? null : $session->query('why', $o['whyFrame'] === null ? ['node' => $o['why']] : ['node' => $o['why'], 'frame' => $o['whyFrame']]),
+            'cascade' => $cascade,
+        ];
+
+        $canonical = [];
+        foreach ($session->recorder()->frames() as $id => $frame) {
+            $canonical[(int) $id] = Digest::ofFrame($frame);
+        }
+
+        return [
+            'report' => $report,
+            'script' => $session->script(),
+            'digest' => Digest::of($session->recorder()),
+            'canonical' => $canonical,
+        ];
+    } finally {
+        $session->close();
+    }
+}
+
+/** 脚本的一句话概览（报告头与 JSON 共用）。 */
+function script_summary(Script $script): array
+{
+    return [
+        'steps' => $script->count(),
+        'frames' => $script->count(Step::FRAME),
+        'inputs' => $script->count(Step::KEY) + $script->count(Step::POINTER) + $script->count(Step::SCROLL),
+        'effects' => $script->count(Step::EFFECT),
+        'digest' => Digest::short($script->digest()),
+        'truncated' => $script->truncated(),
+    ];
+}
+
+/**
+ * "同一脚本跑两遍"的判据报告。
+ *
+ * 比较三级：驱动摘要（脚本是否一样）→ 节点表 → 逐帧因果。分开报是必要的：
+ * 驱动相同而因果不同 ⇒ **引擎不确定**（真 bug）；驱动就不同 ⇒ 脚本读写出错，
+ * 谈因果没意义。混成一句"不一致"，下次就得重新查是哪一种。
+ *
+ * @param array<string, mixed> $a
+ * @param array<string, mixed> $b
+ */
+function report_verify(array $a, array $b, string $path, bool $json): bool
+{
+    /** @var array<string, mixed> $sa */
+    $sa = $a['script']->toArray();
+    /** @var array<string, mixed> $sb */
+    $sb = $b['script']->toArray();
+    $scriptSame = $a['script']->digest() === $b['script']->digest();
+    $nodesSame = $a['digest']['nodes'] === $b['digest']['nodes'];
+    $digestSame = $a['digest']['digest'] === $b['digest']['digest'];
+
+    /** @var array<int, string> $fa */
+    $fa = $a['digest']['frames'];
+    /** @var array<int, string> $fb */
+    $fb = $b['digest']['frames'];
+    $firstDiff = null;
+    foreach ($fa as $id => $hash) {
+        if (($fb[$id] ?? null) !== $hash) {
+            $firstDiff = $id;
+            break;
+        }
+    }
+    $ok = $scriptSame && $nodesSame && $digestSame && $firstDiff === null;
+
+    if ($json) {
+        \fwrite(\STDOUT, \json_encode([
+            'ok' => $ok,
+            'script' => $path,
+            'steps' => \count($sa['steps'] ?? []),
+            'frames' => \count($fa),
+            'scriptDigestSame' => $scriptSame,
+            'nodesSame' => $nodesSame,
+            'digestSame' => $digestSame,
+            'firstDifferentFrame' => $firstDiff,
+            'a' => ['nodes' => Digest::short((string) $a['digest']['nodes']), 'digest' => Digest::short((string) $a['digest']['digest'])],
+            'b' => ['nodes' => Digest::short((string) $b['digest']['nodes']), 'digest' => Digest::short((string) $b['digest']['digest'])],
+        ], \JSON_UNESCAPED_UNICODE | \JSON_PRETTY_PRINT) . "\n");
+
+        return $ok;
+    }
+
+    \fwrite(\STDOUT, \sprintf("重放一致性（同一脚本跑两遍）  %s\n", $path));
+    \fwrite(\STDOUT, \sprintf(
+        "  脚本     %d 步 / %d 帧    驱动摘要 %s  %s\n",
+        \count($sa['steps'] ?? []),
+        \count($fa),
+        $scriptSame ? '相同' : '不同',
+        $scriptSame ? '✓' : '✗',
+    ));
+    \fwrite(\STDOUT, \sprintf(
+        "  节点表   %s / %s  %s\n",
+        Digest::short((string) $a['digest']['nodes']),
+        Digest::short((string) $b['digest']['nodes']),
+        $nodesSame ? '✓' : '✗',
+    ));
+    \fwrite(\STDOUT, \sprintf(
+        "  逐帧     %s  %s\n",
+        $firstDiff === null ? \sprintf('%d 帧全部相同', \count($fa)) : "第 {$firstDiff} 帧起不同",
+        $firstDiff === null ? '✓' : '✗',
+    ));
+    \fwrite(\STDOUT, \sprintf(
+        "  记录摘要 %s / %s  %s\n",
+        Digest::short((string) $a['digest']['digest']),
+        Digest::short((string) $b['digest']['digest']),
+        $digestSame ? '✓' : '✗',
+    ));
+
+    if ($firstDiff !== null) {
+        foreach ([['A', $a], ['B', $b]] as [$tag, $run]) {
+            $canon = $run['canonical'][$firstDiff] ?? null;
+            $text = $canon === null ? '（这一帧不存在）' : (string) \json_encode($canon, \JSON_UNESCAPED_UNICODE);
+            if (\strlen($text) > 600) {
+                $text = \substr($text, 0, 600) . '…';
+            }
+            \fwrite(\STDOUT, "    {$tag} #{$firstDiff}  {$text}\n");
+        }
+        \fwrite(\STDOUT, "  ⇒ 驱动相同而因果不同：这是引擎的不确定性（随机数 / 墙钟 / 对象 id 序），不是脚本的问题\n");
+    }
+
+    return $ok;
+}
 
 // ---------------------------------------------------------------- 解析与驱动
 
@@ -287,7 +605,14 @@ function act(DebugSession $session, string $kind, string $spec, float $t, ?Pendi
         case 'resolve':
             // 结算在**帧外**发生：这正是真实异步的形状（后端在两次帧之间回贴），
             // 写入由下一帧的 settle 消费 ⇒ 报告里能看到是"哪一帧"接住的。
-            if ($source === null || $source->resolveNext() === null) {
+            // ★ 走 `effect()` 而不是直接调夹具：这一笔必须进脚本，否则异步页的
+            //   重放会退化成"一整段静止画面"，而报告本身看不出少了什么。
+            if ($source === null) {
+                \fwrite(\STDERR, "没有在途的取数请求：先给 --rows=N 再 --resolve\n");
+
+                return;
+            }
+            if ($session->effect('resolve') !== true) {
                 \fwrite(\STDERR, "没有在途的取数请求：先给 --rows=N 再 --resolve\n");
             }
 
@@ -399,12 +724,24 @@ function render_text(array $report): void
         (float) $report['mountMs'],
     ));
     \fwrite(\STDOUT, \sprintf(
-        "墙钟  末帧 %.2fms   平均 %.2fms   p95 %.2fms   最慢 %.2fms(#%d)\n\n",
+        "墙钟  末帧 %.2fms   平均 %.2fms   p95 %.2fms   最慢 %.2fms(#%d)\n",
         $last,
         \array_sum($walls) / \max(1, \count($walls)),
         percentile($walls, 0.95),
         \max($walls),
         slowest_frame($frames),
+    ));
+
+    /** @var array<string, mixed> $scriptInfo */
+    $scriptInfo = $report['script'] ?? [];
+    \fwrite(\STDOUT, \sprintf(
+        "脚本  %d 步（帧 %d / 输入 %d / 效果 %d）%s  驱动摘要 %s\n\n",
+        (int) ($scriptInfo['steps'] ?? 0),
+        (int) ($scriptInfo['frames'] ?? 0),
+        (int) ($scriptInfo['inputs'] ?? 0),
+        (int) ($scriptInfo['effects'] ?? 0),
+        (bool) ($report['replayed'] ?? false) ? '  ← 本次由脚本重放' : '',
+        (string) ($scriptInfo['digest'] ?? ''),
     ));
 
     \fwrite(\STDOUT, "帧号   t(ms)    墙钟    帧内    帧外    重建  边   跳过\n");

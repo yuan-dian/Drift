@@ -89,8 +89,9 @@ final class DependencyDirection implements Rule
         // `Debug`：诊断层，只读控件对象模型（`Element` / `State`）并记录帧因果。
         // 它**不参与渲染**，也不被渲染依赖；安装与否只影响一个静态空判断。
         // 与 `Widget` 的环见 DOCUMENTED_CYCLES。
-        // 录制器读 `Rendering\SurfaceProfile` 的分段计时账（唯一计时入口）。
-        'Debug'     => ['Debug', 'Widget', 'Rendering'],
+        // 录制器读 `Rendering\SurfaceProfile` 的分段计时账（唯一计时入口）；
+        // 脚本要把输入事件编成标量（`InputScript`），滚轮的轴用 `Geometry\Axis`。
+        'Debug'     => ['Debug', 'Widget', 'Rendering', 'Input', 'Geometry'],
         'Logging'   => ['Logging'],
     ];
 

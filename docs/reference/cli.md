@@ -54,7 +54,7 @@
 | `composer aot-equiv` | T2 解释器与全 AOT 的几何逐值等价，退出码 0/1/2 |
 | `composer dual-equiv` | T2 解释器与 dev 壳的语义逐值等价 |
 | `composer fingerprint` | 解释器侧双通道指纹，供等价比对 |
-| `composer debug -- <AppClass｜路由id>` | 无头跑 N 帧，看哪些节点重建、因为谁。目标可以是冒烟夹具类名，也可以是示例台路由 id（`--page=table`、`async-table` 等，依赖页经页面工厂表自动装配）。动作用 `--key=` / `--text=` / `--click=x,y` / `--wheel=x,y,格` / `--resolve`（结算异步取数），`--hold=N` 决定每个动作后推几帧；`--why=<节点id>` 单点追问重建链路（默认取最近一次重建它的帧，`--frame=N` 指定）；报告含最慢帧的分段耗时与"段外"耗时、按控件类型的重建构成、因果覆盖树（结构根 / 子树规模 / state 写入点），`--json` 出机器可读结果 |
+| `composer debug -- <AppClass｜路由id>` | 无头跑 N 帧，看哪些节点重建、因为谁。目标可以是冒烟夹具类名，也可以是示例台路由 id（`--page=table`、`async-table` 等，依赖页经页面工厂表自动装配）。动作用 `--key=` / `--text=` / `--click=x,y` / `--wheel=x,y,格` / `--resolve`（结算异步取数），`--hold=N` 决定每个动作后推几帧；`--why=<节点id>` 单点追问重建链路（默认取最近一次重建它的帧，`--frame=N` 指定）；报告含最慢帧的分段耗时与"段外"耗时、按控件类型的重建构成、因果覆盖树（结构根 / 子树规模 / state 写入点），`--json` 出机器可读结果。**`--save=<脚本.json>`** 把这次驱动存成可重放脚本（帧边界 + 输入 + 具名副作用 + 目标 / 视口 / 环境）；**`--replay=<脚本.json>`** 照它重跑（目标与视口取自脚本，命令行显式给了就校验一致），`--at=N` 只跑到第 N 帧；**`--verify`** 把同一脚本跑两遍并比对节点表与逐帧因果，不同则退出码 1 |
 | `composer font-scan` | 扫描字面量里的非 ASCII 字符，生成字模资产输入 |
 | `composer golden-report` | 把 golden 检查的失败现场渲染成自包含 HTML |
 | `php tools/gen-route-manifest.php <app>` | 按应用参数从 `#[Route]` 重生成 AOT 页清单；`--check` 只查是否过期 |

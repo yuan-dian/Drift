@@ -5,6 +5,7 @@ namespace Drift\App;
 
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\Script;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
 
@@ -28,8 +29,12 @@ use Drift\Input\InputEvent;
  * 不管表面：调用方必须先 `attach()`。headless 测试要读像素时用 `SurfaceProbe`
  * 这类夹具，`src/` 不能依赖 `tools/`，所以由调用方决定用什么表面。
  *
- * 不管序列化：记录是内存对象，D1 只做进程内查询。跨进程传输是下一期的事，
- * 提前把 wire 格式定下来只会得到一份没人验证的 schema。
+ * 不管传输：帧记录仍是内存对象，跨进程搬运是下一期的事。**驱动脚本**是另一回事 ——
+ * 它只存标量、能存成 JSON，因为"再跑一遍"需要的只是输入与时钟，不需要把记录搬过去。
+ *
+ * 不管什么该被重放：驱动方给什么就记什么。异步结算这类**副作用**由调用方用
+ * {@see self::defineEffect()} 注册名字，{@see self::effect()} 记一笔并执行 ——
+ * 会话不猜"你这一页怎么取数"。
  *
  * @api
  */
@@ -53,11 +58,18 @@ final class DebugSession
 
     private bool $closed = false;
 
+    /** 最近一次 `pump()` 的时间戳：给"帧外副作用"一个可重放的时刻。 */
+    private float $lastT = 0.0;
+
+    /** @var array<string, callable(array<string, scalar|null>): mixed> 具名副作用 */
+    private array $effects = [];
+
     private function __construct(
         private readonly Application $app,
         private readonly BoxConstraints $constraints,
         private readonly Recorder $recorder,
         private readonly Query $queries,
+        private readonly Script $script,
     ) {
     }
 
@@ -66,11 +78,16 @@ final class DebugSession
      *
      * 已有录制器在跑时**拒绝**，不覆盖：那可能是另一个会话或测试夹具的记录，
      * 静默接管会让两边的结论都不可信。
+     *
+     * @param Script|null $script 脚本骨架（目标名 / 视口 / 环境）。不给则按
+     *   `应用类名 + 当前约束` 现建一份 —— 这样"录一份脚本"是默认行为，
+     *   不需要调用方记得开。
      */
     public static function open(
         Application $app,
         BoxConstraints $constraints,
         int $capacity = Recorder::DEFAULT_CAPACITY,
+        ?Script $script = null,
     ): self {
         if (Recorder::installed()) {
             throw new \LogicException('已有录制器在运行：先关闭原会话，避免覆盖它的缓冲');
@@ -79,9 +96,15 @@ final class DebugSession
             throw new \LogicException('应用还没有挂表面：先 $app->attach($surface, $constraints)');
         }
 
-        $recorder = Recorder::install($capacity);
+        $script ??= new Script(
+            $app::class,
+            \is_finite($constraints->maxWidth) ? $constraints->maxWidth : 0.0,
+            \is_finite($constraints->maxHeight) ? $constraints->maxHeight : 0.0,
+        );
 
-        return new self($app, $constraints, $recorder, new Query($recorder));
+        $recorder = Recorder::install($capacity, $script);
+
+        return new self($app, $constraints, $recorder, new Query($recorder), $script);
     }
 
     /**
@@ -93,10 +116,56 @@ final class DebugSession
      */
     public function pump(float $timestampMs): float
     {
+        $this->lastT = $timestampMs;
         $t0 = \hrtime(true);
         $this->app->frame($timestampMs, $this->constraints);
 
         return (\hrtime(true) - $t0) / 1e6;
+    }
+
+    /**
+     * 注册一个具名副作用（`resolve` / `next-page` / `scroll-to` …）。
+     *
+     * 名字 + 扁平参数是**脚本里能表达**的全部；回调本身留在驱动方 ——
+     * 会话不该知道"这一页怎么取数"，那会把测试夹具焊进框架。
+     *
+     * @param callable(array<string, scalar|null>): mixed $run
+     */
+    public function defineEffect(string $name, callable $run): void
+    {
+        $this->effects[$name] = $run;
+    }
+
+    /**
+     * 执行并**记下**一个副作用。
+     *
+     * 记的是名字与参数，不是"它做了什么"：重放方用同一份注册表再执行一遍，
+     * 结果是否一致由记录摘要判定。这就是为什么异步页的脚本必须带 `resolve` ——
+     * 少了它，重放会得到一整段静止画面，而报告本身看不出少了什么。
+     *
+     * @param array<string, scalar|null> $args
+     *
+     * @return mixed 回调的返回值
+     */
+    public function effect(string $name, array $args = []): mixed
+    {
+        $run = $this->effects[$name] ?? null;
+        if ($run === null) {
+            throw new \LogicException(
+                "未注册的驱动效果：{$name}（已注册：" . ($this->effects === [] ? '无' : \implode(' / ', \array_keys($this->effects))) . '）',
+            );
+        }
+
+        // 先记后跑：回调抛异常时，脚本里仍如实留下"这一步被尝试过"。
+        $this->recorder->noteEffect($name, $args, $this->lastT);
+
+        return $run($args);
+    }
+
+    /** 本次会话的脚本（帧边界 + 输入 + 副作用）。 */
+    public function script(): Script
+    {
+        return $this->script;
     }
 
     /**

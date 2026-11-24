@@ -1482,6 +1482,13 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      */
     public function dispatchInput(InputEvent $event, ?float $timestampMs = null): ?CursorShape
     {
+        // ★ 脚本在**唯一漏斗**上记（`Application::dispatchInput()` 只是转发到这里），
+        //   不在命令行里记：`--click=x,y` 是命令行语法，引擎看到的是 down + up 两条
+        //   事件。记在漏斗上，任何驱动（CLI / 测试 / 真窗口）录出来的脚本形状一致。
+        //   ★ 必须在 `$this->taps->annotate()` **之前**（它在 inner 里）：标注是按时间
+        //   算出来的结果，脚本记输入、重放重算；记结果会让重放再标一次（双击变三击）。
+        Recorder::tapInput($event, $timestampMs);
+
         $epochBefore = $this->pipeline->paintEpoch();
 
         try {
