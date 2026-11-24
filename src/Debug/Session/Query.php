@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Debug\Session;
 
+use Drift\Geometry\BoxConstraints;
+use Drift\Geometry\EdgeInsets;
+use Drift\Geometry\Size;
+
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。
  *
@@ -239,6 +243,129 @@ final class Query
     }
 
     /**
+     * 一个节点的盒模型：margin / border / padding / content 四层 + 位置。
+     *
+     * 全部来自帧边界的几何快照，不碰活盒——所以导出的证据在另一个进程里也能问
+     * 同一个问题。找不到时说清是"没这个节点"还是"几何窗口外"，不返回默认零值：
+     * 默认零值会让一个不存在的盒子看起来像"尺寸正常"。
+     *
+     * @return array<string, mixed>
+     */
+    public function boxModel(int $node, ?int $frame = null): array
+    {
+        $frameId = $frame ?? $this->recorder->lastFrameId();
+        $record = $this->recorder->geometryAt($frameId, $node);
+        $window = $this->recorder->geometryCoverage();
+        if ($record === null) {
+            return $this->geometryMiss($node, $frameId, $window);
+        }
+
+        return ['found' => true] + $record->toArray() + ['window' => $window];
+    }
+
+    /**
+     * 一个节点收到的约束是从哪几跳传下来的。
+     *
+     * 每一跳查两件事：
+     * ① 父的 `applied`（tighten 后）经 padding 内缩与 align 放松，是否得到父的 `inner`；
+     * ② 父的 `inner` 经子的宽高修饰收紧，是否得到子记录的 `applied`。
+     * 两者都对 ⇒ `base`（基类默认链）；①错 ⇒ `parent-performLayout`（Flex/Expanded
+     * 在 performLayout 里另算了约束）；②错 ⇒ `child-custom`（aspect 等修饰，或中间
+     * 还有别人改过）。**对不上不是错误，是答案**：能归默认的归默认，不能的说出不能，
+     * 绝不猜一个来源填进去——那是"看起来很有道理"的证据，比没有更危险。
+     *
+     * 链是**复算**出来的（读快照 + 重跑纯函数），并与快照里实际记的值交叉验证；
+     * 两次复算逐值相同即为判据，不需要在 layout 热路径插任何钩子。
+     *
+     * @return array<string, mixed>
+     */
+    public function constraints(int $node, ?int $frame = null, int $maxDepth = 12): array
+    {
+        $frameId = $frame ?? $this->recorder->lastFrameId();
+        $record = $this->recorder->geometryAt($frameId, $node);
+        $window = $this->recorder->geometryCoverage();
+        if ($record === null) {
+            return $this->geometryMiss($node, $frameId, $window);
+        }
+
+        $all = [];
+        $cursor = $record;
+        while ($cursor !== null && $cursor->parent > 0) {
+            $parent = $this->recorder->geometryAt($frameId, $cursor->parent);
+            if ($parent === null) {
+                $all[] = [
+                    'from' => $cursor->parent,
+                    'to' => $cursor->node,
+                    'verified' => false,
+                    'source' => 'parent-outside-window',
+                    'received' => $cursor->applied,
+                ];
+                break;
+            }
+
+            $expectedInner = GeometryRecord::unpack($parent->applied);
+            $pad = $parent->pad;
+            if ($pad['l'] != 0.0 || $pad['t'] != 0.0 || $pad['r'] != 0.0 || $pad['b'] != 0.0) {
+                $expectedInner = $expectedInner->deflate(
+                    new EdgeInsets($pad['l'], $pad['t'], $pad['r'], $pad['b']),
+                );
+            }
+            if ($parent->align !== null) {
+                $expectedInner = $expectedInner->loosen();
+            }
+            $innerOk = GeometryRecord::pack($expectedInner) === $parent->inner;
+
+            $expectedApplied = GeometryRecord::unpack($parent->inner);
+            if ($cursor->box !== null || $cursor->aspect !== null) {
+                $size = new Size(
+                    $cursor->box['w'] ?? $expectedApplied->maxWidth,
+                    $cursor->box['h'] ?? $expectedApplied->maxHeight,
+                );
+                $expectedApplied = $expectedApplied->tighten($size);
+            }
+            $appliedOk = GeometryRecord::pack($expectedApplied) === $cursor->applied;
+
+            $all[] = [
+                'from' => $parent->node,
+                'fromType' => $this->recorder->typeOf($parent->node),
+                'to' => $cursor->node,
+                'toType' => $this->recorder->typeOf($cursor->node),
+                'received' => $cursor->applied,
+                'expected' => GeometryRecord::pack($expectedApplied),
+                'parentInner' => $parent->inner,
+                'verified' => $innerOk && $appliedOk,
+                'source' => !$innerOk
+                    ? 'parent-performLayout'
+                    : ($appliedOk ? 'base' : 'child-custom'),
+            ];
+            $cursor = $parent;
+        }
+
+        $total = \count($all);
+        $chain = $maxDepth > 0 ? \array_slice($all, 0, $maxDepth) : $all;
+        $verified = 0;
+        foreach ($chain as $hop) {
+            if ($hop['verified']) {
+                ++$verified;
+            }
+        }
+
+        return [
+            'found' => true,
+            'frame' => $frameId,
+            'node' => $node,
+            'type' => $this->recorder->typeOf($node),
+            'hops' => $total,
+            'chain' => $chain,
+            'verified' => $verified,
+            'unverified' => \count($chain) - $verified,
+            'cut' => $total > \count($chain),
+            'omitted' => \max(0, $total - \count($chain)),
+            'window' => $window,
+        ];
+    }
+
+    /**
      * 跨帧聚合**根因**：同一调用点写同一 State 的次数。
      *
      * 只算 `kind=state`。`parent` / `unknown` 是传播与兜底，算进来会让排名失真。
@@ -345,6 +472,39 @@ final class Query
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /**
+     * 几何查不到的三种原因必须分开说。
+     *
+     * 复合控件没有自己的 RenderBox，那是**永久事实**；窗口外是**暂时事实**（换个帧号
+     * 可能就有）；节点不存在是**地址错了**。三者混成一句"没找到"，读者会把第一种
+     * 当成第二种，一直等一条永远不会出现的记录。
+     *
+     * @param array<string, mixed> $window
+     * @return array<string, mixed>
+     */
+    private function geometryMiss(int $node, int $frame, array $window): array
+    {
+        $boxless = $this->recorder->isBoxless($node);
+        $out = [
+            'found' => false,
+            'node' => $node,
+            'frame' => $frame,
+            'reason' => $boxless
+                ? 'no-render-box'
+                : ($this->recorder->typeOf($node) === '' ? 'unknown-node' : 'outside-geometry-window'),
+            'window' => $window,
+        ];
+
+        if ($boxless) {
+            $child = $this->recorder->firstBoxedChild($node);
+            $out['suggest'] = $child === null
+                ? '这个节点是复合节点，没有自己的盒；往下找有盒的后代'
+                : \sprintf('查有盒的子节点 %d（%s）', $child, $this->recorder->typeOf($child));
+        }
+
+        return $out;
+    }
 
     /**
      * 最近 N 帧（`$frames <= 0` 表示全窗口），按帧号升序。

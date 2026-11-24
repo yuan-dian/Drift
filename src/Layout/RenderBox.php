@@ -203,6 +203,22 @@ abstract class RenderBox extends RenderObject
         return $this->lastConstraints;
     }
 
+    /**
+     * 父给的、经本盒 mods.tighten 之后的约束（`layout()` 末尾定稿）。
+     *
+     * 与 {@see constraints()} 的区别不是"名字不同"：后者再经 deflate(padding) 与
+     * loosen(align)，是**子类 performLayout 收到的内容盒约束**。几何证据要同时留
+     * 两份，才能从相邻两跳反推出"这一跳是谁把约束改窄的"。
+     *
+     * ★ `null` 表示还没排过，不是无界。
+     *
+     * @api
+     */
+    public function appliedConstraints(): ?BoxConstraints
+    {
+        return $this->appliedConstraints;
+    }
+
     public function hasSize(): bool
     {
         return $this->size !== null;

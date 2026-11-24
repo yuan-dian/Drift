@@ -79,6 +79,8 @@ final class DebugSessionTest extends SmokeTestCase
                 'hotspots' => [],
                 'nodes' => [],
                 'cascade' => ['frame' => 2],
+                'boxModel' => ['node' => $nodeId],
+                'constraints' => ['node' => $nodeId],
             ];
 
             foreach (DebugSession::QUERIES as $name => $_) {

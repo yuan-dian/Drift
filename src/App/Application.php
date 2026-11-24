@@ -285,7 +285,7 @@ abstract class Application
         $t0 = \hrtime(true);
         $recorder->beginFrame($timestampMs);
         $this->shell->frame($timestampMs, $constraints);
-        $recorder->endFrame($this->shell->frameFacts(), (\hrtime(true) - $t0) / 1e6);
+        $recorder->endFrame($this->shell->frameFacts(), (\hrtime(true) - $t0) / 1e6, $this->root());
     }
 
     /** 拖动 resize 专用的轻量重绘。 */

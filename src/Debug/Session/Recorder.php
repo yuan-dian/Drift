@@ -51,6 +51,9 @@ final class Recorder
     /** 单帧最多记多少条因果边（防御：装了录制却不跑帧） */
     private const int MAX_CAUSES = 512;
 
+    /** 几何事实保留的帧数；比帧窗口短是刻意的，查询必须自报边界。 */
+    public const int GEOMETRY_FRAMES = 60;
+
     private static ?self $current = null;
 
     /**
@@ -66,6 +69,27 @@ final class Recorder
 
     /** @var array<int, array{p: int, c: string}> 节点 id => 父 id（`-1` 根、`-2` 未解析）/ Widget 短类名 */
     private array $nodes = [];
+
+    /**
+     * 几何窗口比帧窗口短得多：600 帧 × 2000 节点全存撑不住，而"这一帧为什么这个尺寸"
+     * 几乎总是问最近几十帧。只留最近 GEOMETRY_FRAMES 帧有变化的节点，超出自报。
+     *
+     * @var array<int, array<int, GeometryRecord>> frame => [node => record]
+     */
+    private array $geometry = [];
+
+    /** @var array<int, string> node => 上一次记下的几何签名（帧被裁掉也不删：它代表"已经记过"） */
+    private array $geometryDigest = [];
+
+    /**
+     * 没有自己 RenderBox 的节点（复合控件，如 PageShell）。
+     *
+     * 查不到它们的几何是**永久事实**，不是"窗口外，再等等就有了"。混为一谈会让
+     * 读者一直等一个永远不会出现的记录——和"裁剪伪装成结论"是同一类错误。
+     *
+     * @var array<int, true>
+     */
+    private array $boxless = [];
 
     /** @var list<Edge> 待归入下一帧的因果边（帧外 `setState` 也算，帧末统一落账） */
     private array $openCauses = [];
@@ -153,14 +177,21 @@ final class Recorder
     /**
      * 帧结束：落成不可变记录并按容量裁剪。
      *
+     * `$root` 只在有活元素树时给（应用帧）；headless 的纯因果测试可以不给。几何采样
+     * 放在帧末而不是 `tapRebuild`：布局会因为父约束变化而重排，那个节点未必重建，
+     * 挂在重建挂点上会静默漏掉"没重建但尺寸变了"这一类最常见的布局问题。
+     *
      * @param array{stages?: list<string>, settleSkipped?: bool, paintSkipped?: bool} $facts
      */
-    public function endFrame(array $facts, float $costMs): void
+    public function endFrame(array $facts, float $costMs, ?Element $root = null): void
     {
         if (!$this->open) {
             return;
         }
         $this->open = false;
+        if ($root !== null) {
+            $this->sampleGeometry($root, $this->frameId);
+        }
         $this->frames[$this->frameId] = new FrameRecord(
             $this->frameId,
             $this->openT,
@@ -277,6 +308,133 @@ final class Recorder
     public function nodeIndex(): array
     {
         return $this->nodes;
+    }
+
+    /**
+     * 取某帧某节点的几何事实。
+     *
+     * 该帧没记不代表"那时没这个节点"——只代表**这一帧几何没变**，所以往前找最近
+     * 的一次记录。找不到时返回 null，调用方必须区分"节点不存在"和"窗口外"，不能
+     * 把 null 当成默认几何（那会凭空造出一个盒子）。
+     */
+    public function geometryAt(int $frame, int $node): ?GeometryRecord
+    {
+        if ($this->geometry === []) {
+            return null;
+        }
+
+        $keys = \array_keys($this->geometry);
+        $min = \min($keys);
+        $max = \max($keys);
+        for ($f = \min($frame, $max); $f >= $min; --$f) {
+            if (isset($this->geometry[$f][$node])) {
+                return $this->geometry[$f][$node];
+            }
+        }
+
+        return null;
+    }
+
+    /** 这个节点有没有自己的盒；复合控件（PageShell 等）没有，只能看它的盒子类后代。 */
+    public function isBoxless(int $node): bool
+    {
+        return isset($this->boxless[$node]);
+    }
+
+    /** 给无盒节点找一个有盒的直接孩子，供查询给"去查这个"的建议而不是空手。 */
+    public function firstBoxedChild(int $node): ?int
+    {
+        foreach ($this->nodes as $id => $meta) {
+            if ($meta['p'] === $node && !isset($this->boxless[$id]) && isset($this->geometryDigest[$id])) {
+                return $id;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return array{frames: int, capacity: int, from: int, to: int, nodes: int} */
+    public function geometryCoverage(): array
+    {
+        $keys = \array_keys($this->geometry);
+        $nodes = 0;
+        foreach ($this->geometry as $rows) {
+            $nodes += \count($rows);
+        }
+
+        return [
+            'frames' => \count($keys),
+            'capacity' => self::GEOMETRY_FRAMES,
+            'from' => $keys === [] ? 0 : \min($keys),
+            'to' => $keys === [] ? 0 : \max($keys),
+            'nodes' => $nodes,
+        ];
+    }
+
+    /** 帧末从根先序采一遍；父指针取最近的**有盒祖先**，约束是沿盒树传的。 */
+    private function sampleGeometry(Element $root, int $frame): void
+    {
+        $this->sampleOne($root, $frame, -1);
+    }
+
+    private function sampleOne(Element $element, int $frame, int $parentBoxId): void
+    {
+        $id = $this->idOf($element);
+        $boxId = $parentBoxId;
+        $box = $element->renderObject();
+        if ($box === null) {
+            $this->boxless[$id] = true;
+        }
+        if ($box !== null) {
+            // 采样写在这里而不是 GeometryRecord：Debug 层不得依赖 Layout（lint 的
+            // 依赖方向规则）。$box 的类型由 Element::renderObject() 推断，不需要 import。
+            $size = $box->size();
+            if ($size !== null) {
+                $mods = $box->mods();
+                $style = $mods?->boxStyle();
+                $align = $mods !== null ? $mods->alignment() : null;
+                $record = new GeometryRecord(
+                    $frame,
+                    $id,
+                    $parentBoxId,
+                    GeometryRecord::pack($box->appliedConstraints()),
+                    GeometryRecord::pack($box->constraints()),
+                    ['w' => $size->width, 'h' => $size->height],
+                    ['x' => $box->offsetX(), 'y' => $box->offsetY()],
+                    GeometryRecord::edges(
+                        $mods !== null && $mods->hasPadding() ? $mods->padLeft() : 0.0,
+                        $mods !== null && $mods->hasPadding() ? $mods->padTop() : 0.0,
+                        $mods !== null && $mods->hasPadding() ? $mods->padRight() : 0.0,
+                        $mods !== null && $mods->hasPadding() ? $mods->padBottom() : 0.0,
+                    ),
+                    GeometryRecord::edges(
+                        $mods !== null && $mods->hasInset() ? $mods->insetLeft() : 0.0,
+                        $mods !== null && $mods->hasInset() ? $mods->insetTop() : 0.0,
+                        $mods !== null && $mods->hasInset() ? $mods->insetRight() : 0.0,
+                        $mods !== null && $mods->hasInset() ? $mods->insetBottom() : 0.0,
+                    ),
+                    $mods !== null && ($mods->hasBoxWidth() || $mods->hasBoxHeight())
+                        ? ['w' => $mods !== null && $mods->hasBoxWidth() ? $mods->boxWidth() : null,
+                           'h' => $mods !== null && $mods->hasBoxHeight() ? $mods->boxHeight() : null]
+                        : null,
+                    $mods !== null && $mods->hasAspect() ? $mods->aspect() : null,
+                    $align !== null ? ['x' => $align->x, 'y' => $align->y] : null,
+                    $style !== null && $style->hasBorder(),
+                    $style?->borderWidth ?? 0.0,
+                    ['grow' => $mods?->flexGrow() ?? 0, 'shrink' => $mods?->flexShrink() ?? 0],
+                );
+                $signature = $record->signature();
+                if (($this->geometryDigest[$id] ?? null) !== $signature) {
+                    $this->geometry[$frame][$id] = $record;
+                    $this->geometryDigest[$id] = $signature;
+                }
+                $boxId = $id;
+            }
+        }
+
+        $element->visitChildren(function (Element $child) use ($frame, $boxId): void {
+            $this->sampleOne($child, $frame, $boxId);
+        });
     }
 
     /** 节点 id；首次见到时登记父链与类名（父 id 解析一次，`-1` = 根）。 */
@@ -466,6 +624,15 @@ final class Recorder
                 return;
             }
             unset($this->frames[$oldest]);
+        }
+        // digest 不清：它表示"这个几何已经记过"，即使那条记录因窗口滚动被裁掉。
+        // 清了会在下一帧把同一份几何重新记一遍，且报告看不出为什么突然多了记录。
+        while (\count($this->geometry) > self::GEOMETRY_FRAMES) {
+            $oldest = \array_key_first($this->geometry);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->geometry[$oldest]);
         }
     }
 
