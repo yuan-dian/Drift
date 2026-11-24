@@ -308,6 +308,40 @@ abstract class Element
     }
 
     /**
+     * 活树的「渲染盒 ⇒ 最近 Element」映射，父先子后（子覆盖父）。
+     *
+     * ★ 焦点反查与调试点选共用这**一份**：早先焦点链自己收一遍，调试若再写
+     *   一遍就会长出两份口径（一个用 `renderObject()`、一个用 `effectiveBox()`），
+     *   包装层的归属悄悄分叉而两边都"能跑"。
+     *
+     * 用 `effectiveBox()` 而不是 `renderObject()`：StatelessWidget 常没有自己的盒，
+     * 拿 `renderObject()` 会让这层包装节点永远反查不到；而父先子后的覆盖顺序保证
+     * 同一个盒有多个 Element 认领时取最深的那个（A44）。
+     *
+     * @param list<Element> $roots 主树在前，浮层在后
+     * @return array<int, Element> `spl_object_id(RenderBox)` => Element
+     * @internal 焦点 / 调试查询用，不参与布局
+     */
+    public static function boxOwners(array $roots): array
+    {
+        $owners = [];
+        $collect = static function (Element $element) use (&$collect, &$owners): void {
+            $box = $element->effectiveBox();
+            if ($box !== null) {
+                $owners[\spl_object_id($box)] = $element;
+            }
+            $element->visitChildren($collect);
+        };
+        foreach ($roots as $root) {
+            if ($root instanceof Element) {
+                $collect($root);
+            }
+        }
+
+        return $owners;
+    }
+
+    /**
      * 滚动容器指标（`IScrollProvider` 的数据面）：默认无，`StatefulElement` 在
      * `state` 实现 `ScrollMetrics` 时给。语义构建期现读，天然实时、无缓存陈旧。
      *

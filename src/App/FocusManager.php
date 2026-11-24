@@ -939,15 +939,9 @@ final class FocusManager
      */
     private function elementForBox(Element $element, RenderBox $box): ?Element
     {
-        $owners = [];
-        $collect = function (Element $el) use (&$collect, &$owners): void {
-            $own = $el->effectiveBox();
-            if ($own !== null) {
-                $owners[spl_object_id($own)] = $el;
-            }
-            $el->visitChildren($collect);
-        };
-        $collect($element);
+        // 映射只收在 Element 一处（A44）：焦点与调试点选若各写一遍，包装层的
+        // 归属会在两边悄悄分叉，而两条路径都"能跑"。
+        $owners = Element::boxOwners([$element]);
 
         for ($node = $box; $node !== null; $node = $node->parent()) {
             $id = spl_object_id($node);

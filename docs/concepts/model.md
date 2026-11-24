@@ -95,7 +95,7 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 
 | 能力域 | 方法 |
 |---|---|
-| 应用契约与装配 | `__construct()`、`attach()`、`buildRoot()`、`title()`、`theme()`、`scope()`、`root()`、`treeRoots()`、`rootBox()`、`closeRequested()`、`environment()` |
+| 应用契约与装配 | `__construct()`、`attach()`、`buildRoot()`、`title()`、`theme()`、`scope()`、`root()`、`treeRoots()`、`treeRootOrigins()`、`rootBox()`、`closeRequested()`、`environment()` |
 | 帧与主循环 | `frame()`、`frameCount()`、`wantsFrame()`、`needsFrameImmediately()`、`nextDeadlineMs()`、`repaintForResize()`、`pipeline()`、`lastTimestampMs()`、`lastInputMs()` |
 | 命令 | `commands()`、`commandGates()`、`register()`、`router()`、`dispatch()` |
 | 输入与焦点 | `dispatchInput()`、`accelerators()`、`captureNode()`、`capturePointer()`、`releasePointer()`、`focus()`、`requestFocus()` |

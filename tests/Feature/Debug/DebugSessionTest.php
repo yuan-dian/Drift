@@ -85,6 +85,7 @@ final class DebugSessionTest extends SmokeTestCase
                 'networkBody' => ['request' => 999],
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'props' => ['node' => $nodeId],
+                'pick' => ['x' => 1.0, 'y' => 2.0],
             ];
 
             foreach (DebugSession::QUERIES as $name => $_) {

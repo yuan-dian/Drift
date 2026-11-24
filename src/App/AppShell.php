@@ -462,6 +462,38 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     }
 
     /**
+     * 全部渲染树根 + 各自的视口原点：主树在前，浮层按栈序在后。
+     *
+     * 与 {@see self::treeRoots()} 同一份数据，只是把浮层偏移一起带出来 —— 点选反查
+     * 要按 `InputRouter` 的口径把视口坐标减掉根原点。两个出口共用这个唯一收集点，
+     * 不在 Debug 层再写第二处浮层遍历（A43 ⑥ / A44）。
+     *
+     * @internal 经 {@see \Drift\App\Application::treeRootOrigins()} 给查询面用
+     *
+     * @return list<array{element: Element, x: float, y: float}>
+     */
+    public function treeRootOrigins(): array
+    {
+        $roots = [];
+        $root = $this->root;
+        if ($root !== null) {
+            $roots[] = ['element' => $root, 'x' => 0.0, 'y' => 0.0];
+        }
+
+        foreach ($this->overlayHost->overlays()->all() as $entry) {
+            if ($entry->element !== null) {
+                $roots[] = [
+                    'element' => $entry->element,
+                    'x' => $entry->x,
+                    'y' => $entry->y,
+                ];
+            }
+        }
+
+        return $roots;
+    }
+
+    /**
      * 本应用的全部渲染树根：主树在前，浮层按栈序在后（`null` = 不在树里）。
      *
      * ★ 浮层是**第二棵树**。主题下发 / 窗口档下发 / 焦点链 / 动画发现四处都要走它，
@@ -475,15 +507,8 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     public function treeRoots(): array
     {
         $roots = [];
-        $root = $this->root;
-        if ($root !== null) {
-            $roots[] = $root;
-        }
-
-        foreach ($this->overlayHost->overlays()->all() as $entry) {
-            if ($entry->element !== null) {
-                $roots[] = $entry->element;
-            }
+        foreach ($this->treeRootOrigins() as $entry) {
+            $roots[] = $entry['element'];
         }
 
         return $roots;

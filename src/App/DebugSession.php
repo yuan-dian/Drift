@@ -66,6 +66,7 @@ final class DebugSession implements Session
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'props' => '按节点读 Widget / State 配置（dev 反射，活树按需快照进独立 200 条窗口）',
+        'pick' => '按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
@@ -271,6 +272,11 @@ final class DebugSession implements Session
                 self::intArg($name, $args, 'maxDepth', 3),
                 self::intArg($name, $args, 'maxFields', 120),
             ),
+            'pick' => $this->queries->pick(
+                self::needFloat($name, $args, 'x'),
+                self::needFloat($name, $args, 'y'),
+                $this->app->treeRootOrigins(),
+            ),
             'digest' => Digest::of($this->recorder),
             // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像
             // 因此不必为它加一个动词 —— 一次会话里"怎么驱动的"和"为什么这样"
@@ -354,6 +360,23 @@ final class DebugSession implements Session
         }
 
         return (int) $args[$key];
+    }
+
+    /**
+     * 坐标必须是数（整数或浮点）；`0` 是合法坐标，不能用 `?:` 兜成缺失。
+     *
+     * @param array<string, mixed> $args
+     */
+    private static function needFloat(string $name, array $args, string $key): float
+    {
+        if (!isset($args[$key]) || (!\is_int($args[$key]) && !\is_float($args[$key]) && !\is_string($args[$key]))) {
+            throw new \InvalidArgumentException("查询 {$name} 需要数值参数 {$key}");
+        }
+        if (\is_string($args[$key]) && !\is_numeric($args[$key])) {
+            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是数值");
+        }
+
+        return (float) $args[$key];
     }
 
     /** @param array<string, mixed> $args */

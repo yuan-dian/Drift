@@ -7,6 +7,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Size;
 use Drift\Widget\Element;
+use Drift\Widget\StatefulElement;
 
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。
@@ -14,9 +15,10 @@ use Drift\Widget\Element;
  * 纯函数：只读 {@see Recorder} 的不可变帧记录，不改状态、不碰元素树。
  * 所以可以重试、可以缓存、可以在任意线程问卷（记录本身在写时拷贝）。
  *
- * ★ 唯一例外是 {@see self::props()}：属性只在 dev 形态可反射，且读的是**当前活树**
- *   （每帧采样必掉帧）。它把结果存进 Recorder 的独立快照窗口，所以查询本身
- *   有副作用。其余查询仍不改任何状态，这条例外不外溢。
+ * ★ 两个例外都只读当前活树（每帧采样必掉帧）：{@see self::props()} 把读数存进
+ *   Recorder 的独立快照窗口；{@see self::pick()} 为命中的活树节点发号，使它们能被
+ *   `props(node)` / `why(node)` 继续追问。查询本身有副作用，其余查询不改状态，
+ *   这条例外不外溢。
  *
  * ## 两个聚合的口径不同，不要合并
  *
@@ -125,6 +127,144 @@ final class Query
         }
 
         return null;
+    }
+
+    /**
+     * 点选反查：视口坐标 ⇒ 命中链（根 → 最深的命中盒）。
+     *
+     * ★ 不写生产盒字段：命中走 `RenderBox::hitTest()` 的唯一实现，反查走
+     *   `Element::boxOwners()` 的按需映射（焦点链已用的那一份）。这两样都只在
+     *   查询发生时跑，录制没开也能用，AOT 可达面不变（A44）。
+     *
+     * ★ `chain` 给的是**完整盒链**，不是只给最底层盒：包装层是谁、自绘内容落在
+     *   哪个盒里，正是布局调试要回答的问题。没有 Element 认领的盒照实列出
+     *   （`node = null`），不悄悄跳过，也不把父节点冒充成它的拥有者。
+     *
+     * ★ 未命中与没树根分开报：点空了不是"点到了根节点"。
+     *
+     * @param list<array{element: Element, x: float, y: float}> $roots 主树在前、浮层在后
+     * @return array<string, mixed>
+     */
+    public function pick(float $x, float $y, array $roots): array
+    {
+        $base = [
+            'x' => $x,
+            'y' => $y,
+            'liveFrame' => $this->recorder->lastFrameId(),
+            'roots' => 0,
+        ];
+
+        $elements = [];
+        foreach ($roots as $entry) {
+            $element = $entry['element'] ?? null;
+            if ($element instanceof Element) {
+                $elements[] = $element;
+            }
+        }
+        $base['roots'] = \count($elements);
+        if ($elements === []) {
+            return $base + [
+                'found' => false,
+                'reason' => 'no-roots',
+                'tree' => null,
+                'scope' => null,
+                'hit' => null,
+                'chain' => [],
+                'ownerless' => 0,
+            ];
+        }
+
+        // 映射建一次，链上每个盒共用；焦点反查走同一个方法，口径不会分叉。
+        $owners = Element::boxOwners($elements);
+
+        // 浮层在上、主树在下：与 InputRouter 的命中顺序一致。
+        for ($i = \count($roots) - 1; $i >= 0; $i--) {
+            $root = $roots[$i];
+            $element = $root['element'] ?? null;
+            if (!$element instanceof Element) {
+                continue;
+            }
+
+            // 视口坐标减根原点：浮层不是从 (0,0) 起画，漏了就整体偏一个锚点。
+            $hit = $element->effectiveBox()?->hitTest(
+                $x - (float) ($root['x'] ?? 0.0),
+                $y - (float) ($root['y'] ?? 0.0),
+            );
+            if ($hit === null) {
+                continue;
+            }
+
+            $chain = [];
+            $ownerless = 0;
+            // Debug 层不 import Layout：沿渲染父链走，遇到没有 size() 的对象（sliver 等）
+            // 就停。事实仍来自生产盒本身，查询只把它们压成标量。
+            for ($box = $hit; $box !== null && \method_exists($box, 'size'); $box = $box->parent()) {
+                $owner = $owners[\spl_object_id($box)] ?? null;
+                if ($owner === null) {
+                    $ownerless++;
+                }
+                $chain[] = self::boxFact($box, $owner, $this->recorder);
+            }
+            $chain = \array_reverse($chain);
+            $last = $chain[\count($chain) - 1];
+
+            return $base + [
+                'found' => true,
+                'reason' => null,
+                'tree' => $i,
+                'scope' => $i === 0 ? 'main' : 'overlay',
+                'hit' => $last,
+                'chain' => $chain,
+                'ownerless' => $ownerless,
+            ];
+        }
+
+        return $base + [
+            'found' => false,
+            'reason' => 'no-hit',
+            'tree' => null,
+            'scope' => null,
+            'hit' => null,
+            'chain' => [],
+            'ownerless' => 0,
+        ];
+    }
+
+    /**
+     * 链上一环的标量事实；`node` 只由会话发号，查询不自造地址。
+     */
+    private static function boxFact(object $box, ?Element $owner, Recorder $recorder): array
+    {
+        $size = $box->size();
+        $fact = [
+            'box' => self::shortClass($box::class),
+            'size' => $size === null ? null : ['width' => $size->width, 'height' => $size->height],
+            'node' => null,
+            'widget' => null,
+            'element' => null,
+            'state' => null,
+            'path' => null,
+        ];
+        if ($owner === null) {
+            return $fact;
+        }
+
+        $node = $recorder->idOf($owner);
+        $state = $owner instanceof StatefulElement ? $owner->state() : null;
+        $fact['node'] = $node;
+        $fact['widget'] = $recorder->typeOf($node);
+        $fact['element'] = self::shortClass($owner::class);
+        $fact['state'] = $state === null ? null : self::shortClass($state::class);
+        $fact['path'] = $recorder->pathOf($node);
+
+        return $fact;
+    }
+
+    private static function shortClass(string $class): string
+    {
+        $pos = \strrpos($class, '\\');
+
+        return $pos === false ? $class : \substr($class, $pos + 1);
     }
 
     /**

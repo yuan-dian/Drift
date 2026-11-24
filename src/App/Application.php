@@ -267,6 +267,20 @@ abstract class Application
         return $this->shell->treeRoots();
     }
 
+    /**
+     * 全部渲染树根及其视口原点：主树在前，浮层在后。
+     *
+     * 与 {@see self::treeRoots()} 共用 `AppShell` 的同一个收集点；点选反查要按
+     * `InputRouter` 的口径把视口坐标减掉浮层原点，所以不能只拿 Element 列表。
+     *
+     * @internal 点选查询用
+     * @return list<array{element: Element, x: float, y: float}>
+     */
+    public function treeRootOrigins(): array
+    {
+        return $this->shell->treeRootOrigins();
+    }
+
     /** UI 线程 id（`0` = 未挂载）。 */
     public function uiThreadId(): int
     {
