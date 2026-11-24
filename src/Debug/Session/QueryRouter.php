@@ -163,8 +163,17 @@ final class QueryRouter implements SessionQueries
         $spec = self::QUERY_SPECS[$name] ?? null;
         if ($spec !== null) {
             [$method, $params] = $spec;
+            $result = $this->queries->{$method}(...$this->positional($name, $args, $params));
 
-            return $this->queries->{$method}(...$this->positional($name, $args, $params));
+            // 帧序列是唯一的"带游标的增量流"，也就只有它会被跨会话误用：老 `since`
+            // 在新会话上把所有帧都当已读，于是静默返回空 —— 与"真的没有新帧"分不开。
+            // 其他查询是问一次拿一份，误用表现为数据变了，不会静默丢东西，所以不给
+            // 所有响应都塞这个键（那会让证据面的形状白白多一列）。
+            if ($name === 'frames') {
+                $result['session'] = $this->sessionToken();
+            }
+
+            return $result;
         }
 
         return match ($name) {
@@ -194,11 +203,19 @@ final class QueryRouter implements SessionQueries
         $state = $this->state === null ? null : ($this->state)();
 
         return [
-            'session' => $state instanceof SessionState ? $state->token : '',
+            'session' => $this->sessionToken(),
             'state' => $state instanceof SessionState ? $state->state : 'offline',
             'reason' => $state instanceof SessionState ? $state->reason : null,
             'lastFrame' => $this->recorder->lastFrameId(),
         ];
+    }
+
+    /** 离线会话与没有令牌的会话都报空串 —— 空串不是任何真实令牌，比不了就等于不符。 */
+    private function sessionToken(): string
+    {
+        $state = $this->state === null ? null : ($this->state)();
+
+        return $state instanceof SessionState ? $state->token : '';
     }
 
     /**

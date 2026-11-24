@@ -363,8 +363,15 @@ final class DebugSessionTest extends SmokeTestCase
             check('初始状态是 running', $state['state'] === 'running', (string) $state['state']);
             check('running 没有原因', $state['reason'] === null, \json_encode($state['reason']));
 
+            $framesResponse = $session->query('frames');
+            check(
+                'frames 响应带会话令牌 —— 跨会话判断的唯一依据',
+                ($framesResponse['session'] ?? null) === $state['session'],
+                \json_encode($framesResponse['session'] ?? null),
+            );
+
             /** @var list<array<string, mixed>> $frameRows */
-            $frameRows = $session->query('frames')['frames'];
+            $frameRows = $framesResponse['frames'];
             $lastFromFrames = $frameRows === [] ? 0 : (int) $frameRows[\count($frameRows) - 1]['id'];
             check(
                 '末帧与 frames() 末帧同源',
