@@ -6,12 +6,17 @@ namespace Drift\Debug\Session;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Size;
+use Drift\Widget\Element;
 
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。
  *
  * 纯函数：只读 {@see Recorder} 的不可变帧记录，不改状态、不碰元素树。
  * 所以可以重试、可以缓存、可以在任意线程问卷（记录本身在写时拷贝）。
+ *
+ * ★ 唯一例外是 {@see self::props()}：属性只在 dev 形态可反射，且读的是**当前活树**
+ *   （每帧采样必掉帧）。它把结果存进 Recorder 的独立快照窗口，所以查询本身
+ *   有副作用。其余查询仍不改任何状态，这条例外不外溢。
  *
  * ## 两个聚合的口径不同，不要合并
  *
@@ -28,14 +33,98 @@ final class Query
     /** @var array<int, array<string, mixed>> 帧号 => 该帧的森林骨架（复用于 cascade / 聚合） */
     private array $shapeCache = [];
 
+    private readonly PropReader $reader;
+
     public function __construct(private readonly Recorder $recorder)
     {
+        $this->reader = new PropReader();
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
     public function stats(): array
     {
         return $this->recorder->stats();
+    }
+
+    /**
+     * 按节点读 Widget / State 配置（dev 反射，活树按需快照）。
+     *
+     * ★ 帧号不是参数：属性读的是**现在**的活树，给一个历史帧号却返回当前值
+     *   就是"伪称对齐"。返回值里的 `liveFrame` 明说这是哪一帧读到的。
+     *
+     * @param list<Element> $roots 全部树根（主树 + 浮层），由派发层给 —— Debug 层不依赖 App
+     * @return array<string, mixed>
+     */
+    public function props(int $node, array $roots, int $maxDepth = 3, int $maxFields = 120): array
+    {
+        if (!$this->reader->available()) {
+            return [
+                'found' => false,
+                'node' => $node,
+                'reason' => 'reflection-unavailable',
+                'window' => $this->recorder->propsCoverage(),
+            ];
+        }
+
+        $element = $this->findElement($roots, $node);
+        if ($element === null) {
+            // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，
+            // 后者是活树里已经没有它（快照窗口里仍可能有当时的读数）。
+            $known = $this->recorder->nodeIndex()[$node] ?? null;
+
+            return [
+                'found' => false,
+                'node' => $node,
+                'reason' => $known === null ? 'unknown-node' : 'node-unmounted',
+                'type' => $known['c'] ?? null,
+                'window' => $this->recorder->propsCoverage(),
+            ];
+        }
+
+        $frame = $this->recorder->lastFrameId();
+        $snapshot = $this->reader->read(
+            $element,
+            $node,
+            $frame,
+            $maxDepth,
+            $maxFields,
+            $this->recorder->redactionEnabled(),
+        );
+        $this->recorder->rememberProps($snapshot);
+
+        return [
+            'found' => true,
+            'stored' => true,
+            'liveFrame' => $frame,
+        ] + $snapshot->toArray() + ['window' => $this->recorder->propsCoverage()];
+    }
+
+    /** @param list<Element> $roots */
+    private function findElement(array $roots, int $node): ?Element
+    {
+        foreach ($roots as $root) {
+            if (!$root instanceof Element) {
+                continue;
+            }
+            if ($this->recorder->owns($root) && $root->debugId === $node) {
+                return $root;
+            }
+
+            $found = null;
+            $root->visitChildren(function (Element $child) use (&$found, $node): void {
+                if ($found !== null) {
+                    return;
+                }
+                if ($this->recorder->owns($child) && $child->debugId === $node) {
+                    $found = $child;
+                }
+            });
+            if ($found !== null) {
+                return $found;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -755,7 +844,7 @@ final class Query
             ];
         }
 
-        return ['found' => true] + $record->toArray($part, $maxBytes) + ['window' => $window];
+        return ['found' => true] + $record->select($part, $maxBytes) + ['window' => $window];
     }
 
     // ------------------------------------------------------------------ 内部

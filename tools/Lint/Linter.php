@@ -15,6 +15,7 @@ use Drift\Dev\Lint\Rules\BackendBranch;
 use Drift\Dev\Lint\Rules\CallbackArity;
 use Drift\Dev\Lint\Rules\CancelGuard;
 use Drift\Dev\Lint\Rules\ClassMissingUse;
+use Drift\Dev\Lint\Rules\ConversionMethod;
 use Drift\Dev\Lint\Rules\CjkVarName;
 use Drift\Dev\Lint\Rules\DeadCommand;
 use Drift\Dev\Lint\Rules\DeadField;
@@ -142,6 +143,8 @@ final class Linter
             new WorkerArgv(),
             // 角色判定不许搬回应用层：`WorkerProcess` 只给 `AppEntry` 用
             new AppWorkerRole(),
+            // tpc 转换方法不许带参：解释器与 php -l 全绿，只有翻译层 Fatal
+            new ConversionMethod(),
         ]);
     }
 

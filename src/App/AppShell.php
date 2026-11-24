@@ -468,9 +468,11 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      *   原先各写一遍 `foreach (overlays()->all())` —— "漏了浮层"是反复踩到的那类坑
      *   （菜单里的 Spinner 不转、菜单项 Tab 不到、换了主题菜单不变），且都不报错。
      *
+     * @internal 经 {@see \Drift\App\Application::treeRoots()} 给查询面用。
+     *
      * @return list<Element>
      */
-    private function treeRoots(): array
+    public function treeRoots(): array
     {
         $roots = [];
         $root = $this->root;

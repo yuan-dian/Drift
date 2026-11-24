@@ -126,8 +126,24 @@ final readonly class NetworkBodyRecord
         ];
     }
 
-    /** @return array<string, mixed> */
-    public function toArray(string $part = 'both', int $maxBytes = self::MAX_BYTES): array
+    /**
+     * 无参转换方法：tpc 把 `toArray()` 识别为转换方法，**禁止带形参**
+     * （带参时翻译直接 Fatal， interpreter 与 lint 都看不出来）。
+     * 带查询预算的投影走 {@see self::select()}。
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return $this->select('both', self::MAX_BYTES);
+    }
+
+    /**
+     * 查询投影：选一侧或两侧，并在查询侧再截一次。
+     *
+     * @return array<string, mixed>
+     */
+    public function select(string $part, int $maxBytes): array
     {
         // `request` 在所有查询分支里都表示 requestId（miss 分支也是），元信息另起名。
         // 否则查到报文时 id 会被同名的 meta 数组覆盖，调用方拿不到自己问的那条。

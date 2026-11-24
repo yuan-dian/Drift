@@ -66,6 +66,12 @@ final readonly class Color
         return new self($r, $g, $b, $a);
     }
 
+    /** `#RRGGBBAA`（恒 8 位十六进制）：调试证据里一行就能认出颜色。 */
+    public function __toString(): string
+    {
+        return \sprintf('#%02X%02X%02X%02X', $this->r, $this->g, $this->b, $this->a);
+    }
+
     public static function white(): self
     {
         return new self(255, 255, 255);

@@ -252,6 +252,21 @@ abstract class Application
         return $this->shell->root();
     }
 
+    /**
+     * 全部渲染树根：主树在前，浮层在后。
+     *
+     * ★ 门面转发 `AppShell::treeRoots()`，**不在这里再写一遍遍历** ——
+     *   浮层遍历只允许一个出口（`SecondTreeTest` 咬红），漏一处就是下一次
+     *   "菜单里的节点查不到"这种不报错的缺口。
+     *
+     * @internal 查询面按节点找活树元素时用
+     * @return list<Element>
+     */
+    public function treeRoots(): array
+    {
+        return $this->shell->treeRoots();
+    }
+
     /** UI 线程 id（`0` = 未挂载）。 */
     public function uiThreadId(): int
     {

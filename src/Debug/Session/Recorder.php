@@ -52,6 +52,12 @@ final class Recorder
     /** 单帧最多记多少条因果边（防御：装了录制却不跑帧） */
     private const int MAX_CAUSES = 512;
 
+    /**
+     * 属性快照保留的条数：与报文一样是**按需取证**的独立窗口。
+     * 不按帧采（反射全树必掉帧），读过才存。
+     */
+    private const int PROP_CAPACITY = 200;
+
     /** 几何事实保留的帧数；比帧窗口短是刻意的，查询必须自报边界。 */
     public const int GEOMETRY_FRAMES = 60;
 
@@ -133,6 +139,9 @@ final class Recorder
      * @var array<int, NetworkBodyRecord>
      */
     private array $bodies = [];
+
+    /** @var array<int, PropSnapshot> 节点 id => 最近一次按需读取的属性快照 */
+    private array $props = [];
 
     /** 当前正在结算的请求 id，供 `noteStateWrite` 把落地节点写进它的记录。 */
     private int $activeRequest = 0;
@@ -641,6 +650,53 @@ final class Recorder
         return $this->bodies[$requestId] ?? null;
     }
 
+    /**
+     * 证据脱敏总开关（属性域与报文域共用同一份状态与同一张规则表）。
+     *
+     * ★ 属性会读任意 State 字段，里面可能有 password / token。报文已经默认脱敏，
+     *   属性若原样进证据包，同一个威胁模型就出现两种口径。
+     */
+    public function redactionEnabled(): bool
+    {
+        return $this->redactBodies;
+    }
+
+    /** 属性查询是否由本会话发号：旧会话的元素带着旧号，不能拿来查本会话的节点。 */
+    public function owns(Element $element): bool
+    {
+        return $element->debugId > 0 && $element->debugSession === $this->tag;
+    }
+
+    /** 存一次按需属性取证；同一节点重读是替换而不是追加（窗口按条目数计）。 */
+    public function rememberProps(PropSnapshot $snapshot): void
+    {
+        // 先删再插：覆盖已有键不会把它移到队尾，否则"最近读过"会被误当成最旧。
+        unset($this->props[$snapshot->node]);
+        $this->props[$snapshot->node] = $snapshot;
+        while (\count($this->props) > self::PROP_CAPACITY) {
+            $first = \array_key_first($this->props);
+            unset($this->props[$first]);
+        }
+    }
+
+    public function propAt(int $node): ?PropSnapshot
+    {
+        return $this->props[$node] ?? null;
+    }
+
+    /** @return array{nodes: int, capacity: int, from: int, to: int} */
+    public function propsCoverage(): array
+    {
+        $keys = \array_keys($this->props);
+
+        return [
+            'nodes' => \count($keys),
+            'capacity' => self::PROP_CAPACITY,
+            'from' => $keys === [] ? 0 : \min($keys),
+            'to' => $keys === [] ? 0 : \max($keys),
+        ];
+    }
+
     /** @return array{requests: int, capacity: int, from: int, to: int, bytes: int} */
     public function bodyCoverage(): array
     {
@@ -996,6 +1052,9 @@ final class Recorder
         //   上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报，看起来完美。
         $this->geometry = [];
         $this->geometryDigest = [];
+        // 属性是旧会话的活树读数，重开会话后一句都不能留（帧号会从头开始，
+        // 残留快照会被读成"这一帧的属性"，且不会报 stale）。
+        $this->props = [];
         // `$nodes` / `$boxless` 描述的是**树**，不描述帧，保留（id 仍可用）。
     }
 

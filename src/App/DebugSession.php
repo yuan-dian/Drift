@@ -65,6 +65,7 @@ final class DebugSession implements Session
         'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
+        'props' => '按节点读 Widget / State 配置（dev 反射，活树按需快照进独立 200 条窗口）',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
@@ -101,6 +102,7 @@ final class DebugSession implements Session
         BoxConstraints $constraints,
         int $capacity = Recorder::DEFAULT_CAPACITY,
         ?Script $script = null,
+        bool $redactBodies = true,
     ): self {
         if (Recorder::installed()) {
             throw new \LogicException('已有录制器在运行：先关闭原会话，避免覆盖它的缓冲');
@@ -115,7 +117,7 @@ final class DebugSession implements Session
             \is_finite($constraints->maxHeight) ? $constraints->maxHeight : 0.0,
         );
 
-        $recorder = Recorder::install($capacity, $script);
+        $recorder = Recorder::install($capacity, $script, $redactBodies);
 
         return new self($app, $constraints, $recorder, new Query($recorder), $script);
     }
@@ -262,6 +264,12 @@ final class DebugSession implements Session
             'align' => $this->queries->align(
                 self::needInt($name, $args, 'node'),
                 self::needInt($name, $args, 'frame'),
+            ),
+            'props' => $this->queries->props(
+                self::needInt($name, $args, 'node'),
+                $this->app->treeRoots(),
+                self::intArg($name, $args, 'maxDepth', 3),
+                self::intArg($name, $args, 'maxFields', 120),
             ),
             'digest' => Digest::of($this->recorder),
             // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像
