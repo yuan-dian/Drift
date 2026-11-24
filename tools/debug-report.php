@@ -58,6 +58,7 @@ $height = 600;
 $json = false;
 $top = 10;
 $why = null;
+$whyFrame = null;
 $rows = 0;
 $hold = 1;
 /** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
@@ -76,6 +77,8 @@ foreach (\array_slice($argv, 1) as $arg) {
         $top = \max(1, (int) \substr($arg, 6));
     } elseif (\str_starts_with($arg, '--why=')) {
         $why = (int) \substr($arg, 6);
+    } elseif (\str_starts_with($arg, '--frame=')) {
+        $whyFrame = (int) \substr($arg, 8);
     } elseif (\str_starts_with($arg, '--hold=')) {
         $hold = \max(1, (int) \substr($arg, 7));
     } elseif (\str_starts_with($arg, '--rows=')) {
@@ -104,7 +107,7 @@ $label = $page ?? $target;
 if ($label === null) {
     \fwrite(\STDERR, "用法：drift debug <AppClass|路由id> [--page=<路由id>] [--frames=N] [--rows=N]\n");
     \fwrite(\STDERR, "              [--key=Tab] [--text=abc] [--click=x,y[,键]] [--wheel=x,y,格[,h]]\n");
-    \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--top=N] [--width=W] [--height=H] [--json]\n");
+    \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--frame=N] [--top=N] [--width=W] [--height=H] [--json]\n");
     exit(2);
 }
 
@@ -182,6 +185,12 @@ try {
     $allHotspots = $session->query('hotspots', ['frames' => 0, 'limit' => 0]);
     $allNodes = $session->query('nodes', ['frames' => 0, 'limit' => 0]);
 
+    // 因果森林只取最慢帧：读者问"为什么这么慢"问的是那一帧，不是平均。
+    $slowestId = slowest_frame($recorded);
+    $cascade = $slowestId > 0
+        ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => 3, 'maxChildren' => 3])
+        : null;
+
     $report = [
         'app' => $label,
         'viewport' => [$width, $height],
@@ -196,7 +205,8 @@ try {
         'hiddenHotspots' => \max(0, \count($allHotspots) - $top),
         'nodes' => \array_slice($allNodes, 0, $top),
         'hiddenNodes' => \max(0, \count($allNodes) - $top),
-        'why' => $why === null ? null : $session->query('why', ['node' => $why]),
+        'why' => $why === null ? null : $session->query('why', $whyFrame === null ? ['node' => $why] : ['node' => $why, 'frame' => $whyFrame]),
+        'cascade' => $cascade,
     ];
 } finally {
     $session->close();
@@ -448,16 +458,23 @@ function render_text(array $report): void
         }
     }
 
-    \fwrite(\STDOUT, "\n根因（kind=state，次数 / 出现帧数 / 涉及节点 / 调用点）\n");
+    /** @var null|array<string, mixed> $cascade */
+    $cascade = $report['cascade'];
+    if (\is_array($cascade)) {
+        render_cascade($cascade);
+    }
+
+    \fwrite(\STDOUT, "\n根因（kind=state，次数 / 出现帧数 / 涉及节点 / 波及 / 调用点）\n");
     if ($hotspots === []) {
         \fwrite(\STDOUT, "  （这段里没有状态写入：静止画面不会产生因果边）\n");
     }
     foreach ($hotspots as $row) {
         \fwrite(\STDOUT, \sprintf(
-            "  %-4d %-4d %-4d %s  %s\n",
+            "  %-4d %-4d %-4d %-4d %s  %s\n",
             (int) $row['writes'],
             (int) $row['frames'],
             (int) $row['nodes'],
+            (int) ($row['subtree'] ?? 0),
             (string) $row['site'],
             (string) $row['detail'],
         ));
@@ -469,15 +486,26 @@ function render_text(array $report): void
         ));
     }
 
-    \fwrite(\STDOUT, "\n重建最多（次数 / 节点id / 自身写入 / 父传播 / 路径）\n");
+    \fwrite(\STDOUT, "\n重建聚合（次数 / 节点id / 覆盖 / 自身写入 / 父传播 / 路径）\n");
     if ($nodes === []) {
         \fwrite(\STDOUT, "  （这段里没有节点重建）\n");
     }
+    // 单帧动作里常常每个节点各重建 1 次：这时次数没有区分度，排序实际由"覆盖"决定。
+    // 不说清楚，读者会以为榜首就是"重建最多的那个节点"。
+    if (\count($nodes) > 1
+        && (int) $nodes[0]['rebuilds'] === (int) $nodes[\count($nodes) - 1]['rebuilds']
+    ) {
+        \fwrite(\STDOUT, \sprintf(
+            "  （本段每个节点都只重建 %d 次：次数无区分度，已按覆盖子树排序）\n",
+            (int) $nodes[0]['rebuilds'],
+        ));
+    }
     foreach ($nodes as $row) {
         \fwrite(\STDOUT, \sprintf(
-            "  %-4d %-6d %-4d %-4d %s\n",
+            "  %-4d %-6d %-6d %-4d %-4d %s\n",
             (int) $row['rebuilds'],
             (int) $row['id'],
+            (int) ($row['subtree'] ?? 0),
             (int) $row['self'],
             (int) $row['inherited'],
             (string) $row['path'],
@@ -523,13 +551,44 @@ function render_text(array $report): void
         if ($why['causes'] === []) {
             \fwrite(\STDOUT, "  没有归因边：本次会话里没记到这个节点的重建\n");
         }
+        /** @var list<array<string, mixed>> $trail */
+        $trail = \is_array($why['trail'] ?? null) ? $why['trail'] : [];
+
+        // parent 边本来只有一个空 site：补上是**哪个父节点**，否则"因为父重建了"
+        // 等于没说。父路径从 trail 取，两处共用同一份拓扑。
+        $trailById = [];
+        foreach ($trail as $step) {
+            $trailById[(int) $step['id']] = (string) $step['path'];
+        }
         foreach ($why['causes'] as $cause) {
+            $extra = '';
+            if ((string) $cause['kind'] === 'parent' && isset($trailById[(int) ($cause['from'] ?? 0)])) {
+                $fromId = (int) $cause['from'];
+                $extra = \sprintf('  ← #%d %s', $fromId, tail_path($trailById[$fromId]));
+            }
             \fwrite(\STDOUT, \sprintf(
-                "  %-8s %s%s\n",
+                "  %-8s %s%s%s\n",
                 (string) $cause['kind'],
                 (string) $cause['site'],
                 $cause['detail'] === '' ? '' : '  ' . (string) $cause['detail'],
+                $extra,
             ));
+        }
+
+        // 直接边只说"因为父节点重建了"，不说父是谁。链路把一路的父节点与终点
+        // （state 写入点）摊开 —— 那才是"我该改哪一行"。
+        if (\count($trail) > 1) {
+            \fwrite(\STDOUT, "\n  链路（目标 → 根）：\n");
+            foreach ($trail as $step) {
+                \fwrite(\STDOUT, \sprintf(
+                    "    #%-5d %-8s %s%s\n",
+                    (int) $step['id'],
+                    (string) $step['kind'],
+                    (string) $step['site'],
+                    $step['detail'] === '' ? '' : '  ' . (string) $step['detail'],
+                ));
+            }
+            \fwrite(\STDOUT, "  ↑ 末行是链路终点：改它才治本，改下游只是少重建几个节点\n");
         }
     }
 }
@@ -565,4 +624,103 @@ function percentile(array $values, float $p): float
     $rank = (int) \ceil($p * \count($values));
 
     return $values[\min(\count($values) - 1, \max(0, $rank - 1))];
+}
+
+/**
+ * 单帧的"构成 + 因果覆盖"两段。
+ *
+ * 构成回答"这一帧是哪些控件在重建"（类型聚合，React Profiler 的 component ×N 口径），
+ * 覆盖回答"从哪个根长下来、每个节点牵动多少"。两者都不受 --top 影响：
+ * 它们是这一帧的全量事实，不是排行榜。
+ *
+ * @param array<string, mixed> $cascade
+ */
+function render_cascade(array $cascade): void
+{
+    \fwrite(\STDOUT, \sprintf(
+        "\n重建构成（最慢帧 #%d，%d 个节点，最深 %d 层）\n",
+        (int) $cascade['frame'],
+        (int) $cascade['rebuilt'],
+        (int) $cascade['depthMax'],
+    ));
+
+    /** @var list<array{type: string, nodes: int}> $byType */
+    $byType = $cascade['byType'];
+    if ($byType === []) {
+        \fwrite(\STDOUT, "  （没有重建节点）\n");
+
+        return;
+    }
+
+    $parts = [];
+    foreach (\array_slice($byType, 0, 8) as $row) {
+        $parts[] = $row['type'] . '×' . $row['nodes'];
+    }
+    \fwrite(\STDOUT, '  ' . \implode('   ', $parts) . "\n");
+    if (\count($byType) > 8) {
+        \fwrite(\STDOUT, \sprintf("  … 还有 %d 类\n", \count($byType) - 8));
+    }
+
+    \fwrite(\STDOUT, "\n因果覆盖（根 = 父没有重建的节点；数字为本子树内重建数）\n");
+    $budget = 30;
+    /** @var list<array<string, mixed>> $roots */
+    $roots = $cascade['roots'];
+    foreach ($roots as $root) {
+        if ($budget <= 0) {
+            break;
+        }
+        cascade_line($root, 0, $budget);
+    }
+    if ($budget <= 0) {
+        \fwrite(\STDOUT, "  … 已达到显示上限（层级与分支都只显示前几层）\n");
+    }
+}
+
+/**
+ * 递归打印一个树节点。`←` 标出 state 写入点，`…` 标出被截断的分支。
+ *
+ * @param array<string, mixed> $node
+ * @param int                  $budget 剩余可打印行数（引用传，跨层级共享）
+ */
+function cascade_line(array $node, int $depth, int &$budget): void
+{
+    if ($budget <= 0) {
+        return;
+    }
+    --$budget;
+
+    $label = \str_repeat('  ', $depth) . (string) $node['type'];
+    $line = \sprintf('  %-44s %5d', $label, (int) $node['subtree']);
+    if ((bool) $node['writes']) {
+        $line .= '  ← ' . (string) $node['site'];
+        if ($node['detail'] !== '') {
+            $line .= '  ' . (string) $node['detail'];
+        }
+    }
+    // 截断标在行尾：单独一行"还有 N 个分支"每层都来一遍，会把树本身的形状冲散。
+    if ((int) $node['omitted'] > 0) {
+        $line .= \sprintf('  … 另 %d 支未展开', (int) $node['omitted']);
+    }
+    \fwrite(\STDOUT, $line . "\n");
+
+    /** @var list<array<string, mixed>> $kids */
+    $kids = $node['children'];
+    foreach ($kids as $kid) {
+        cascade_line($kid, $depth + 1, $budget);
+        if ($budget <= 0) {
+            return;
+        }
+    }
+
+}
+
+/** 只留路径尾部 N 段：完整链路已经单独展开，行内再贴一遍会挤掉别的信息。 */
+function tail_path(string $path, int $keep = 2): string
+{
+    $parts = \explode(' > ', $path);
+    if (\count($parts) <= $keep) {
+        return $path;
+    }
+
+    return \implode(' > ', \array_slice($parts, -$keep));
 }

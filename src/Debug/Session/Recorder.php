@@ -229,6 +229,12 @@ final class Recorder
         return $element->debugId;
     }
 
+    /** 节点的 Widget 短类名（树按类型展开、按类型聚合都用它）。 */
+    public function typeOf(int $nodeId): string
+    {
+        return $this->nodes[$nodeId]['c'] ?? '';
+    }
+
     /** 从根到该节点的类名路径，用于面板显示与"这是哪个节点"的自证。 */
     public function pathOf(int $nodeId): string
     {
@@ -246,17 +252,45 @@ final class Recorder
     /**
      * 为什么这个节点在这一帧变了。
      *
+     * `trail` 是从目标沿父边一路走到根的链路（目标在前、根在末尾）。
+     * 只印直接边等于回答"因为父节点重建了"却不说父是谁 —— 开发者要的正是
+     * "哪条链把我带下来的"。链路来自 `FrameRecord::parentOf()`，与 `cascade`
+     * 共用同一份拓扑，不另算。
+     *
      * @return array<string, mixed>
      */
     public function why(int $nodeId, ?int $frameId = null): array
     {
-        $frame = $this->frame($frameId ?? $this->lastFrameId());
+        // 不指定帧时取**最近一次重建它的帧**，不是最后一帧：多动作场景里最后一帧
+        // 往往是静止帧，按最后一帧回答会得到"它没有重建"，把问题原样退回来。
+        $frame = $frameId !== null ? $this->frame($frameId) : $this->latestRebuiltFrame($nodeId);
         $causes = [];
+        $trail = [];
         if ($frame !== null) {
             foreach ($frame->causes as $edge) {
                 if ($edge->toId === $nodeId) {
                     $causes[] = $edge->toArray();
                 }
+            }
+
+            $parent = $frame->parentOf();
+            $causeOf = $frame->causeOf();
+            $cursor = $nodeId;
+            $guard = 0;
+            while ($guard++ < 64) {
+                $edge = $causeOf[$cursor] ?? null;
+                $trail[] = [
+                    'id' => $cursor,
+                    'path' => $this->pathOf($cursor),
+                    'kind' => $edge?->kind ?? 'none',
+                    'site' => $edge?->site ?? '',
+                    'detail' => $edge?->detail ?? '',
+                ];
+                $next = $parent[$cursor] ?? null;
+                if ($next === null || $next === $cursor) {
+                    break;
+                }
+                $cursor = $next;
             }
         }
 
@@ -266,7 +300,20 @@ final class Recorder
             'frame' => $frame?->id,
             'rebuilt' => $frame?->rebuilt($nodeId) ?? false,
             'causes' => $causes,
+            'trail' => $trail,
         ];
+    }
+
+    /** 最近一次重建过该节点的帧；一次都没有则退回最后一帧（好让 `why` 如实说"没重建"）。 */
+    private function latestRebuiltFrame(int $nodeId): ?FrameRecord
+    {
+        foreach (\array_reverse($this->frames, true) as $frame) {
+            if ($frame->rebuilt($nodeId)) {
+                return $frame;
+            }
+        }
+
+        return $this->frame($this->lastFrameId());
     }
 
     public function frame(?int $id = null): ?FrameRecord

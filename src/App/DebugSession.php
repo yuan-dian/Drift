@@ -48,6 +48,7 @@ final class DebugSession
         'why' => '某节点在某帧为什么重建',
         'hotspots' => '跨帧聚合根因（kind=state）：调用点 + State 类',
         'nodes' => '跨帧聚合节点：重建次数、自身写入与父传播',
+        'cascade' => '单帧因果森林：结构根、子树规模、state 写入点、按类型构成',
     ];
 
     private bool $closed = false;
@@ -149,6 +150,11 @@ final class DebugSession
                 self::intArg($name, $args, 'frames', 300),
                 self::intArg($name, $args, 'limit', 10),
             ),
+            'cascade' => $this->queries->cascade(
+                self::needInt($name, $args, 'frame'),
+                self::intArg($name, $args, 'maxDepth', 5),
+                self::intArg($name, $args, 'maxChildren', 8),
+            ),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
             ),
@@ -177,6 +183,12 @@ final class DebugSession
     public function nodes(int $frames = 300, int $limit = 10): array
     {
         return $this->queries->nodes($frames, $limit);
+    }
+
+    /** @return array<string, mixed> */
+    public function cascade(int $frameId, int $maxDepth = 5, int $maxChildren = 8): array
+    {
+        return $this->queries->cascade($frameId, $maxDepth, $maxChildren);
     }
 
     public function recorder(): Recorder

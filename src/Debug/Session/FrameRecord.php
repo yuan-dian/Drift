@@ -38,6 +38,42 @@ final readonly class FrameRecord
     }
 
     /**
+     * 父边索引：`toId => fromId`，只收 `kind=parent`。
+     *
+     * 树的一切结构都从这一张表长出来：单链、子树大小、根到目标的路径。
+     * 放在记录上而不是查询里，是为了 `why` 与 `cascade` 不各算一遍父子关系
+     * （同一件事写两遍必漂，这是本仓反复踩过的）。
+     *
+     * @return array<int, int>
+     */
+    public function parentOf(): array
+    {
+        $out = [];
+        foreach ($this->causes as $edge) {
+            if ($edge->kind === 'parent' && $edge->fromId !== null) {
+                $out[$edge->toId] = $edge->fromId;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 每节点一条归因边：`toId => Edge`（录制时同帧同节点已去重）。
+     *
+     * @return array<int, Edge>
+     */
+    public function causeOf(): array
+    {
+        $out = [];
+        foreach ($this->causes as $edge) {
+            $out[$edge->toId] = $edge;
+        }
+
+        return $out;
+    }
+
+    /**
      * 纳秒账 → 毫秒，只保留有耗时的段并降序：0ns 的段列出来只会淹没真正的开销。
      *
      * @param array<string, int> $ns

@@ -21,6 +21,9 @@ namespace Drift\Debug\Session;
  */
 final class Query
 {
+    /** @var array<int, array<string, mixed>> 帧号 => 该帧的森林骨架（复用于 cascade / 聚合） */
+    private array $shapeCache = [];
+
     public function __construct(private readonly Recorder $recorder)
     {
     }
@@ -120,6 +123,79 @@ final class Query
     }
 
     /**
+     * 单帧的**因果森林**：重建节点按父边连成树，state 写入点作为树里的标记。
+     *
+     * ## 为什么是森林而不是排行榜
+     *
+     * 一次动作帧里 350 个节点各重建 1 次，"按次数排名"没有任何区分度，排序退化成
+     * 路径先序，前几行必然全是祖先。成熟工具（React Profiler / Flutter Widget
+     * Rebuild Stats）在单帧里给的是**层级**，次数留到多帧聚合才有意义。
+     *
+     * ## 根的定义：父没有重建的节点
+     *
+     * 森林因此在结构上**不重叠**：`Σ(根.subtree) == rebuilt 数`，这条是可判据的。
+     * state 写入点**不另起根**（它常常嵌在另一个写入点的子树里，比如
+     * `PageShell ⊃ Table`），只标 `writes` —— 嵌套关系正是"两次写入谁在谁里面"
+     * 的答案，另起根会把它抹平。
+     *
+     * @param int $maxDepth     树往下展开几层（更深标 `cut`）
+     * @param int $maxChildren  每层最多留几个孩子（其余记 `omitted`）
+     * @return array<string, mixed>
+     */
+    public function cascade(int $frameId, int $maxDepth = 5, int $maxChildren = 8): array
+    {
+        $frame = $this->recorder->frame($frameId);
+        if ($frame === null) {
+            throw new \InvalidArgumentException("没有这一帧：{$frameId}（缓冲窗口之外或尚未发生）");
+        }
+
+        $shape = $this->shapeOf($frame);
+        /** @var array<int, list<int>> $children */
+        $children = $shape['children'];
+        /** @var list<int> $roots */
+        $roots = $shape['roots'];
+        /** @var array<int, int> $subtree */
+        $subtree = $shape['subtree'];
+        $causeOf = $frame->causeOf();
+
+        $writes = [];
+        foreach ($frame->rebuilt as $id) {
+            $edge = $causeOf[$id] ?? null;
+            if ($edge === null || $edge->kind !== 'state') {
+                continue;
+            }
+            $writes[] = [
+                'id' => $id,
+                'path' => $this->recorder->pathOf($id),
+                'type' => $this->recorder->typeOf($id),
+                'site' => $edge->site,
+                'detail' => $edge->detail,
+                'subtree' => $subtree[$id] ?? 1,
+            ];
+        }
+        \usort($writes, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
+            ?: \strcmp((string) $a['path'], (string) $b['path']));
+
+        // 根按波及降序：显示预算有限，先给读者看牵动最多的那一支，
+        // 否则"18 个的根"会先占满行数，把真正 342 个的那支挤到截断之后。
+        \usort($roots, fn(int $a, int $b): int => ($subtree[$b] ?? 1) <=> ($subtree[$a] ?? 1) ?: $a <=> $b);
+
+        $tree = [];
+        foreach ($roots as $id) {
+            $tree[] = $this->treeNode($id, $children, $causeOf, $subtree, 0, $maxDepth, $maxChildren);
+        }
+
+        return [
+            'frame' => $frame->id,
+            'rebuilt' => \count($frame->rebuilt),
+            'depthMax' => (int) $shape['depthMax'],
+            'roots' => $tree,
+            'writes' => $writes,
+            'byType' => $this->byType($frame),
+        ];
+    }
+
+    /**
      * 跨帧聚合**根因**：同一调用点写同一 State 的次数。
      *
      * 只算 `kind=state`。`parent` / `unknown` 是传播与兜底，算进来会让排名失真。
@@ -130,6 +206,9 @@ final class Query
     {
         $agg = [];
         foreach ($this->window($frames) as $frame) {
+            $shape = $this->shapeOf($frame);
+            /** @var array<int, int> $subtree */
+            $subtree = $shape['subtree'];
             foreach ($frame->causes as $edge) {
                 if ($edge->kind !== 'state') {
                     continue; // 传播与兜底不是根因：算进来会让排名全是下游节点
@@ -142,11 +221,15 @@ final class Query
                         'writes' => 0,
                         'frames' => [],
                         'nodes' => [],
+                        'subtree' => 0,
                     ];
                 }
                 ++$agg[$key]['writes'];
                 $agg[$key]['frames'][$frame->id] = true;
                 $agg[$key]['nodes'][$edge->toId] = true;
+                // 同一写入点多帧出现时取**最大单帧波及**：与"写了多少次"是两个问题，
+                // 合并成合计会把"偶尔一次打到整树"和"每帧动 3 个"算成同一档。
+                $agg[$key]['subtree'] = \max((int) $agg[$key]['subtree'], $subtree[$edge->toId] ?? 1);
             }
         }
 
@@ -158,6 +241,7 @@ final class Query
                     'writes' => $row['writes'],
                     'frames' => \count($row['frames']),
                     'nodes' => \count($row['nodes']),
+                    'subtree' => $row['subtree'],
                 ],
                 $agg,
             )),
@@ -176,6 +260,9 @@ final class Query
     {
         $agg = [];
         foreach ($this->window($frames) as $frame) {
+            $shape = $this->shapeOf($frame);
+            /** @var array<int, int> $subtree */
+            $subtree = $shape['subtree'];
             foreach ($frame->rebuilt as $id) {
                 $agg[$id] ??= [
                     'id' => $id,
@@ -183,11 +270,13 @@ final class Query
                     'rebuilds' => 0,
                     'self' => 0,
                     'inherited' => 0,
+                    'subtree' => 0,
                     'first' => $frame->id,
                     'last' => $frame->id,
                 ];
                 ++$agg[$id]['rebuilds'];
                 $agg[$id]['last'] = $frame->id;
+                $agg[$id]['subtree'] = \max((int) $agg[$id]['subtree'], $subtree[$id] ?? 1);
             }
             foreach ($frame->causes as $edge) {
                 $id = $edge->toId;
@@ -202,7 +291,14 @@ final class Query
             }
         }
 
-        return $this->rank(\array_values($agg), 'rebuilds', 'path', $limit);
+        $rows = \array_values($agg);
+        // 排序三级：次数（跨帧才有区分度）→ 覆盖子树（单帧里"谁牵动得多"）→ 路径（稳定）。
+        // 只按次数排会在"每节点各 1 次"的动作帧里退化成路径先序，把真正的分叉点埋掉。
+        \usort($rows, static fn(array $a, array $b): int => ($b['rebuilds'] <=> $a['rebuilds'])
+            ?: ((int) $b['subtree'] <=> (int) $a['subtree'])
+            ?: \strcmp((string) $a['path'], (string) $b['path']));
+
+        return $limit > 0 ? \array_slice($rows, 0, $limit) : $rows;
     }
 
     // ------------------------------------------------------------------ 内部
@@ -220,6 +316,148 @@ final class Query
         }
 
         return \array_slice($all, -$frames, null, true);
+    }
+
+    /**
+     * 帧的森林骨架，按帧号缓存。
+     *
+     * `roots` 是"父没有重建"的节点 ⇒ 森林不重叠，子树规模之和等于重建数。
+     * `subtree` 由深到浅累加（`arsort($depth)` 保证子先于父落账）。
+     *
+     * @return array{children: array<int, list<int>>, roots: list<int>, subtree: array<int, int>, depthMax: int, parent: array<int, int>}
+     */
+    private function shapeOf(FrameRecord $frame): array
+    {
+        if (isset($this->shapeCache[$frame->id])) {
+            /** @var array{children: array<int, list<int>>, roots: list<int>, subtree: array<int, int>, depthMax: int, parent: array<int, int>} */
+            return $this->shapeCache[$frame->id];
+        }
+        // 缓存键是帧号，环形缓冲裁掉的帧不会再被问到；到容量就整体丢弃，
+        // 不让它跟着会话无限长（一份骨架比一条帧记录大得多）。
+        if (\count($this->shapeCache) >= 600) {
+            $this->shapeCache = [];
+        }
+
+        $parent = $frame->parentOf();
+        $rebuiltSet = [];
+        foreach ($frame->rebuilt as $id) {
+            $rebuiltSet[$id] = true;
+        }
+
+        $children = [];
+        $roots = [];
+        $depth = [];
+        foreach ($frame->rebuilt as $id) {
+            $p = $parent[$id] ?? null;
+            if ($p !== null && isset($rebuiltSet[$p])) {
+                $children[$p][] = $id;
+            } else {
+                $roots[] = $id;
+            }
+
+            $d = 0;
+            $cursor = $id;
+            $guard = 0;
+            while (isset($parent[$cursor]) && $guard++ < 64) {
+                $cursor = $parent[$cursor];
+                ++$d;
+            }
+            $depth[$id] = $d;
+        }
+
+        $subtree = [];
+        foreach ($frame->rebuilt as $id) {
+            $subtree[$id] = 1;
+        }
+        \arsort($depth);
+        foreach ($depth as $id => $d) {
+            $p = $parent[$id] ?? null;
+            if ($p !== null && isset($subtree[$p])) {
+                $subtree[$p] += $subtree[$id];
+            }
+        }
+
+        $shape = [
+            'children' => $children,
+            'roots' => $roots,
+            'subtree' => $subtree,
+            'depthMax' => $depth === [] ? 0 : \max($depth),
+            'parent' => $parent,
+        ];
+        $this->shapeCache[$frame->id] = $shape;
+
+        return $shape;
+    }
+
+    /**
+     * 递归造一个树节点；子节点按子树降序 —— 截断时留下的必须是"波及最大"的分支。
+     *
+     * @param array<int, list<int>> $children
+     * @param array<int, Edge>      $causeOf
+     * @param array<int, int>       $subtree
+     * @return array<string, mixed>
+     */
+    private function treeNode(int $id, array $children, array $causeOf, array $subtree, int $depth, int $maxDepth, int $maxChildren): array
+    {
+        $edge = $causeOf[$id] ?? null;
+        $kids = $children[$id] ?? [];
+        $node = [
+            'id' => $id,
+            'type' => $this->recorder->typeOf($id),
+            'subtree' => $subtree[$id] ?? 1,
+            'writes' => $edge !== null && $edge->kind === 'state',
+            'site' => $edge?->site ?? '',
+            'detail' => $edge?->detail ?? '',
+            'children' => [],
+            'omitted' => 0,
+            'cut' => false,
+        ];
+
+        if ($kids === []) {
+            return $node;
+        }
+        if ($depth >= $maxDepth) {
+            $node['cut'] = true;
+            $node['omitted'] = \count($kids);
+
+            return $node;
+        }
+
+        \usort($kids, fn(int $a, int $b): int => ($subtree[$b] ?? 1) <=> ($subtree[$a] ?? 1) ?: $a <=> $b);
+        $shown = \array_slice($kids, 0, $maxChildren);
+        $node['omitted'] = \count($kids) - \count($shown);
+        foreach ($shown as $kid) {
+            $node['children'][] = $this->treeNode($kid, $children, $causeOf, $subtree, $depth + 1, $maxDepth, $maxChildren);
+        }
+
+        return $node;
+    }
+
+    /**
+     * 按 Widget 类型聚合（React Profiler 的 "component ×N" 口径）。
+     *
+     * 截断只影响树，不影响这里：类型构成必须永远覆盖全部重建节点。
+     *
+     * @return list<array{type: string, nodes: int}>
+     */
+    private function byType(FrameRecord $frame): array
+    {
+        $agg = [];
+        foreach ($frame->rebuilt as $id) {
+            $type = $this->recorder->typeOf($id);
+            if ($type === '') {
+                $type = '?';
+            }
+            $agg[$type] = ($agg[$type] ?? 0) + 1;
+        }
+        \arsort($agg);
+
+        $out = [];
+        foreach ($agg as $type => $nodes) {
+            $out[] = ['type' => (string) $type, 'nodes' => $nodes];
+        }
+
+        return $out;
     }
 
     /**
