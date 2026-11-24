@@ -399,9 +399,18 @@ function run_once(array $o): array
         $allNodes = $session->query('nodes', ['frames' => 0, 'limit' => 0]);
 
         // 因果森林只取最慢帧：读者问"为什么这么慢"问的是那一帧，不是平均。
+        //
+        // 但**最慢帧常常是挂载帧**（首次 layout 最贵，却一个节点都没重建），拿它做
+        // 因果树只会得到"（没有重建节点）"，而"点了之后那一帧动的是什么"就在旁边
+        // 几行里。所以退一格：优先"最慢的**有重建**的帧"，都没有才回到最慢帧
+        // （那时"没有重建"是这一整段的事实，不是选错了帧）。
         $slowestId = slowest_frame($recorded);
-        $cascade = $slowestId > 0
-            ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => $o['depth'], 'maxChildren' => 4])
+        $cascadeId = slowest_frame($recorded, true);
+        if ($cascadeId <= 0) {
+            $cascadeId = $slowestId;
+        }
+        $cascade = $cascadeId > 0
+            ? $session->query('cascade', ['frame' => $cascadeId, 'maxDepth' => $o['depth'], 'maxChildren' => 4])
             : null;
 
         $report = [
@@ -424,6 +433,10 @@ function run_once(array $o): array
             'hiddenNodes' => \max(0, \count($allNodes) - $o['top']),
             'why' => $o['why'] === null ? null : $session->query('why', $o['whyFrame'] === null ? ['node' => $o['why']] : ['node' => $o['why'], 'frame' => $o['whyFrame']]),
             'cascade' => $cascade,
+            // 因果树取的是"最慢的**有重建**的帧"，与 `最慢帧` 可能不是一个：
+            // 纯重绘的帧（动画 / 滚动插值）可以最慢却一个节点都没重建，拿它做因果树
+            // 只会得到"（没有重建节点）"。报告要把这件事说出来，不能默默换帧。
+            'slowestFrame' => $slowestId,
         ];
 
         /** @var array<string, mixed> $scriptRaw */
@@ -825,11 +838,22 @@ function render_text(array $report): void
 }
 
 /** 最慢的一帧的帧号（用于把"最慢"与帧表对上）。 */
-function slowest_frame(array $frames): int
+/**
+ * 最慢的那一帧。
+ *
+ * `$rebuiltOnly` 只要"重建过的帧"：因果树问的是"这一帧为什么动"，而最慢帧常常是
+ * 挂载帧 —— 它最贵，却一个节点都不重建，拿它做因果树只会得到"（没有重建节点）"。
+ *
+ * @param list<array<string, mixed>> $frames
+ */
+function slowest_frame(array $frames, bool $rebuiltOnly = false): int
 {
     $best = 0;
     $bestWall = -1.0;
     foreach ($frames as $frame) {
+        if ($rebuiltOnly && (int) $frame['rebuilt'] === 0) {
+            continue;
+        }
         if ((float) $frame['wall'] > $bestWall) {
             $bestWall = (float) $frame['wall'];
             $best = (int) $frame['id'];
@@ -868,9 +892,15 @@ function percentile(array $values, float $p): float
  */
 function render_cascade(array $cascade): void
 {
+    // 因果树取的是"最慢的**有重建**的帧"：纯重绘的帧（动画 / 滚动插值）可以最慢却
+    // 一个节点都没重建。换过帧就要说，否则"最慢帧 #3"会指着一棵属于 #2 的树。
+    $slowest = (int) ($cascade['slowestFrame'] ?? $cascade['frame']);
+    $which = $slowest === (int) $cascade['frame']
+        ? \sprintf('最慢帧 #%d', $slowest)
+        : \sprintf('帧 #%d（最慢帧 #%d 只重绘不重建）', (int) $cascade['frame'], $slowest);
     \fwrite(\STDOUT, \sprintf(
-        "\n重建构成（最慢帧 #%d，%d 个节点，最深 %d 层）\n",
-        (int) $cascade['frame'],
+        "\n重建构成（%s，%d 个节点，最深 %d 层）\n",
+        $which,
         (int) $cascade['rebuilt'],
         (int) $cascade['depthMax'],
     ));
