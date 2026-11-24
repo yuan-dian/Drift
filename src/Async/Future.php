@@ -71,6 +71,19 @@ final class Future
     private array $progressSinks = [];
 
     /**
+     * 结算观察者（`onSettle()` 的订阅者）。
+     *
+     * ★ 与 `then()` 的本质区别：观察者**不派生** Future、不改变值与失败传播，
+     *   只是在结算那一刻看一眼。因此它也不会把 Fatal 判据的 `$links` 撑非空。
+     * ★ 触发顺序是刻意的：在 `$links` 跑之前（见 `resolve()` / `rejectCore()`）。
+     *   观察者在那里压下的"当前事件"标记，能被同帧 `then()` 里的 `setState`
+     *   读到 —— 这是"网络请求落地后谁重建了"能被归因到同一条边的前提。
+     *
+     * @var list<\Closure(bool, mixed): void> 成功 ⇒ (true, 值)；失败 ⇒ (false, \Throwable)
+     */
+    private array $settleSinks = [];
+
+    /**
      * @internal 只有后端与 `all`/`race` 造 Future；应用侧从 `submit()` 拿
      *
      * @param null|\Closure(): void $onCancel 取消钩子（可空：不是所有后端都能停）
@@ -183,6 +196,53 @@ final class Future
         }
 
         return $this;
+    }
+
+    /**
+     * 订阅**结算**（成功或失败），不派生新 Future，返回 `$this`。
+     *
+     * ★ 与 `then()` 的分工：`then()` 要变换值、要派生链、要接失败；`onSettle()`
+     *   只是"结算那一刻看一眼"，用于观测（网络域记 settledAtFrame 与归因标记）。
+     *   观察者抛错不影响结算 —— 观测不许反过来改被观测的语义。
+     * ★ 在**已结算**的 Future 上挂 ⇒ 当前栈上补发一次（与 `onProgress()` 同款：
+     *   订阅晚于结算是常态）。补发时 `$links` 已经跑完，所以"压标记给 then 读"
+     *   只对挂得早的订阅成立 —— 网络域在 `submit()` 返回的当帧就挂，正是早的那种。
+     *
+     * @param callable(bool, mixed): void $onSettled 成功 ⇒ (true, 值)；失败 ⇒ (false, \Throwable)
+     *
+     * @api
+     */
+    public function onSettle(callable $onSettled): self
+    {
+        $this->settleSinks[] = \Closure::fromCallable($onSettled);
+        if ($this->state === self::FULFILLED) {
+            $this->notifySettled(true, $this->value);
+        } elseif ($this->state === self::REJECTED) {
+            $this->notifySettled(false, $this->error);
+        }
+
+        return $this;
+    }
+
+    /**
+     * 通知所有结算观察者；先取局部副本（回调里可能再 onSettle，不改本次这轮）。
+     *
+     * ★ 每个观察者单独隔离：观测者出错只留诊断，绝不让"装了观测"把结算链打断
+     *   （否则一次网络记录异常就让业务 `then()` 永不执行，比不观测还糟）。
+     */
+    private function notifySettled(bool $ok, mixed $payload): void
+    {
+        $sinks = $this->settleSinks;
+        foreach ($sinks as $sink) {
+            try {
+                $sink($ok, $payload);
+            } catch (\Throwable $e) {
+                Diagnostics::degraded(
+                    'future/settle-observer',
+                    '结算观察者抛异常，已隔离；结算与下游链照常继续：' . $e->getMessage(),
+                );
+            }
+        }
     }
 
     /**
@@ -518,6 +578,9 @@ final class Future
         $this->state = self::FULFILLED;
         $this->value = $value;
 
+        // ★ 观察者在 links 之前：它压下的归因标记要能被同帧 then() 里的 setState 读到。
+        $this->notifySettled(true, $value);
+
         $links = $this->links;
         $this->links = [];
 
@@ -565,6 +628,9 @@ final class Future
                 $error->getMessage(),
             ));
         }
+
+        // ★ 同 resolve()：观察者在 links 之前，失败也要记结算（否则失败的请求永远挂在途）。
+        $this->notifySettled(false, $error);
 
         foreach ($links as $link) {
             $this->settleLink($link, false);

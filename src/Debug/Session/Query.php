@@ -509,6 +509,95 @@ final class Query
         return $limit > 0 ? \array_slice($rows, 0, $limit) : $rows;
     }
 
+    /**
+     * 网络请求骨架：请求 → 帧对齐 → 落地节点，与帧因果共用同一条时间轴。
+     *
+     * ## 为什么是骨架而不是报文
+     *
+     * 抓包工具回答"发了什么、回了什么"，这里回答的是它们给不了的第三层：
+     * 响应落在第几帧、让谁重建了。记 body / header 既撑爆证据包又碰隐私，而且
+     * 抓包做得更好 —— 证据的定位是定位，不是副本。
+     *
+     * ## 窗口自报是硬义务
+     *
+     * 网络有独立的 500 条窗口（帧是 600）。查不到时不能让读者以为是"那段时间没
+     * 发请求"：要么请求被裁掉了，要么录制器当时没装。所以 `window` 随答案一起给。
+     *
+     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int}
+     */
+    public function network(?int $request = null, int $limit = 50): array
+    {
+        $window = $this->recorder->networkCoverage();
+        if ($request !== null) {
+            $record = $this->recorder->networkAt($request);
+            if ($record === null) {
+                return [
+                    'rows' => [],
+                    'window' => $window,
+                    'total' => 0,
+                    'miss' => $request <= ($window['from'] ?? 0) - 1
+                        ? 'outside-network-window'
+                        : 'unknown-request',
+                ];
+            }
+
+            return ['rows' => [$record->toArray()], 'window' => $window, 'total' => 1];
+        }
+
+        $rows = \array_map(
+            static fn(NetworkRecord $r): array => $r->toArray(),
+            $this->recorder->networkRows(),
+        );
+        $total = \count($rows);
+
+        return [
+            'rows' => $limit > 0 ? \array_slice($rows, 0, $limit) : $rows,
+            'window' => $window,
+            'total' => $total,
+        ];
+    }
+
+    /**
+     * 按 requestId 取报文（骨架的可选附件）。
+     *
+     * ## 为什么不并进 network()
+     *
+     * 报文默认不出现——体积、隐私、协议 8MB 上限三条理由。把它做成独立查询，
+     * `network()` 保持默认轻量可导出；要看 body 时显式问一次，还带窗口自报。
+     *
+     * ## 截断是分两层的
+     * 存档时单条最多 `MAX_BYTES`（64KB），查询时再按 `$maxBytes` 截一次——
+     * 后者是协议护栏，防止"一条 64KB × 50 条"撑爆单条消息。两层都报截断，
+     * 读者知道看到的是片段而不是全部。
+     *
+     * @return array<string, mixed>
+     */
+    public function networkBody(int $request, string $part = 'both', int $maxBytes = 8 * 1024): array
+    {
+        $window = $this->recorder->bodyCoverage();
+        $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both';
+        $maxBytes = \max(0, $maxBytes);
+        $record = $this->recorder->bodyAt($request);
+        if ($record === null) {
+            $skeleton = $this->recorder->networkAt($request);
+
+            return [
+                'request' => $request,
+                'found' => false,
+                // 报文窗口为空时 from=0：任何 id 都还没被存过，一律报窗口外。
+                // 用 from 判而不用 total 判，才能把"曾经存过、被裁掉了"与"从没存过"分开。
+                'miss' => $skeleton === null
+                    ? ((int) ($window['requests'] ?? 0) === 0 || $request < (int) ($window['from'] ?? 0)
+                        ? 'outside-network-window'
+                        : 'unknown-request')
+                    : 'body-not-retained',
+                'window' => $window,
+            ];
+        }
+
+        return ['found' => true] + $record->toArray($part, $maxBytes) + ['window' => $window];
+    }
+
     // ------------------------------------------------------------------ 内部
 
     /**

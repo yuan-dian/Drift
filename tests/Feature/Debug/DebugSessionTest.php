@@ -81,6 +81,8 @@ final class DebugSessionTest extends SmokeTestCase
                 'cascade' => ['frame' => 2],
                 'boxModel' => ['node' => $nodeId],
                 'constraints' => ['node' => $nodeId],
+                'network' => [],
+                'networkBody' => ['request' => 999],
             ];
 
             foreach (DebugSession::QUERIES as $name => $_) {
@@ -106,7 +108,9 @@ final class DebugSessionTest extends SmokeTestCase
             $src = \is_file($path) ? (string) \file_get_contents($path) : '';
             check('能读到会话源码（路径漂了就别假装通过）', $src !== '', $path);
 
-            \preg_match_all("/'([a-z]+)' => \\\$this->queries->/", $src, $m);
+            // 查询名有 camelCase（boxModel / networkBody）：只匹配小写会漏掉它们，
+            // 判据就成了摆设。这里覆盖全字母名。
+            \preg_match_all("/'([a-zA-Z]+)' => \\\$this->queries->/", $src, $m);
             $found = $m[1] ?? [];
             check('正则至少命中一条分支（失配时不许假绿）', $found !== [], 'found=' . \json_encode($found));
 

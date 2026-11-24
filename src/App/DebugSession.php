@@ -62,6 +62,8 @@ final class DebugSession implements Session
         'boxes' => '一帧全部盒的几何摘要（只读几何记录，供投影层跨盒比较约束）',
         'boxModel' => '单节点盒模型：margin / border / padding / content 四层与位置（几何快照）',
         'constraints' => '单节点约束链：逐跳复算并与快照交叉验证，标出归不到基类默认的跳',
+        'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
+        'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
@@ -246,6 +248,15 @@ final class DebugSession implements Session
                 self::needInt($name, $args, 'node'),
                 isset($args['frame']) ? (int) $args['frame'] : null,
                 self::intArg($name, $args, 'maxDepth', 12),
+            ),
+            'network' => $this->queries->network(
+                isset($args['request']) ? (int) $args['request'] : null,
+                self::intArg($name, $args, 'limit', 50),
+            ),
+            'networkBody' => $this->queries->networkBody(
+                self::needInt($name, $args, 'request'),
+                isset($args['part']) ? (string) $args['part'] : 'both',
+                self::intArg($name, $args, 'maxBytes', 8 * 1024),
             ),
             'digest' => Digest::of($this->recorder),
             // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像

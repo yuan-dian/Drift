@@ -697,6 +697,99 @@ final class FutureTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * 结算观察者：不派生、失败也报、在 then 之前跑、已结算补发。
+     *
+     * ★ 这是网络域能"一条钩子覆盖帧内与 worker 两条路径"的地基：观察者压下的
+     *   标记要能被同帧 `then()` 里的 `setState` 读到，所以顺序必须是 observe→link。
+     */
+    public function testOnSettleObservesBeforeLinksWithoutDeriving(): void
+    {
+        $order = [];
+        $seen = [];
+
+        $future = Future::pending();
+        $returned = $future->onSettle(function (bool $ok, mixed $v) use (&$order, &$seen): void {
+            $order[] = 'observe';
+            $seen[] = [$ok, $v];
+        });
+        check('Future · onSettle() 返回同一条 Future（不派生，保住 onProgress 与 Fatal 判据）', $returned === $future);
+
+        $future->then(static function (string $v) use (&$order): void {
+            $order[] = 'then:' . $v;
+        });
+        $future->resolve('resp');
+
+        check(
+            'Future · 结算观察者先于 then() 跑（归因标记能被同帧 setState 读到）',
+            $order === ['observe', 'then:resp'],
+            \implode(',', $order),
+        );
+        check(
+            'Future · 观察者收到成功态与值',
+            \count($seen) === 1 && $seen[0][0] === true && $seen[0][1] === 'resp',
+            \json_encode($seen) ?: '',
+        );
+
+        $this->flushChecks();
+    }
+
+    public function testOnSettleObservesFailureAndLateSubscription(): void
+    {
+        $seen = [];
+        $future = Future::pending();
+        $future->onSettle(function (bool $ok, mixed $v) use (&$seen): void {
+            $seen[] = [$ok, $v instanceof \Throwable ? $v->getMessage() : 'not-throwable'];
+        });
+        $future->catch(static function (\Throwable $e): void {
+            // 任务失败必须有人接，否则走 Fatal 序列（与观察钩子无关）。
+        });
+        $error = new \RuntimeException('请求失败');
+        $future->reject($error);
+        check(
+            'Future · 失败也通知观察者（否则失败请求永远挂在途）',
+            \count($seen) === 1 && $seen[0][0] === false && $seen[0][1] === '请求失败',
+            \json_encode($seen) ?: '',
+        );
+
+        $late = [];
+        Future::resolved(42)->onSettle(function (bool $ok, mixed $v) use (&$late): void {
+            $late[] = [$ok, $v];
+        });
+        check(
+            'Future · 已结算上挂 onSettle() 当前栈补发一次（订阅晚于结算是常态）',
+            \count($late) === 1 && $late[0][0] === true && $late[0][1] === 42,
+            \json_encode($late) ?: '',
+        );
+
+        $this->flushChecks();
+    }
+
+    public function testOnSettleObserverThrowDoesNotBreakSettlement(): void
+    {
+        Errors::reset();
+        $got = null;
+        $future = Future::pending();
+        $future->onSettle(static function (bool $ok, mixed $v): void {
+            throw new \LogicException('观测器自己炸了');
+        });
+        $future->then(static function (int $v) use (&$got): void {
+            $got = $v;
+        });
+        $future->resolve(9);
+        check('Future · 观察者抛错不影响结算（观测不许改被观测的语义）', $got === 9);
+
+        $ring = Errors::recentDiagnostics();
+        check(
+            'Future · 观察者抛错留 [DX] future/settle-observer，不是静默吞',
+            \count($ring) === 1 && \str_contains($ring[0], '[DX] future/settle-observer'),
+            'ring=' . \json_encode($ring),
+        );
+        Errors::reset();
+
+        $this->flushChecks();
+    }
+
     public function testAllSettledCarriesErrorCode(): void
     {
         $a = Future::pending();

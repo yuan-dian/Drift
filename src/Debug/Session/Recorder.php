@@ -54,6 +54,15 @@ final class Recorder
     /** 几何事实保留的帧数；比帧窗口短是刻意的，查询必须自报边界。 */
     public const int GEOMETRY_FRAMES = 60;
 
+    /** 网络请求保留的条数：不受帧数约束（600 帧里可能上万次请求），独立窗口。 */
+    public const int NETWORK_CAPACITY = 500;
+
+    /**
+     * 报文存档条数：比骨架短得多（每条最大 64KB，500 条就是 32MB）。
+     * 报文是**按需查的附件**，不是默认证据面；这个窗口只保证"最近几百次"可回看。
+     */
+    public const int BODY_CAPACITY = 200;
+
     private static ?self $current = null;
 
     /**
@@ -102,6 +111,24 @@ final class Recorder
 
     /** @var array<int, true> 本帧已重建过的节点（同帧去重） */
     private array $openSaw = [];
+
+    /** @var array<int, NetworkRecord> 请求 id => 记录，按 id 升序（独立 500 条窗口） */
+    private array $network = [];
+
+    /**
+     * 请求 id => 报文存档（独立 200 条窗口，默认查询不带出）。
+     *
+     * 不进 {@see Digest}：指纹比的是因果与段结构，报文里一个服务端时间戳就让
+     * 整份证据"不同"，指纹就失去意义。也不进 default 查询面，避免隐私进简报。
+     *
+     * @var array<int, NetworkBodyRecord>
+     */
+    private array $bodies = [];
+
+    /** 当前正在结算的请求 id，供 `noteStateWrite` 把落地节点写进它的记录。 */
+    private int $activeRequest = 0;
+
+    private int $networkSeq = 0;
 
     private int $seq = 0;
 
@@ -208,6 +235,9 @@ final class Recorder
         $this->openRebuilt = [];
         $this->openWrote = [];
         $this->openSaw = [];
+        // 归因标记只在结算的同步段内有效：跨帧残留会把下一帧无关的 setState
+        // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
+        $this->activeRequest = 0;
         $this->trim();
     }
 
@@ -233,12 +263,27 @@ final class Recorder
         // 于是同一次级联被画成两棵并行的树。
         $parent = $element->parent();
         $parentId = $parent === null ? 0 : $this->idOf($parent);
+
+        // 网络归因：此刻正在结算某条请求 ⇒ 这条 state 边就是它的"落地"。写进 detail，
+        // 于是 why(node) 得到"因为 api/rows.php 在 #N 帧返回"，而不只是"谁写了状态"。
+        // 记在边上的同时回填请求的 landed 列表，两边可互相复核。
+        $detail = self::shortClass($state);
+        if ($this->activeRequest > 0 && isset($this->network[$this->activeRequest])) {
+            $request = $this->network[$this->activeRequest];
+            $detail .= ' <- request:' . $request->requestId . ' ' . $request->method . ' ' . $request->url;
+            if (!\in_array($id, $request->landed, true)) {
+                $landed = $request->landed;
+                $landed[] = $id;
+                $this->network[$request->requestId] = $request->withLanded($landed);
+            }
+        }
+
         $this->openCauses[] = new Edge(
             'state',
             $parentId === 0 ? null : $parentId,
             $id,
             self::callSite(),
-            self::shortClass($state),
+            $detail,
         );
     }
 
@@ -375,6 +420,181 @@ final class Recorder
         }
 
         return $out;
+    }
+
+    // ------------------------------------------------------------------ 网络
+
+    /**
+     * 请求发起：`AsyncHttp::request()` 在分流之前调，返回 requestId 交给结算钩子。
+     *
+     * 帧号用当前帧（帧外的 setState 同理属于下一帧；请求发起常在输入回调里，
+     * 那正是它该归属的帧）。host 从 URL 取，不解析 DNS、不记报文。
+     */
+    public function noteNetworkStart(
+        string $method,
+        string $url,
+        string $path,
+    ): int {
+        $id = ++$this->networkSeq;
+        $this->network[$id] = new NetworkRecord(
+            $id,
+            $method,
+            $url,
+            self::hostOf($url),
+            $path,
+            $this->frameId,
+            0,
+            0,
+            0,
+            0.0,
+            // 发起者取业务代码行，跳过门面自身（否则 initiator 永远是 AsyncHttp.php）。
+            self::callSite(['Drift\\App\\Io\\']),
+            false,
+        );
+
+        return $id;
+    }
+
+    /**
+     * 请求结算：成功失败都记（失败的请求不能永远挂在途）。
+     *
+     * ★ 压 `activeRequest` 是归因的关键：紧接着的 `then()` 回调里的 setState 会
+     *   在 `noteStateWrite()` 里看到它，把这条边标成"响应落地"。发法与三个静态
+     *   tap 同款，但这里由门面直接调实例方法（门面本来就持有 scope）。
+     */
+    public function noteNetworkSettle(
+        int $requestId,
+        int $status,
+        int $bytes,
+        float $elapsedMs,
+        bool $ok,
+    ): void {
+        $record = $this->network[$requestId] ?? null;
+        if ($record === null) {
+            return; // 窗口裁掉了：不复活旧请求，也不误记到当前帧
+        }
+        // 保留此前记下的进度标量：结算发生在进度之后，不能用空串把进度擦掉。
+        $this->network[$requestId] = new NetworkRecord(
+            $record->requestId,
+            $record->method,
+            $record->url,
+            $record->host,
+            $record->path,
+            $record->startedAtFrame,
+            $this->frameId,
+            $status,
+            $bytes,
+            $elapsedMs,
+            $record->initiator,
+            $ok,
+            $record->landed,
+            $record->progress,
+        );
+        // 一个 pump 循环里可能连续结算多条：后者覆盖前者是刻意的。归因贴着"此刻
+        // 正在处理哪个响应"，一条 state 写入只属于一条请求；前一条的写入已在它
+        // 自己的 resolve→links 同步段里发生完，不会串到下一条。
+        $this->activeRequest = $requestId;
+    }
+
+    /**
+     * 异步请求的进度标量（multipart 才有；普通 body 没有中途观察点）。
+     * 只留最后一次的百分比：逐帧曲线是抓包的活，证据只要"有没有报过、最后到哪"。
+     */
+    public function noteNetworkProgress(int $requestId, float $fraction): void
+    {
+        $record = $this->network[$requestId] ?? null;
+        if ($record === null) {
+            return;
+        }
+        $this->network[$requestId] = new NetworkRecord(
+            $record->requestId, $record->method, $record->url, $record->host, $record->path,
+            $record->startedAtFrame, $record->settledAtFrame, $record->status, $record->bytes,
+            $record->elapsedMs, $record->initiator, $record->ok, $record->landed,
+            \sprintf('%.0f%%', \max(0.0, \min(1.0, $fraction)) * 100.0),
+        );
+    }
+
+    /**
+     * 存一份报文：只在录制器安装时发生，且按条数独立裁剪。
+     *
+     * 请求体传进来时在门面就把 callable / 文件句柄剔掉了（它们进不了证据）；
+     * multipart 的文件只留字段名与字节数摘要，不读文件内容。
+     */
+    public function noteNetworkBody(
+        int $requestId,
+        string $requestRaw,
+        string $responseRaw,
+    ): void {
+        if ($requestId <= 0 || !isset($this->network[$requestId])) {
+            return; // 骨架已被裁掉：不复活半份报文
+        }
+        $this->bodies[$requestId] = NetworkBodyRecord::capture($requestId, $requestRaw, $responseRaw);
+    }
+
+    public function bodyAt(int $requestId): ?NetworkBodyRecord
+    {
+        return $this->bodies[$requestId] ?? null;
+    }
+
+    /** @return array{requests: int, capacity: int, from: int, to: int, bytes: int} */
+    public function bodyCoverage(): array
+    {
+        $keys = \array_keys($this->bodies);
+        $bytes = 0;
+        foreach ($this->bodies as $body) {
+            $bytes += $body->request['bytes'] + $body->response['bytes'];
+        }
+
+        return [
+            'requests' => \count($keys),
+            'capacity' => self::BODY_CAPACITY,
+            'from' => $keys === [] ? 0 : \min($keys),
+            'to' => $keys === [] ? 0 : \max($keys),
+            'bytes' => $bytes,
+        ];
+    }
+
+    /** @return list<NetworkRecord> 按 requestId 升序 */
+    public function networkRows(): array
+    {
+        $rows = \array_values($this->network);
+        \usort($rows, static fn(NetworkRecord $a, NetworkRecord $b): int => $a->requestId <=> $b->requestId);
+
+        return $rows;
+    }
+
+    public function networkAt(int $requestId): ?NetworkRecord
+    {
+        return $this->network[$requestId] ?? null;
+    }
+
+    /** @return array{requests: int, capacity: int, from: int, to: int, inFlight: int} */
+    public function networkCoverage(): array
+    {
+        $keys = \array_keys($this->network);
+        $inFlight = 0;
+        foreach ($this->network as $record) {
+            if ($record->settledAtFrame === 0) {
+                ++$inFlight;
+            }
+        }
+
+        return [
+            'requests' => \count($keys),
+            'capacity' => self::NETWORK_CAPACITY,
+            'from' => $keys === [] ? 0 : \min($keys),
+            'to' => $keys === [] ? 0 : \max($keys),
+            'inFlight' => $inFlight,
+        ];
+    }
+
+    private static function hostOf(string $url): string
+    {
+        $pos = \strpos($url, '://');
+        $rest = $pos === false ? $url : \substr($url, $pos + 3);
+        $end = \strcspn($rest, '/?#');
+
+        return $end === 0 ? '' : \substr($rest, 0, $end);
     }
 
     /** @return array{frames: int, capacity: int, from: int, to: int, nodes: int} */
@@ -619,6 +839,10 @@ final class Recorder
         $this->openRebuilt = [];
         $this->openWrote = [];
         $this->openSaw = [];
+        $this->network = [];
+        $this->bodies = [];
+        $this->networkSeq = 0;
+        $this->activeRequest = 0;
     }
 
     // ------------------------------------------------------------ 静态热路径入口
@@ -636,6 +860,39 @@ final class Recorder
     public static function tapRebuild(Element $element): void
     {
         self::$current?->noteRebuild($element);
+    }
+
+    /**
+     * 网络请求发起：未安装录制器时返回 0，调用方据此跳过结算记录。
+     *
+     * 与三个热路径 tap 同款静态入口，只是多一个返回值（requestId 要交给结算钩子）。
+     */
+    public static function tapNetworkStart(
+        string $method,
+        string $url,
+        string $path,
+    ): int {
+        return self::$current?->noteNetworkStart($method, $url, $path) ?? 0;
+    }
+
+    public static function tapNetworkSettle(
+        int $requestId,
+        int $status,
+        int $bytes,
+        float $elapsedMs,
+        bool $ok,
+    ): void {
+        self::$current?->noteNetworkSettle($requestId, $status, $bytes, $elapsedMs, $ok);
+    }
+
+    public static function tapNetworkProgress(int $requestId, float $fraction): void
+    {
+        self::$current?->noteNetworkProgress($requestId, $fraction);
+    }
+
+    public static function tapNetworkBody(int $requestId, string $requestRaw, string $responseRaw): void
+    {
+        self::$current?->noteNetworkBody($requestId, $requestRaw, $responseRaw);
     }
 
     // ------------------------------------------------------------------ 内部
@@ -658,6 +915,22 @@ final class Recorder
             }
             unset($this->geometry[$oldest]);
         }
+        // 网络是独立窗口：帧窗口 600 裁不掉 500 条请求，必须在这里单独裁。
+        while (\count($this->network) > self::NETWORK_CAPACITY) {
+            $oldest = \array_key_first($this->network);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->network[$oldest]);
+        }
+        // 报文是网络的附件：骨架裁掉后报文留着就是没人能按 requestId 索引的孤儿。
+        while (\count($this->bodies) > self::BODY_CAPACITY) {
+            $oldest = \array_key_first($this->bodies);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->bodies[$oldest]);
+        }
     }
 
     private static function shortClass(object $value): string
@@ -673,8 +946,10 @@ final class Recorder
      *
      * AOT 下 `debug_backtrace` 可能缺 file/line，缺了就返回空串——宁可少一条线索，
      * 也不要为了它让热路径报错。
+     *
+     * @param list<string> $extraSkip 额外跳过的类名前缀（网络发起要跳过 IO 门面自身）
      */
-    private static function callSite(): string
+    private static function callSite(array $extraSkip = []): string
     {
         if (!\function_exists('debug_backtrace')) {
             return '';
@@ -684,6 +959,13 @@ final class Recorder
             $class = isset($frame['class']) ? (string) $frame['class'] : '';
             if ($class !== '' && (\str_starts_with($class, 'Drift\\Debug\\') || $class === 'Drift\\Widget\\State')) {
                 continue;
+            }
+            if ($class !== '') {
+                foreach ($extraSkip as $prefix) {
+                    if (\str_starts_with($class, $prefix)) {
+                        continue 2;
+                    }
+                }
             }
             $file = isset($frame['file']) ? (string) $frame['file'] : '';
             if ($file === '') {

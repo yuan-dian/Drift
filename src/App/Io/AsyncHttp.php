@@ -6,6 +6,7 @@ namespace Drift\App\Io;
 use Drift\App\HttpRequestJob;
 use Drift\App\TaskDispatch;
 use Drift\Async\Future;
+use Drift\Debug\Session\Recorder;
 
 /**
  * 异步 HTTP 门面 —— 应用侧唯一的异步 HTTP 入口，返回 Future<HttpResponse>。
@@ -78,11 +79,45 @@ final class AsyncHttp
             throw new \InvalidArgumentException('AsyncHttp：onProgress 只在 multipart（fields / files）时可用 —— 普通 body 没有中途进度');
         }
 
-        if ($this->needsWorker($opts)) {
-            return $this->submitWorker($method, $url, $opts);
+        // 录制器未装时 tap 返回 0 —— 一次静态判断，热路径与三个 tap 同款。
+        // ★ 挂在门面唯一入口而不是 HttpTransport 装饰器：worker 路径（multipart /
+        //   body > 64KB）根本不走 transport，装饰器会漏掉最常出问题的一类请求。
+        //   两条路径都从这里出去，用 Future 的结算观察钩子一次覆盖。
+        $worker = $this->needsWorker($opts);
+        $requestId = Recorder::tapNetworkStart($method, $url, $worker ? 'worker' : 'inline');
+        // 请求体摘要：callable 进不了证据，文件只留名字与字节数（不读上传内容）。
+        $requestSummary = self::requestSummary($opts);
+
+        $future = $worker
+            ? $this->submitWorker($method, $url, $opts, $requestId)
+            : $this->transport->submit($method, $url, $opts);
+
+        if ($requestId > 0) {
+            // onSettle 不派生 Future：onProgress 与 Fatal 判据都不受影响。
+            // 观察者在 then() 之前跑 ⇒ 结算同帧的 setState 能被记成这条请求的落地。
+            $future->onSettle(static function (bool $ok, mixed $payload) use ($requestId, $requestSummary): void {
+                if ($payload instanceof HttpResponse) {
+                    Recorder::tapNetworkSettle(
+                        $requestId,
+                        $payload->status(),
+                        \strlen($payload->body()),
+                        $payload->elapsedMs(),
+                        $ok,
+                    );
+                    // 报文是骨架的按需附件：脱敏与截断都在 NetworkBodyRecord 里做，
+                    // 门面只负责把原文递过去，不在这里读/改 body 语义。
+                    Recorder::tapNetworkBody($requestId, $requestSummary, $payload->body());
+
+                    return;
+                }
+                // 失败路径：payload 是 \Throwable；不记 message（可能含隐私 / 瞬时主机名），
+                // 只记"这条请求没成"——骨架要的是对齐，不是错误全文。报文仍存请求侧。
+                Recorder::tapNetworkSettle($requestId, 0, 0, 0.0, false);
+                Recorder::tapNetworkBody($requestId, $requestSummary, '');
+            });
         }
 
-        return $this->transport->submit($method, $url, $opts);
+        return $future;
     }
 
     /**
@@ -127,6 +162,39 @@ final class AsyncHttp
         return $this->transport->inFlight();
     }
 
+    /**
+     * 请求体摘要：进证据的只能是标量文本，不能是 callable / 文件句柄。
+     *
+     * - 普通 body 原样留下（NetworkBodyRecord 会做 JSON 脱敏与截断）；
+     * - multipart 的 fields 留键与标量值，files 只留字段名、路径尾段与字节数——
+     *   上传的图片内容不是证据该带的东西，但"上传了哪个文件、多大"是。
+     *
+     * @param array<string, mixed> $opts
+     */
+    private static function requestSummary(array $opts): string
+    {
+        $body = $opts['body'] ?? '';
+        if (!isset($opts['fields']) && !isset($opts['files'])) {
+            return \is_string($body) ? $body : '';
+        }
+
+        $lines = [];
+        if (\is_array($opts['fields'] ?? null)) {
+            foreach ($opts['fields'] as $key => $value) {
+                $lines[] = 'field ' . (string) $key . '=' . (\is_scalar($value) ? (string) $value : '[' . \get_debug_type($value) . ']');
+            }
+        }
+        if (\is_array($opts['files'] ?? null)) {
+            foreach ($opts['files'] as $key => $path) {
+                $safe = \is_string($path) ? \basename($path) : '[' . \get_debug_type($path) . ']';
+                $size = \is_string($path) && \is_file($path) ? \filesize($path) : 0;
+                $lines[] = 'file ' . (string) $key . '=' . $safe . ' (' . $size . ' bytes)';
+            }
+        }
+
+        return \implode("\n", $lines);
+    }
+
     /** multipart 或 body 超过阈值 ⇒ 走进程池 */
     private function needsWorker(array $opts): bool
     {
@@ -139,7 +207,7 @@ final class AsyncHttp
     }
 
     /** 大请求走进程池，回传数组在 then 里重建 HttpResponse */
-    private function submitWorker(string $method, string $url, array $opts): Future
+    private function submitWorker(string $method, string $url, array $opts, int $requestId): Future
     {
         // 进度回调的 callable 进不了 args()：job 内部用 JobProgress，UI 侧经
         // Future::onProgress 消费；这里把门面上的回调转接到那条 Future。
@@ -154,6 +222,14 @@ final class AsyncHttp
         $future = $this->dispatch->submit(new HttpRequestJob($method, $url, $opts, $workerTimeoutMs));
         if (\is_callable($onProgress)) {
             $future->onProgress($onProgress);
+        }
+        // ★ 进度观察挂在**根任务**上：Future::onProgress 不沿 then() 传递，
+        //   挂在派生 future 上只会得到 derived-chain 诊断且永远收不到进度。
+        //   录制器未装时 requestId=0，跳过这次订阅。
+        if ($requestId > 0) {
+            $future->onProgress(static function (float $fraction) use ($requestId): void {
+                Recorder::tapNetworkProgress($requestId, $fraction);
+            });
         }
 
         return $future->then(static function (mixed $wire): HttpResponse {
