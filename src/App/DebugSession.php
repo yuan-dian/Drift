@@ -59,7 +59,7 @@ final class DebugSession implements SessionQueries, SessionDriver
         'why' => '某节点在某帧为什么重建',
         'hotspots' => '跨帧聚合根因（kind=state）：调用点 + State 类',
         'nodes' => '跨帧聚合节点：重建次数、自身写入与父传播',
-        'cascade' => '单帧因果森林：结构根、子树规模、state 写入点、按类型构成',
+        'cascade' => '单帧因果森林：结构根、同形兄弟折叠、子树规模、state 写入点、按类型构成',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];

@@ -38,11 +38,17 @@ final readonly class FrameRecord
     }
 
     /**
-     * 父边索引：`toId => fromId`，只收 `kind=parent`。
+     * 父边索引：`toId => fromId`，收**任何带 `from` 的边**。
      *
      * 树的一切结构都从这一张表长出来：单链、子树大小、根到目标的路径。
      * 放在记录上而不是查询里，是为了 `why` 与 `cascade` 不各算一遍父子关系
      * （同一件事写两遍必漂，这是本仓反复踩过的）。
+     *
+     * ★ 早先这里只收 `kind=parent`，于是"自己写了状态"的节点在树里没有父 ——
+     *   它的父明明也重建了，却在 `cascade` 里另起一个根，同一次级联被画成两棵
+     *   并行的树（表格页：`PageShell 18` 与 `Table 342`）。`state` 边的 `from`
+     *   现在也记结构父，嵌套关系才保得住。因果链的终点由 `kind` 决定：
+     *   `state` 是"为什么"的答案本身（见 {@see Recorder::why()}）。
      *
      * @return array<int, int>
      */
@@ -50,7 +56,7 @@ final readonly class FrameRecord
     {
         $out = [];
         foreach ($this->causes as $edge) {
-            if ($edge->kind === 'parent' && $edge->fromId !== null) {
+            if ($edge->fromId !== null) {
                 $out[$edge->toId] = $edge->fromId;
             }
         }

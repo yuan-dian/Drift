@@ -62,6 +62,7 @@ $widthSet = false;
 $heightSet = false;
 $json = false;
 $top = 10;
+$depth = 6;
 $why = null;
 $whyFrame = null;
 $rows = 0;
@@ -92,6 +93,8 @@ foreach (\array_slice($argv, 1) as $arg) {
         $heightSet = true;
     } elseif (\str_starts_with($arg, '--top=')) {
         $top = \max(1, (int) \substr($arg, 6));
+    } elseif (\str_starts_with($arg, '--depth=')) {
+        $depth = \max(1, (int) \substr($arg, 8));
     } elseif (\str_starts_with($arg, '--why=')) {
         $why = (int) \substr($arg, 6);
     } elseif (\str_starts_with($arg, '--frame=')) {
@@ -165,7 +168,8 @@ $label = $page ?? $target;
 if ($label === null) {
     \fwrite(\STDERR, "用法：drift debug <AppClass|路由id> [--page=<路由id>] [--frames=N] [--rows=N]\n");
     \fwrite(\STDERR, "              [--key=Tab] [--text=abc] [--click=x,y[,键]] [--wheel=x,y,格[,h]]\n");
-    \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--frame=N] [--top=N] [--width=W] [--height=H] [--json]\n");
+    \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--frame=N] [--top=N] [--depth=N]\n");
+    \fwrite(\STDERR, "              [--width=W] [--height=H] [--json]\n");
     \fwrite(\STDERR, "              [--save=<脚本.json>] [--replay=<脚本.json> [--at=N] [--verify]] [--remote]\n");
     exit(2);
 }
@@ -240,6 +244,7 @@ $options = [
     'hold' => $hold,
     'at' => $at,
     'top' => $top,
+    'depth' => $depth,
     'why' => $why,
     'whyFrame' => $whyFrame,
     'remote' => $remote,
@@ -296,7 +301,7 @@ exit(0);
  *     label: string, page: bool, rows: int,
  *     width: int, height: int, script: Script|null,
  *     steps: list<array{0: string, 1: string}>, frames: int, hold: int, at: int|null,
- *     top: int, why: int|null, whyFrame: int|null, remote: bool
+ *     top: int, depth: int, why: int|null, whyFrame: int|null, remote: bool
  * } $o
  *
  * @return array{report: array<string, mixed>, script: Script, digest: array<string, mixed>}
@@ -396,7 +401,7 @@ function run_once(array $o): array
         // 因果森林只取最慢帧：读者问"为什么这么慢"问的是那一帧，不是平均。
         $slowestId = slowest_frame($recorded);
         $cascade = $slowestId > 0
-            ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => 3, 'maxChildren' => 3])
+            ? $session->query('cascade', ['frame' => $slowestId, 'maxDepth' => $o['depth'], 'maxChildren' => 4])
             : null;
 
         $report = [
@@ -887,7 +892,7 @@ function render_cascade(array $cascade): void
         \fwrite(\STDOUT, \sprintf("  … 还有 %d 类\n", \count($byType) - 8));
     }
 
-    \fwrite(\STDOUT, "\n因果覆盖（根 = 父没有重建的节点；数字为本子树内重建数）\n");
+    \fwrite(\STDOUT, "\n因果覆盖（根 = 父没有重建的节点；×N 折叠同形兄弟，数字按每个实例计）\n");
     $budget = 30;
     /** @var list<array<string, mixed>> $roots */
     $roots = $cascade['roots'];
@@ -897,13 +902,28 @@ function render_cascade(array $cascade): void
         }
         cascade_line($root, 0, $budget);
     }
+    // 森林这一层也会被 maxChildren 截断：不说出来的话，"树里的数加起来不等于总重建数"
+    // 就成了读者无法核对的一笔账。
+    if ((int) $cascade['hidden'] > 0) {
+        \fwrite(\STDOUT, \sprintf(
+            "  … 另有 %d 支根（%d 个节点）未展开\n",
+            (int) $cascade['omitted'],
+            (int) $cascade['hidden'],
+        ));
+    }
     if ($budget <= 0) {
         \fwrite(\STDOUT, "  … 已达到显示上限（层级与分支都只显示前几层）\n");
     }
 }
 
 /**
- * 递归打印一个树节点。`←` 标出 state 写入点，`…` 标出被截断的分支。
+ * 递归打印一个树节点。
+ *
+ * 三个标记：`←` 是 state 写入点（带调用点），`← ?` 是没有可见原因的边，
+ * `…` 是被截断 / 被折叠掉的分支。`×N` 是**同形的兄弟份数**，行内其余数字
+ * （子树规模、未展开的支数与节点数）都按**每个实例**计 —— 一行读作
+ * "这个形状重复了 N 份，每份这么大"。`>` 是**单链折叠**：一串各只有一个孩子的
+ * 节点，中间没有写入点也没有截断。
  *
  * @param array<string, mixed> $node
  * @param int                  $budget 剩余可打印行数（引用传，跨层级共享）
@@ -913,24 +933,66 @@ function cascade_line(array $node, int $depth, int &$budget): void
     if ($budget <= 0) {
         return;
     }
+
+    // 单链折叠：`A > B > C` 各自只有一个孩子时，每层规模都只是下一层减一，
+    // 三行说的是同一件事 —— 而真正要看的是链尾那个分叉。节点树页顶部有 8 层这样的
+    // 链（壳 → 卡片 → 列 → 展开 → 卡片 → 树 → 懒滚动 → 滚动盒），折完只剩一行。
+    //
+    // 三个断开条件都必要：
+    // - 写入点要留在自己那一行（`←` 必须紧挨着写它的那个类型，混在链中间就分不清）；
+    // - `omitted > 0` 时规模不能再当"下一层减一"往回推，数会对不上；
+    // - 只有"单实例"能做链中间的跳板。折叠组可以当链尾（下一层从它展开才有意义），
+    //   但夹在中间读起来是"每份里还有一层"，那是另一种话。
+    $chain = [$node];
+    while (true) {
+        $last = $chain[\count($chain) - 1];
+        if ((string) $last['kind'] !== 'parent' || (int) $last['omitted'] > 0 || (int) $last['count'] !== 1) {
+            break;
+        }
+        $kids = $last['children'];
+        if (\count($kids) !== 1) {
+            break;
+        }
+        $chain[] = $kids[0];
+    }
     --$budget;
 
-    $label = \str_repeat('  ', $depth) . (string) $node['type'];
-    $line = \sprintf('  %-44s %5d', $label, (int) $node['subtree']);
-    if ((bool) $node['writes']) {
-        $line .= '  ← ' . (string) $node['site'];
-        if ($node['detail'] !== '') {
-            $line .= '  ' . (string) $node['detail'];
+    /** @var array<string, mixed> $tail 链尾：规模、标记、截断信息都只可能来自它 */
+    $tail = $chain[\count($chain) - 1];
+    $names = [];
+    foreach ($chain as $hop) {
+        $names[] = (string) $hop['type'];
+    }
+    $label = \str_repeat('  ', $depth) . \implode(' > ', $names);
+    $count = (int) $tail['count'];
+    if ($count > 1) {
+        // 折叠行给一个入口 id：`composer debug --why=<id>` 与面板展开都从这里下钻。
+        // 单个节点不印 id —— 树讲形状，名单（重建聚合）讲 id，两处各给一份不重复。
+        $label .= ' ×' . $count . ' #' . (int) $tail['id'];
+    }
+    $line = \sprintf('  %-44s %5d', $label, (int) $tail['subtree']);
+    if ($count > 1) {
+        $line .= \sprintf('  共 %d 个', $count * (int) $tail['subtree']);
+    }
+    $kind = (string) $tail['kind'];
+    if ($kind === 'state') {
+        $line .= '  ← ' . (string) $tail['site'];
+        if ($tail['detail'] !== '') {
+            $line .= '  ' . (string) $tail['detail'];
         }
+    } elseif ($kind === 'unknown') {
+        // `unknown` 是"重建了但找不到原因"，本身就是信号：不印出来，读者会以为
+        // 那几行和别的行一样有归属。
+        $line .= '  ← ? 无可见原因';
     }
     // 截断标在行尾：单独一行"还有 N 个分支"每层都来一遍，会把树本身的形状冲散。
-    if ((int) $node['omitted'] > 0) {
-        $line .= \sprintf('  … 另 %d 支未展开', (int) $node['omitted']);
+    if ((int) $tail['omitted'] > 0) {
+        $line .= \sprintf('  … 另 %d 支（%d 个节点）未展开', (int) $tail['omitted'], (int) $tail['hidden']);
     }
     \fwrite(\STDOUT, $line . "\n");
 
     /** @var list<array<string, mixed>> $kids */
-    $kids = $node['children'];
+    $kids = $tail['children'];
     foreach ($kids as $kid) {
         cascade_line($kid, $depth + 1, $budget);
         if ($budget <= 0) {

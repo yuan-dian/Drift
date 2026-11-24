@@ -197,7 +197,18 @@ final class Recorder
             return; // 防御：装了录制却一直不跑帧时，不让缓冲无界增长
         }
         $this->openWrote[$id] = true;
-        $this->openCauses[] = new Edge('state', null, $id, self::callSite(), self::shortClass($state));
+        // `from` 记的是**结构父**，不是"谁让它写的"（那由 `site` 回答）。不记它，
+        // "自己写了状态的节点"在树里就没有父，`cascade` 会给它另起一个根 ——
+        // 于是同一次级联被画成两棵并行的树。
+        $parent = $element->parent();
+        $parentId = $parent === null ? 0 : $this->idOf($parent);
+        $this->openCauses[] = new Edge(
+            'state',
+            $parentId === 0 ? null : $parentId,
+            $id,
+            self::callSite(),
+            self::shortClass($state),
+        );
     }
 
     /** 节点真的调了 `rebuild()`。父先于子（settlePass 前序），所以父的分类一定已知。 */
@@ -346,6 +357,11 @@ final class Recorder
                     'detail' => $edge?->detail ?? '',
                 ];
                 $next = $parent[$cursor] ?? null;
+                // 因果链到根因为止：`state` 是"为什么"的答案本身，再往上问的是
+                // "谁带着它重建" —— 那是层级问题，由 `cascade` 的树回答。
+                if ($edge !== null && $edge->kind === 'state') {
+                    break;
+                }
                 if ($next === null || $next === $cursor) {
                     break;
                 }

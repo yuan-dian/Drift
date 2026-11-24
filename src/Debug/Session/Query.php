@@ -161,13 +161,30 @@ final class Query
      *
      * ## 根的定义：父没有重建的节点
      *
-     * 森林因此在结构上**不重叠**：`Σ(根.subtree) == rebuilt 数`，这条是可判据的。
+     * 森林因此在结构上**不重叠**：`Σ(根.subtree × 根.count) + hidden == rebuilt`，可判据。
      * state 写入点**不另起根**（它常常嵌在另一个写入点的子树里，比如
-     * `PageShell ⊃ Table`），只标 `writes` —— 嵌套关系正是"两次写入谁在谁里面"
+     * `PageShell ⊃ Table`），只标 `kind` + `site` —— 嵌套关系正是"两次写入谁在谁里面"
      * 的答案，另起根会把它抹平。
      *
+     * ## 同形兄弟折叠
+     *
+     * 表格页的一帧 360 个重建，其中 `Column` 底下 12 个 `SizedBox` 完全同形 —— 逐条
+     * 列出来就是 12 行一模一样的东西，把树本身的形状冲散。所以按**结构指纹**把同形
+     * 兄弟折成一组（`count=N`，另带全部 `ids`），一层里有多少种形状就显示几行。
+     * 这是 perf / WPA 折叠相同调用栈、Instruments 折叠递归的同一手法。
+     *
+     * 折叠是**无损**的：组里留着每个成员的真实 id，展开与 `why(id)` 都还能用；
+     * 丢掉的只有兄弟之间的先后次序，而重建次序不承载因果。
+     *
+     * 指纹是**递归**的（类型 + 因果 + 子树规模 + 子节点指纹的多重集）。只比类型与规模
+     * 会把 `Column[Text, Text]` 和 `Column[Padding[Text]]` 折成一组：规模一样、结构
+     * 不同，那是在报告里编造结构。
+     *
+     * 口径：`×N` 是兄弟个数，其余数字（`subtree` / `omitted` / `hidden`）都是**每个
+     * 实例**的。于是一行可以读成"这个形状重复了 N 份，每份这么大"。
+     *
      * @param int $maxDepth     树往下展开几层（更深标 `cut`）
-     * @param int $maxChildren  每层最多留几个孩子（其余记 `omitted`）
+     * @param int $maxChildren  每层最多留几**组**（其余计入 `omitted` / `hidden`）
      * @return array<string, mixed>
      */
     public function cascade(int $frameId, int $maxDepth = 5, int $maxChildren = 8): array
@@ -180,11 +197,10 @@ final class Query
         $shape = $this->shapeOf($frame);
         /** @var array<int, list<int>> $children */
         $children = $shape['children'];
-        /** @var list<int> $roots */
-        $roots = $shape['roots'];
         /** @var array<int, int> $subtree */
         $subtree = $shape['subtree'];
         $causeOf = $frame->causeOf();
+        $signature = $this->signatures($frame, $children, $causeOf, $subtree);
 
         $writes = [];
         foreach ($frame->rebuilt as $id) {
@@ -204,20 +220,19 @@ final class Query
         \usort($writes, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
             ?: \strcmp((string) $a['path'], (string) $b['path']));
 
-        // 根按波及降序：显示预算有限，先给读者看牵动最多的那一支，
-        // 否则"18 个的根"会先占满行数，把真正 342 个的那支挤到截断之后。
-        \usort($roots, fn(int $a, int $b): int => ($subtree[$b] ?? 1) <=> ($subtree[$a] ?? 1) ?: $a <=> $b);
-
-        $tree = [];
-        foreach ($roots as $id) {
-            $tree[] = $this->treeNode($id, $children, $causeOf, $subtree, 0, $maxDepth, $maxChildren);
-        }
+        // 森林这一层同样受 `maxChildren` 约束 —— 一条规则用到底，不为"根"开特例。
+        // 截断量单独报出去（顶层的 `omitted` / `hidden`），调用方才能把"树加起来
+        // 不等于 rebuilt"解释清楚，而不是让它看起来像漏了节点。
+        /** @var list<array<string, mixed>> $tree */
+        [$tree, $omitted, $hidden] = $this->foldGroups($shape['roots'], $children, $causeOf, $subtree, $signature, 0, $maxDepth, $maxChildren);
 
         return [
             'frame' => $frame->id,
             'rebuilt' => \count($frame->rebuilt),
             'depthMax' => (int) $shape['depthMax'],
             'roots' => $tree,
+            'omitted' => $omitted,
+            'hidden' => $hidden,
             'writes' => $writes,
             'byType' => $this->byType($frame),
         ];
@@ -418,45 +433,165 @@ final class Query
     }
 
     /**
-     * 递归造一个树节点；子节点按子树降序 —— 截断时留下的必须是"波及最大"的分支。
+     * 结构指纹：同形的子树得到同一个整数。
+     *
+     * 用 interning（键串 => 递增整数）而不是 md5：子节点已经是指纹整数，键串长度只与
+     * "这一层有几个孩子"有关，不随子树规模膨胀，也没有碰撞可担心。代价是指纹只在**一帧
+     * 内**可比 —— 它的用途是分组，不是跨帧身份。要做"这个形状在 20 帧里有 12 帧重建"，
+     * 那时该留的是键串本身（内容寻址），不是这里的整数。
+     *
+     * 键里必须带因果（kind / site / detail）：两个同形节点，一个自己写了状态、一个只是
+     * 被父带着重建，折成一组就再也说不出"是从哪儿写的"。
      *
      * @param array<int, list<int>> $children
      * @param array<int, Edge>      $causeOf
      * @param array<int, int>       $subtree
+     * @return array<int, int> 节点 id => 指纹
+     */
+    private function signatures(FrameRecord $frame, array $children, array $causeOf, array $subtree): array
+    {
+        $signature = [];
+        $intern = [];
+        $visit = function (int $id) use (&$visit, &$signature, &$intern, $children, $causeOf, $subtree): void {
+            $kids = [];
+            foreach ($children[$id] ?? [] as $kid) {
+                $visit($kid);
+                $kids[] = $signature[$kid];
+            }
+            // 兄弟次序不进入指纹：同形指的是**无序**同构。重建次序不承载因果，
+            // 把它算进去只会让"只差构建次序"的两个子树折不成一组 —— 而它们在报告里
+            // 讲的是同一件事。
+            \sort($kids);
+            $edge = $causeOf[$id] ?? null;
+            $key = $this->recorder->typeOf($id)
+                . "\x1f" . ($edge?->kind ?? '')
+                . "\x1f" . ($edge?->site ?? '')
+                . "\x1f" . ($edge?->detail ?? '')
+                . "\x1f" . ($subtree[$id] ?? 1)
+                . "\x1f" . \implode(',', $kids);
+            $signature[$id] ??= $intern[$key] ??= \count($intern);
+        };
+
+        // 只走访重建节点：`children` 就是按"父也重建"建出来的，所以每个节点恰好一次。
+        foreach ($frame->rebuilt as $id) {
+            if (!isset($signature[$id])) {
+                $visit($id);
+            }
+        }
+
+        return $signature;
+    }
+
+    /**
+     * 把一层的兄弟按结构指纹分组，返回 `[组节点, 未显示的兄弟数, 未显示的节点数]`。
+     *
+     * `$ids` 必须是**同一个父**的孩子（或森林的根）。后两个返回值是**每个实例**的口径，
+     * 调用方按自己的 `count` 换算成这一帧里的实际数量。
+     *
+     * @param list<int>             $ids
+     * @param array<int, list<int>> $children
+     * @param array<int, Edge>      $causeOf
+     * @param array<int, int>       $subtree
+     * @param array<int, int>       $signature
+     * @return array{0: list<array<string, mixed>>, 1: int, 2: int}
+     */
+    private function foldGroups(array $ids, array $children, array $causeOf, array $subtree, array $signature, int $depth, int $maxDepth, int $maxChildren): array
+    {
+        /** @var array<int, list<int>> $buckets 指纹 => 同形兄弟 */
+        $buckets = [];
+        foreach ($ids as $id) {
+            $buckets[$signature[$id]][] = $id;
+        }
+
+        $groups = [];
+        foreach ($buckets as $key => $members) {
+            // 成员按 id 升序：组内次序与遍历顺序无关，人和判据看到的都是同一串数字。
+            \sort($members);
+            $groups[] = [
+                'sig' => $key,
+                'ids' => $members,
+                'subtree' => $subtree[$members[0]] ?? 1,
+                'type' => $this->recorder->typeOf($members[0]),
+            ];
+        }
+        // 波及大的先显示：预算有限时留下的必须是牵动最多的那一支（"18 个的根"不能把
+        // 真正 342 个的那支挤到截断之后）。同波及时"同形份数多"的优先 —— 重复本身
+        // 就是这一帧值得看的事实。最后按类型名与指纹兜底，输出与遍历顺序无关。
+        \usort($groups, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
+            ?: \count($b['ids']) <=> \count($a['ids'])
+            ?: \strcmp($a['type'], $b['type'])
+            ?: $a['sig'] <=> $b['sig']);
+
+        $shown = $maxChildren > 0 ? \array_slice($groups, 0, $maxChildren) : $groups;
+        $omitted = 0;
+        $hidden = 0;
+        foreach (\array_slice($groups, \count($shown)) as $group) {
+            $omitted += \count($group['ids']);
+            $hidden += \count($group['ids']) * $group['subtree'];
+        }
+
+        $nodes = [];
+        foreach ($shown as $group) {
+            $nodes[] = $this->groupNode($group, $children, $causeOf, $subtree, $signature, $depth, $maxDepth, $maxChildren);
+        }
+
+        return [$nodes, $omitted, $hidden];
+    }
+
+    /**
+     * 一组同形兄弟 → 树里的一行。
+     *
+     * 只走**代表**（id 最小的那个）的子节点：组内成员同形，意味着它们子节点指纹的多重集
+     * 相同，所以代表的孩子分组就是每一份实例的孩子分组 —— 不必把 N 份都走一遍，
+     * 也不会有"第 7 份和第 3 份长得不一样"这种自相矛盾（那说明指纹算错了）。
+     *
+     * @param array{sig: int, ids: list<int>, subtree: int, type: string} $group
+     * @param array<int, list<int>> $children
+     * @param array<int, Edge>      $causeOf
+     * @param array<int, int>       $subtree
+     * @param array<int, int>       $signature
      * @return array<string, mixed>
      */
-    private function treeNode(int $id, array $children, array $causeOf, array $subtree, int $depth, int $maxDepth, int $maxChildren): array
+    private function groupNode(array $group, array $children, array $causeOf, array $subtree, array $signature, int $depth, int $maxDepth, int $maxChildren): array
     {
-        $edge = $causeOf[$id] ?? null;
-        $kids = $children[$id] ?? [];
+        $rep = $group['ids'][0];
+        $edge = $causeOf[$rep] ?? null;
+        $count = \count($group['ids']);
         $node = [
-            'id' => $id,
-            'type' => $this->recorder->typeOf($id),
-            'subtree' => $subtree[$id] ?? 1,
-            'writes' => $edge !== null && $edge->kind === 'state',
+            'id' => $rep,
+            'type' => $group['type'],
+            'kind' => $edge?->kind ?? '',
+            'count' => $count,
+            'subtree' => $group['subtree'],
             'site' => $edge?->site ?? '',
             'detail' => $edge?->detail ?? '',
             'children' => [],
             'omitted' => 0,
+            'hidden' => 0,
             'cut' => false,
         ];
+        if ($count > 1) {
+            // 折叠无损：展开与 `why(id)` 都要能拿到真实 id。单个节点不给 `ids` ——
+            // 那会让同一份信息在一帧里有两种写法，而两种写法迟早不一致。
+            $node['ids'] = $group['ids'];
+        }
 
+        $kids = $children[$rep] ?? [];
         if ($kids === []) {
             return $node;
         }
         if ($depth >= $maxDepth) {
+            // 截断处也要把规模说准：支数与节点数都按每个实例计。
             $node['cut'] = true;
             $node['omitted'] = \count($kids);
+            $node['hidden'] = $group['subtree'] - 1;
 
             return $node;
         }
 
-        \usort($kids, fn(int $a, int $b): int => ($subtree[$b] ?? 1) <=> ($subtree[$a] ?? 1) ?: $a <=> $b);
-        $shown = \array_slice($kids, 0, $maxChildren);
-        $node['omitted'] = \count($kids) - \count($shown);
-        foreach ($shown as $kid) {
-            $node['children'][] = $this->treeNode($kid, $children, $causeOf, $subtree, $depth + 1, $maxDepth, $maxChildren);
-        }
+        [$node['children'], $omitted, $hidden] = $this->foldGroups($kids, $children, $causeOf, $subtree, $signature, $depth + 1, $maxDepth, $maxChildren);
+        $node['omitted'] = $omitted;
+        $node['hidden'] = $hidden;
 
         return $node;
     }

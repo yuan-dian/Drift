@@ -13,6 +13,7 @@ use Drift\Geometry\Size;
 use Drift\Widget\Align;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
+use Drift\Widget\Padding;
 use Drift\Widget\State;
 use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
@@ -323,20 +324,25 @@ final class QueryTest extends SmokeTestCase
         $cascade = $query->cascade($frame->id);
         check('只有一个结构根', \count($cascade['roots']) === 1, 'roots=' . \count($cascade['roots']));
         check(
-            '根子树 == 重建数（森林不重叠）',
-            (int) $cascade['roots'][0]['subtree'] === \count($frame->rebuilt),
-            'subtree=' . $cascade['roots'][0]['subtree'] . ' rebuilt=' . \count($frame->rebuilt),
+            '森林覆盖全部重建节点（每组按份数算，加回被截断的）',
+            $this->coverage($cascade) === \count($frame->rebuilt),
+            'coverage=' . $this->coverage($cascade) . ' rebuilt=' . \count($frame->rebuilt),
         );
+        $broken = $this->brokenInvariants($cascade['roots']);
+        check('逐节点不变量成立（没丢子树、没重复计数）', $broken === [], \implode('；', $broken));
 
-        [$flat, $count] = $this->flatten($cascade['roots']);
-        check('未截断时树覆盖全部重建节点', $count === \count($frame->rebuilt), "flat={$count}");
-        $writes = \array_filter($flat, static fn(array $n): bool => (bool) $n['writes']);
-        check('state 写入点在树里被标出来', \count($writes) === 1, 'writes=' . \count($writes));
-        check(
-            '写入点带调用点，不用再猜',
-            \str_contains((string) \array_values($writes)[0]['site'], 'QueryTest.php'),
-            'site=' . (string) \array_values($writes)[0]['site'],
+        $writes = \array_filter(
+            $this->walkNodes($cascade['roots']),
+            static fn(array $row): bool => (string) $row['node']['kind'] === 'state',
         );
+        check('state 写入点在树里被标出来', \count($writes) === 1, 'writes=' . \count($writes));
+        if ($writes !== []) {
+            check(
+                '写入点带调用点，不用再猜',
+                \str_contains((string) \array_values($writes)[0]['node']['site'], 'QueryTest.php'),
+                'site=' . (string) \array_values($writes)[0]['node']['site'],
+            );
+        }
 
         $types = 0;
         foreach ($cascade['byType'] as $row) {
@@ -347,9 +353,18 @@ final class QueryTest extends SmokeTestCase
         $shallow = $query->cascade($frame->id, 1, 8);
         $kid = $shallow['roots'][0]['children'][0] ?? null;
         check(
-            '超过 maxDepth 标 cut 并记未展开数',
-            $kid !== null && (bool) $kid['cut'] === true && (int) $kid['omitted'] > 0,
-            'kid=' . \json_encode($kid === null ? null : ['cut' => $kid['cut'], 'omitted' => $kid['omitted']]),
+            '超过 maxDepth 标 cut，且把没展开的规模算准',
+            $kid !== null && (bool) $kid['cut'] === true
+                && (int) $kid['omitted'] > 0
+                && (int) $kid['hidden'] === (int) $kid['subtree'] - 1,
+            'kid=' . \json_encode($kid === null ? null : ['cut' => $kid['cut'], 'omitted' => $kid['omitted'], 'hidden' => $kid['hidden']]),
+        );
+        // 截断之后"覆盖量仍然等于 rebuilt"：这正是 hidden 存在的理由 —— 树被截了，
+        // 账不能跟着糊。
+        check(
+            '截断后覆盖量仍然等于重建数',
+            $this->coverage($shallow) === \count($frame->rebuilt),
+            'coverage=' . $this->coverage($shallow),
         );
 
         $narrow = $query->cascade($frame->id, 5, 1);
@@ -357,8 +372,145 @@ final class QueryTest extends SmokeTestCase
         check(
             '超出 maxChildren 记 omitted，不静默丢分支',
             $col !== null && (int) $col['omitted'] > 0,
-            'col=' . \json_encode($col === null ? null : ['omitted' => $col['omitted']]),
+            'col=' . \json_encode($col === null ? null : ['omitted' => $col['omitted'], 'hidden' => $col['hidden']]),
         );
+        check(
+            '窄宽度下覆盖量也还等于重建数',
+            $this->coverage($narrow) === \count($frame->rebuilt),
+            'coverage=' . $this->coverage($narrow),
+        );
+    }
+
+    /**
+     * 折叠的四条判据，各自钉一个设计决定：
+     *
+     * 1. 真同形的兄弟折成一组（`Padding ×3`），且只在**同一父**的孩子之间折；
+     * 2. 同类型 + 同规模但孩子数不同 ⇒ 不折；
+     * 3. 同类型 + 同规模 + **孩子数也相同**、只有结构不同 ⇒ 不折。这条挡的是
+     *    "按类型 + 规模 + 孩子数分组"——它看起来完全够用，直到遇到真的递归差异；
+     * 4. 同形但**因果不同** ⇒ 不折。挡的是指纹里不带 kind/site 的实现：那种实现
+     *    会把一次 state 写入折进一堆父传播里，读者就会以为两处都在写。
+     *
+     * 四条必须在同一个夹具里：分开测时"折对了"和"折过头了"能各自绿，
+     * 而真正的风险是同一棵树里两者同时发生。
+     */
+    public function testIsomorphicSiblingsFoldButStructureAndCauseKeepThemApart(): void
+    {
+        $app = new TwinApplication();
+        $app->attach(new SurfaceProbe(), $this->constraints());
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            TwinState::$last?->bump();
+            ArmedState::$all[0]->bump();
+            $app->frame(16.0, $this->constraints());
+
+            $frame = $recorder->frame($recorder->lastFrameId());
+            check('拿到重建帧', $frame !== null && $frame->rebuilt !== [], 'frame=' . \json_encode($frame?->rebuilt));
+            if ($frame === null) {
+                return;
+            }
+
+            $query = new Query($recorder);
+            $cascade = $query->cascade($frame->id);
+            $rows = $this->walkNodes($cascade['roots']);
+            $pick = static function (string $type, int $subtree, ?int $depth = null) use ($rows): array {
+                return \array_values(\array_filter(
+                    $rows,
+                    static fn(array $row): bool => (string) $row['node']['type'] === $type
+                        && (int) $row['node']['subtree'] === $subtree
+                        && ($depth === null || \substr_count($row['path'], '/') === $depth),
+                ));
+            };
+
+            $padding = \array_values(\array_filter(
+                $rows,
+                static fn(array $row): bool => (string) $row['node']['type'] === 'Padding',
+            ));
+            $folded = \array_values(\array_filter(
+                $padding,
+                static fn(array $row): bool => (int) $row['node']['count'] > 1,
+            ));
+            $counts = \array_map(static fn(array $row): int => (int) $row['node']['count'], $folded);
+            \sort($counts);
+            // 两个折叠组，各在自己的父下面：`Padding ×3`（三份同形兄弟）与 `Padding ×2`。
+            // 它们是不同的父的孩子 —— 折叠只在同一父的孩子之间发生，不跨父合并。
+            check('同形兄弟在同一父下各折一组', $counts === [2, 3], 'counts=' . \json_encode($counts));
+            // 全帧 6 份 Padding：3 同形 + 1（嵌在 Column 里）+ 2（另一对同形）。
+            check(
+                '六份 Padding 一共只占三行',
+                \array_sum(\array_map(static fn(array $row): int => (int) $row['node']['count'], $padding)) === 6,
+                'instances=' . \array_sum(\array_map(static fn(array $row): int => (int) $row['node']['count'], $padding)),
+            );
+            $three = \array_values(\array_filter(
+                $folded,
+                static fn(array $row): bool => (int) $row['node']['count'] === 3,
+            ));
+            if ($three !== []) {
+                $node = $three[0]['node'];
+                check(
+                    '折叠给出全部真实 id（可展开、可 --why）',
+                    \count($node['ids'] ?? []) === 3 && \count(\array_unique($node['ids'])) === 3,
+                    'ids=' . \json_encode($node['ids'] ?? null),
+                );
+            }
+
+            // 两个子树规模一样、类型一样（3 个节点的 Column），但一个是 [Text,Text]、
+            // 一个是 [Padding[Text]]。折成一组就是在报告里编造结构。
+            // 只看根的直接孩子（第 3 层）：更深处的同型 Column 是另一个父的孩子，
+            // 折不到一起，混进来会让"几行"这个数失去意义。
+            $columns = $pick('Column', 3, 3);
+            check('同类型同规模但结构不同的两个 Column 各自成行', \count($columns) === 2, 'groups=' . \count($columns));
+            foreach ($columns as $row) {
+                check(
+                    '它们都没有被折叠（count=1）',
+                    (int) $row['node']['count'] === 1,
+                    $row['path'] . ' count=' . $row['node']['count'],
+                );
+            }
+
+            // 这一对连孩子数都相同（各 2 个），只有孩子的结构不同。少了递归指纹，
+            // 它们会被折成 `Column ×2` —— 而"按类型 + 规模 + 孩子数分组"看起来
+            // 完全够用，正是这种"看起来够用"要在判据里堵住。
+            $deep = $pick('Column', 5, 3);
+            check('同类型、同规模、同孩子数但结构不同的两个 Column 也各自成行', \count($deep) === 2, 'groups=' . \count($deep));
+            foreach ($deep as $row) {
+                check(
+                    '它们也没有被折叠',
+                    (int) $row['node']['count'] === 1,
+                    $row['path'] . ' count=' . $row['node']['count'],
+                );
+            }
+
+            // 结构一样、因果不同：一个 state 写入，一个只是被父带着重建。
+            $armed = $pick('ArmedWidget', 2);
+            check('同形但因果不同的两个节点各自成行', \count($armed) === 2, 'groups=' . \count($armed));
+            $kinds = \array_map(static fn(array $row): string => (string) $row['node']['kind'], $armed);
+            \sort($kinds);
+            check('一个标成 state、一个标成 parent', $kinds === ['parent', 'state'], 'kinds=' . \json_encode($kinds));
+
+            $broken = $this->brokenInvariants($cascade['roots']);
+            check('折叠夹具上不变量同样成立', $broken === [], \implode('；', $broken));
+
+            // 窄宽度挤掉三组，其中一组本身就是折叠过的 `Padding ×3`。`omitted` 与
+            // `hidden` 都按**实例**计（5 支 / 10 个节点），不是按组计（3 组）——
+            // 两个数单位不一致的话，"另 N 支（M 个节点）"这句话就没法读。
+            $narrow = $query->cascade($frame->id, 6, 4);
+            $wide = $narrow['roots'][0]['children'][0] ?? null;
+            check(
+                'omitted 与 hidden 都按实例计',
+                $wide !== null && (int) $wide['omitted'] === 5 && (int) $wide['hidden'] === 10,
+                'omitted=' . (int) ($wide['omitted'] ?? -1) . ' hidden=' . (int) ($wide['hidden'] ?? -1),
+            );
+            check(
+                '窄宽度下账还平',
+                $this->coverage($narrow) === \count($frame->rebuilt),
+                'coverage=' . $this->coverage($narrow) . ' rebuilt=' . \count($frame->rebuilt),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
     }
 
     public function testWhyTrailWalksFromNodeToStateRoot(): void
@@ -468,6 +620,64 @@ final class QueryTest extends SmokeTestCase
     }
 
     /**
+     * "自己写了状态的节点"仍然是父的孩子，不另起一棵树。
+     *
+     * 旧实现只从 `kind=parent` 的边建父子关系，于是写入点在树里没有父，被画成第二个
+     * 结构根：表格页看起来是两个并行的根（`PageShell 18` 与 `Table 342`），而 Table
+     * 明明就在 PageShell 的子树里。两个数都是真的，错的是"并行"这个读法 ——
+     * 而它恰好发生在最该看清嵌套的地方（两次写入谁在谁里面）。
+     */
+    public function testSelfWritingNodeStaysInsideItsParentsSubtree(): void
+    {
+        $app = new TwinApplication();
+        $app->attach(new SurfaceProbe(), $this->constraints());
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            TwinState::$last?->bump();
+            ArmedState::$all[0]->bump();
+            $app->frame(16.0, $this->constraints());
+
+            $frame = $recorder->frame($recorder->lastFrameId());
+            if ($frame === null) {
+                check('拿到重建帧', false, 'frame=null');
+
+                return;
+            }
+
+            $cascade = (new Query($recorder))->cascade($frame->id);
+            check('只有一个结构根（写入点没有另起一棵）', \count($cascade['roots']) === 1, 'roots=' . \count($cascade['roots']));
+            check(
+                '根覆盖整帧：写入点被算在父的子树里',
+                $this->coverage($cascade) === \count($frame->rebuilt),
+                'coverage=' . $this->coverage($cascade) . ' rebuilt=' . \count($frame->rebuilt),
+            );
+
+            $state = \array_values(\array_filter(
+                $this->walkNodes($cascade['roots']),
+                static fn(array $row): bool => (string) $row['node']['type'] === 'ArmedWidget'
+                    && (string) $row['node']['kind'] === 'state',
+            ));
+            check('找到那个自己写了状态的节点', \count($state) === 1, 'found=' . \count($state));
+            if ($state !== []) {
+                check(
+                    '它在树的第 3 层，不是根（`/根/列/它`）',
+                    \substr_count($state[0]['path'], '/') === 3,
+                    'path=' . $state[0]['path'],
+                );
+                check(
+                    '它的父是重建过的 Column，不是空',
+                    \str_contains($state[0]['path'], 'Column'),
+                    'path=' . $state[0]['path'],
+                );
+            }
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    /**
      * 把树摊平：`[id => node]` 与访问到的节点数。
      *
      * @param list<array<string, mixed>> $roots
@@ -486,6 +696,98 @@ final class QueryTest extends SmokeTestCase
         }
 
         return [$flat, \count($flat)];
+    }
+
+    /**
+     * 把折叠树摊平，每个节点带上"从根到它的形状路径"。
+     *
+     * 不再用 id 作键：折叠之后一行代表多个 id，id 当坐标会误导 —— 这正是折叠要说的事。
+     *
+     * @param list<array<string, mixed>> $roots
+     * @return list<array{node: array<string, mixed>, path: string}>
+     */
+    private function walkNodes(array $roots, string $path = ''): array
+    {
+        $out = [];
+        foreach ($roots as $node) {
+            $at = $path . '/' . (string) $node['type'] . '×' . (int) $node['count'];
+            $out[] = ['node' => $node, 'path' => $at];
+            foreach ($this->walkNodes($node['children'], $at) as $row) {
+                $out[] = $row;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 森林的覆盖量：每组按份数计，加上被截断的部分。
+     *
+     * 等于 `rebuilt` 才说明报告没有漏节点。截断之后这一条仍然必须成立 ——
+     * 这是 `hidden` 唯一的用途：树可以少显示，账不能对不上。
+     *
+     * @param array<string, mixed> $cascade
+     */
+    private function coverage(array $cascade): int
+    {
+        $sum = (int) $cascade['hidden'];
+        foreach ($cascade['roots'] as $root) {
+            $sum += (int) $root['subtree'] * (int) $root['count'];
+        }
+
+        return $sum;
+    }
+
+    /**
+     * 逐节点检查三条不变量，返回不成立的地方（空表示全过）。
+     *
+     * 1. `subtree == 1 + hidden + Σ(子.subtree × 子.count)`：折叠没丢子树、没重复计数；
+     * 2. 组的 `ids` 个数等于 `count`，单节点不带 `ids`（折叠无损且有唯一写法）；
+     * 3. 截断处的 `hidden == subtree - 1`：没展开的部分就是除了自己以外的一切。
+     *
+     * 比"数出来等于 11"强的地方在于：它不依赖具体夹具的规模，换个页面照样成立，
+     * 而任何一处漏算都会让等式不成立。
+     *
+     * @param list<array<string, mixed>> $roots
+     * @return list<string>
+     */
+    private function brokenInvariants(array $roots): array
+    {
+        $bad = [];
+        $walk = function (array $node, string $path) use (&$walk, &$bad): void {
+            $at = $path . '/' . (string) $node['type'] . '×' . (int) $node['count'];
+            $count = (int) $node['count'];
+            if ($count > 1) {
+                $ids = $node['ids'] ?? null;
+                if (!\is_array($ids) || \count($ids) !== $count) {
+                    $bad[] = "{$at}: ids 与 count 不一致";
+                }
+            } elseif (isset($node['ids'])) {
+                $bad[] = "{$at}: 单节点不该带 ids";
+            }
+            if ((bool) $node['cut']) {
+                if ((int) $node['hidden'] !== (int) $node['subtree'] - 1) {
+                    $bad[] = "{$at}: cut 处 hidden != subtree-1";
+                }
+
+                return;
+            }
+
+            $sum = 1 + (int) $node['hidden'];
+            foreach ($node['children'] as $kid) {
+                $sum += (int) $kid['subtree'] * (int) $kid['count'];
+                $walk($kid, $at);
+            }
+            if ($sum !== (int) $node['subtree']) {
+                $bad[] = "{$at}: subtree={$node['subtree']}，但 1+hidden+Σ子={$sum}";
+            }
+        };
+
+        foreach ($roots as $root) {
+            $walk($root, '');
+        }
+
+        return $bad;
     }
 }
 
@@ -587,5 +889,111 @@ final class FanOutState extends State
             ]),
             Text::make('c' . $this->tick),
         ]);
+    }
+}
+
+/**
+ * @internal 判据夹具：折叠的三种边界同处一棵树。
+ *
+ * - 三份 `Padding[Text]` 完全同形 ⇒ 必须折成 `Padding ×3`；
+ * - `Column[Text, Text]` 与 `Column[Padding[Text]]` 同类型、同为 3 个节点、结构不同
+ *   ⇒ 必须**不**折（按类型和规模分组的实现会把它们折在一起）；
+ * - 两个 `ArmedWidget` 结构相同，但只有第一个自己写了状态 ⇒ 必须**不**折
+ *   （指纹里少了 kind/site 的实现会把它们折在一起，读者就会以为两处都在写）。
+ *
+ * 三种情况必须在同一个夹具里：分开测时，"折对了"和"折过头"都能各自绿，
+ * 而真正的风险是同一棵树里两者同时发生。
+ */
+final class TwinApplication extends Application
+{
+    public function buildRoot(): Widget
+    {
+        return new TwinProbe();
+    }
+}
+
+/** @internal 判据夹具 */
+final class TwinProbe extends StatefulWidget
+{
+    public function createState(): State
+    {
+        return new TwinState();
+    }
+}
+
+/** @internal 判据夹具 */
+final class TwinState extends State
+{
+    public static ?self $last = null;
+
+    public int $tick = 0;
+
+    public function initState(): void
+    {
+        self::$last = $this;
+        ArmedState::$all = [];
+    }
+
+    public function bump(): void
+    {
+        $this->setState(function (): void {
+            ++$this->tick;
+        });
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        return Column::make()->children([
+            Padding::make(Text::make('p1')),
+            Padding::make(Text::make('p2')),
+            Padding::make(Text::make('p3')),
+            // 同类型、同规模（3 个节点），孩子数不同：[Text, Text] 与 [Padding[Text]]。
+            Column::make()->children([Text::make('t1'), Text::make('t2')]),
+            Column::make()->children([Padding::make(Text::make('n1'))]),
+            // 更狠的一对：同类型、同规模（5 个节点）、**孩子数也相同**（都是 2），
+            // 只有结构不同。判据要挡住"按类型 + 规模 + 孩子数分组"的实现。
+            Column::make()->children([Padding::make(Text::make('q1')), Padding::make(Text::make('q2'))]),
+            Column::make()->children([
+                Column::make()->children([Text::make('r1'), Text::make('r2')]),
+                Text::make('r3'),
+            ]),
+            new ArmedWidget(),
+            new ArmedWidget(),
+        ]);
+    }
+}
+
+/** @internal 判据夹具：结构相同，但可以被单独点着 */
+final class ArmedWidget extends StatefulWidget
+{
+    public function createState(): State
+    {
+        return new ArmedState();
+    }
+}
+
+/** @internal 判据夹具 */
+final class ArmedState extends State
+{
+    /** @var list<self> 挂载过的全部实例（判据只点着第一个） */
+    public static array $all = [];
+
+    public int $count = 0;
+
+    public function initState(): void
+    {
+        self::$all[] = $this;
+    }
+
+    public function bump(): void
+    {
+        $this->setState(function (): void {
+            ++$this->count;
+        });
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        return Text::make('armed=' . $this->count);
     }
 }
