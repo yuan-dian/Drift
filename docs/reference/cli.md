@@ -54,6 +54,7 @@
 | `composer aot-equiv` | T2 解释器与全 AOT 的几何逐值等价，退出码 0/1/2 |
 | `composer dual-equiv` | T2 解释器与 dev 壳的语义逐值等价 |
 | `composer fingerprint` | 解释器侧双通道指纹，供等价比对 |
+| `composer debug -- <AppClass>` | 无头跑 N 帧（可带 `--key=` / `--text=`），看哪些节点重建、因为谁；`--json` 出机器可读结果 |
 | `composer font-scan` | 扫描字面量里的非 ASCII 字符，生成字模资产输入 |
 | `composer golden-report` | 把 golden 检查的失败现场渲染成自包含 HTML |
 | `php tools/gen-route-manifest.php <app>` | 按应用参数从 `#[Route]` 重生成 AOT 页清单；`--check` 只查是否过期 |

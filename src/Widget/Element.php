@@ -406,6 +406,10 @@ abstract class Element
         $this->pipeline()->bumpContent(); // ★ 声明可能变了（`focusOrder` / `disabled` / 标签）
         $this->syncBox(); // §13.2：新描述到了 ⇒ 盒按配置判等决定复用还是换新
         $this->didUpdateWidget($newWidget);
+        // ★ 调和更新**也是一次重建**：父节点产出新描述 ⇒ 本节点重新 `build()`。
+        //   这条路不经 `settlePass()`，所以记录点必须在这里也挂一次；漏了它，
+        //   "哪些节点重建了"就只剩"自己 setState 的"，父带子的传播全部不可见。
+        Recorder::tapRebuild($this);
         $this->rebuild();
     }
 
@@ -511,7 +515,7 @@ abstract class Element
     protected function settlePass(): void
     {
         if ($this instanceof StatefulElement && $this->state()?->needsBuild()) {
-            Recorder::tapRebuild($this); // 帧因果：重建的唯一入口
+            Recorder::tapRebuild($this); // 帧因果：脏节点在 settle 里重建
             $this->rebuild(); // rebuild() 内部消费脏标记
         }
 

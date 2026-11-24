@@ -38,6 +38,7 @@
 | 三棵树、身份、写即标脏、组合根、依赖方向 | [心智模型](concepts/model.md) |
 | 一帧的阶段、时钟、事件回贴、跳帧与多窗口 | [帧管线](concepts/frame-pipeline.md) |
 | 约束布局、Canvas op 流、三后端、确定性与文本栈 | [渲染模型](concepts/rendering.md) |
+| 一帧为什么变成这样、因果怎么记、调试器边界在哪 | [调试模型](concepts/debug-model.md) |
 
 ## 查阅
 

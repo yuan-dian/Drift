@@ -67,6 +67,7 @@ dev 壳的 `--selftest` 做指纹 + 壳红线自检（含反例），其中一�
 5. **回到分层。** 解释器与 smoke 全绿、只有真机出问题，基本就是 AOT 那一族（属性读、arity、继承字段 `private`、`?->`、整数除法）；按[命令速查](../reference/cli.md)跑 T2 与对应 lint 复现。
 6. **环境类先体检。** `php tools/doctor.php` 逐项报告构建前提，与构建脚本共用同一套定位逻辑；`--strict` / `--scope` 用于发布前自查。
 7. **重放最小场景。** 找到嫌疑后先在做小应用里复现，再回到出问题的应用；能稳定复现才谈得上定位。
+8. **问帧因果。** 画面不对但"为什么变成这样"说不清时，用 `composer debug` 跑最小场景：它给出本帧重建的节点、根因调用点，以及跨帧的重建聚合。机制与边界见[调试模型](../concepts/debug-model.md)。
 
 ## 什么时候必须上真机
 
@@ -77,6 +78,7 @@ dev 壳的 `--selftest` 做指纹 + 壳红线自检（含反例），其中一�
 ## 相关
 
 - [诊断与错误码](../reference/diagnostics.md)
+- [调试模型](../concepts/debug-model.md)
 - [AOT 约束与代码纪律](../reference/aot-constraints.md)
 - [测试](./testing.md)
 - [命令速查](../reference/cli.md)

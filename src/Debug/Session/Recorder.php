@@ -347,6 +347,10 @@ final class Recorder
                 $file = \ltrim(\substr($file, \strlen($cwd)), '/\\');
             }
 
+            // 统一成正斜杠：同一份记录在 Windows 与 Linux 上要能逐字比对，
+            // 报告里也不会一会儿 `src\Widget` 一会儿 `src/Widget`。
+            $file = \str_replace('\\', '/', $file);
+
             return $file . ':' . (isset($frame['line']) ? (string) $frame['line'] : '0');
         }
 

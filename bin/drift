@@ -61,6 +61,8 @@ $cmd = match ($name) {
         $root . '/tools/probe-window.py',
         ...$rest,
     ],
+    // 帧因果：无头驱动 + 查询，属手工工具（按需调用、不进 CI）。
+    'debug' => $build('debug-report.php', $rest, $root),
     // 手工工具：按需调用，不进 VerifyPlan / CI。
     'codegen'       => $build('drift-codegen.php', $rest, $root),
     'preview'       => $build('drift-preview.php', $rest, $root),
@@ -99,6 +101,7 @@ drift —— 统一开发入口
 
   手工工具（按需调用，不进 V2 判据清单 / CI）
   composer preview -- --page=<Widget 的 php>   T0 无头 layout+paint → SVG/PNG
+  composer debug -- <AppClass> --key=Tab      无头跑 N 帧，看哪些节点重建、因为谁
   composer codegen                            T1 tpc 翻译层门（秒级，不编译）
   composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价
   composer dual-equiv                         T2 解释器 ↔ dev 壳逐值语义等价
