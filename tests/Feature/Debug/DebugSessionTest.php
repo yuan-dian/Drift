@@ -10,6 +10,7 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Rendering\SurfaceProfile;
 
 /**
  * D1 判据：会话门面必须与直接驱动**产出同一份记录**。
@@ -110,6 +111,73 @@ final class DebugSessionTest extends SmokeTestCase
             check('match 分支都在 QUERIES 名单里', $extra === [], 'extra=' . \json_encode($extra));
         } finally {
             $session->close();
+        }
+    }
+
+    public function testFrameRecordsCarryStageCosts(): void
+    {
+        $app = $this->boot();
+        $session = DebugSession::open($app, $this->constraints());
+
+        try {
+            $session->pump(0.0);
+            QueryState::$last?->increment();
+            $session->pump(16.0);
+
+            $frames = $session->query('frames');
+            check('帧表不是空的', $frames !== []);
+            $withCost = 0;
+            foreach ($frames as $frame) {
+                if (($frame['stageMs'] ?? []) !== []) {
+                    ++$withCost;
+                }
+            }
+            check(
+                '每一帧都带段耗时（段账没接上时这里会全空）',
+                $withCost === \count($frames),
+                'withCost=' . $withCost . ' frames=' . \count($frames),
+            );
+
+            $detail = $session->query('explain', ['frame' => 2]);
+            $stageMs = $detail['stageMs'] ?? [];
+            check('explain 也展开段耗时', $stageMs !== [], 'stageMs=' . \json_encode($stageMs));
+            check(
+                'settle 真的记到了耗时（不是只有段名）',
+                (float) ($stageMs['settle'] ?? 0) > 0.0,
+                'stageMs=' . \json_encode($stageMs),
+            );
+            check('未归属是数不是空', \is_float($detail['unattributedMs'] ?? null));
+        } finally {
+            $session->close();
+        }
+
+        check('关闭会话后量具还原，不替调用方关探针', SurfaceProfile::$on === false);
+    }
+
+    public function testCallerOwnedProfileIsLeftAlone(): void
+    {
+        SurfaceProfile::$on = true;
+        SurfaceProfile::reset();
+        SurfaceProfile::add('foreign', 1000);
+
+        try {
+            $app = $this->boot();
+            $session = DebugSession::open($app, $this->constraints());
+            try {
+                $session->pump(0.0);
+            } finally {
+                $session->close();
+            }
+
+            check('调用方开着量具时不会替他关掉', SurfaceProfile::$on === true);
+            check(
+                '调用方的累计账没被帧首清零冲掉',
+                (SurfaceProfile::$ns['foreign'] ?? 0) === 1000,
+                'ns=' . \json_encode(SurfaceProfile::$ns),
+            );
+        } finally {
+            SurfaceProfile::$on = false;
+            SurfaceProfile::reset();
         }
     }
 

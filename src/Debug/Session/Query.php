@@ -50,6 +50,8 @@ final class Query
                 'cost' => $frame->costMs,
                 'rebuilt' => \count($frame->rebuilt),
                 'causes' => \count($frame->causes),
+                'stageMs' => FrameRecord::toMs($frame->stageNs),
+                'unattributedMs' => $frame->unattributedMs(),
                 'settleSkipped' => $frame->settleSkipped,
                 'paintSkipped' => $frame->paintSkipped,
             ];
@@ -97,6 +99,8 @@ final class Query
             't' => $frame->t,
             'cost' => $frame->costMs,
             'stages' => $frame->stages,
+            'stageMs' => FrameRecord::toMs($frame->stageNs),
+            'unattributedMs' => $frame->unattributedMs(),
             'settleSkipped' => $frame->settleSkipped,
             'paintSkipped' => $frame->paintSkipped,
             'rebuilt' => $rebuilt,

@@ -4,11 +4,13 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
+use Drift\Debug\Session\FrameRecord;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
 use Drift\Widget\State;
@@ -122,6 +124,59 @@ final class RecorderTest extends SmokeTestCase
                 '超出容量只保留最近两帧',
                 \count($ids) === 2 && \end($ids) === $recorder->lastFrameId(),
                 'ids=' . \json_encode($ids) . ' last=' . $recorder->lastFrameId(),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    public function testStageCostsConvertAndLeaveNoGapHidden(): void
+    {
+        $frame = new FrameRecord(
+            1,
+            0.0,
+            10.0,
+            [],
+            [],
+            ['pumpIo', 'settle', 'layout'],
+            ['pumpIo' => 0, 'settle' => 3000000, 'layout' => 2000000],
+            false,
+            false,
+        );
+
+        $out = $frame->toArray();
+        check(
+            '纳秒转毫秒且零耗时段不列',
+            $out['stageMs'] === ['settle' => 3.0, 'layout' => 2.0],
+            'stageMs=' . \json_encode($out['stageMs']),
+        );
+        check(
+            '段账没覆盖的 5ms 要报出来，而不是假装帧内 10ms 全在段里',
+            \abs($frame->unattributedMs() - 5.0) < 0.0001,
+            'unattributed=' . $frame->unattributedMs(),
+        );
+
+        $over = new FrameRecord(2, 16.0, 1.0, [], [], [], ['settle' => 2000000], false, false);
+        check('段账比帧内还多时不报负数', $over->unattributedMs() === 0.0);
+    }
+
+    public function testStageBudgetIsClearedBetweenFrames(): void
+    {
+        $recorder = Recorder::install();
+
+        try {
+            $recorder->beginFrame(0.0);
+            SurfaceProfile::add('probe', 1000000);
+            $recorder->endFrame([], 1.0);
+
+            $recorder->beginFrame(16.0);
+            $recorder->endFrame([], 1.0);
+
+            $next = $recorder->frame(2);
+            check(
+                '帧首清账：上一帧的段耗时不会滚到下一帧',
+                $next !== null && ($next->stageNs['probe'] ?? 0) === 0,
+                'stageNs=' . \json_encode($next?->stageNs ?? []),
             );
         } finally {
             Recorder::uninstall();

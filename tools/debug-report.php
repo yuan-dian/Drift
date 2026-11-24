@@ -422,6 +422,32 @@ function render_text(array $report): void
         ));
     }
 
+    // 分段耗时取最慢帧：只看平均会把那一帧埋掉，而"该优化哪一段"恰恰问的是它。
+    // 未归属必须单列 —— 段账不覆盖帧内全部时间，藏着它等于报告自己冒充完整。
+    $slowest = slowest_frame($frames);
+    $profile = null;
+    foreach ($frames as $frame) {
+        if ((int) $frame['id'] === $slowest) {
+            $profile = $frame;
+            break;
+        }
+    }
+    if ($profile !== null) {
+        /** @var array<string, float> $stageMs */
+        $stageMs = $profile['stageMs'];
+        \fwrite(\STDOUT, \sprintf("\n耗时分布（最慢帧 #%d，帧内 %.2fms）\n", $slowest, (float) $profile['cost']));
+        if ($stageMs === []) {
+            \fwrite(\STDOUT, "  （这一帧没有分段记录）\n");
+        }
+        foreach ($stageMs as $stage => $ms) {
+            \fwrite(\STDOUT, \sprintf("  %-22s %7.2fms\n", (string) $stage, $ms));
+        }
+        $unattributed = (float) $profile['unattributedMs'];
+        if ($unattributed > 0.0) {
+            \fwrite(\STDOUT, \sprintf("  %-22s %7.2fms  ← 不在任何段里\n", '（段外）', $unattributed));
+        }
+    }
+
     \fwrite(\STDOUT, "\n根因（kind=state，次数 / 出现帧数 / 涉及节点 / 调用点）\n");
     if ($hotspots === []) {
         \fwrite(\STDOUT, "  （这段里没有状态写入：静止画面不会产生因果边）\n");

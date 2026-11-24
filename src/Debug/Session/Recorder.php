@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Debug\Session;
 
+use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
 use Drift\Widget\State;
 
@@ -41,6 +42,14 @@ final class Recorder
 
     private static ?self $current = null;
 
+    /**
+     * 量具是不是我们打开的。
+     *
+     * 只有自己打开的量具才能帧首清零、帧末读账：调用方本来开着（bench 的 M4）
+     * 时那是他的跨帧累计，清一个字都是替他毁数据 —— 那种情况宁可不记段耗时。
+     */
+    private static bool $ownsProfile = false;
+
     /** @var array<int, FrameRecord> 帧号 => 记录，键升序 */
     private array $frames = [];
 
@@ -75,11 +84,25 @@ final class Recorder
 
     public static function install(int $capacity = self::DEFAULT_CAPACITY): self
     {
+        // 段耗时不用第二套计时：`SurfaceProfile` 已经是全仓唯一的"计一段"入口
+        // （九段里的 settle/layout/paint 在 `Frame::run()` 里记，壳的 stage() 拿不到）。
+        // 装录制器就把量具打开，帧首清零、帧末读账 —— 两条驱动路径拿到同一份数据。
+        if (self::$current === null) {
+            self::$ownsProfile = !SurfaceProfile::$on;
+            if (self::$ownsProfile) {
+                SurfaceProfile::$on = true;
+            }
+        }
+
         return self::$current = new self($capacity);
     }
 
     public static function uninstall(): void
     {
+        if (self::$current !== null && self::$ownsProfile) {
+            SurfaceProfile::$on = false;
+            SurfaceProfile::reset();
+        }
         self::$current = null;
     }
 
@@ -105,6 +128,10 @@ final class Recorder
         ++$this->frameId;
         $this->open = true;
         $this->openT = $t;
+        // 量具是累计账：不清零就会把上一帧的耗时记到这一帧头上。
+        if (self::$ownsProfile) {
+            SurfaceProfile::reset();
+        }
     }
 
     /**
@@ -125,6 +152,8 @@ final class Recorder
             $this->openCauses,
             $this->openRebuilt,
             $facts['stages'] ?? [],
+            // 读累计账而不是 perCall()：一段一帧跑多次时平均会低估，累计才是花掉的时间。
+            self::$ownsProfile ? SurfaceProfile::$ns : [],
             (bool) ($facts['settleSkipped'] ?? false),
             (bool) ($facts['paintSkipped'] ?? false),
         );
