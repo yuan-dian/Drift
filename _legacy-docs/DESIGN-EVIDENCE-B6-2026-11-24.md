@@ -116,3 +116,97 @@ $drive = Plan::build($label, $width, $height, $meta, $frames, $hold, $steps);
 - 不改 `Plan::steps()` 的动作语义；`--click` 的 `x,y[,键]` 等规格原样透传。
 - `report` 的 `--width`（视口）语义本来就对，改名后行为不变；`panel` 同理。
 - 迁移顺序：`brief` → `network` → `loop` → 其余七个，每两三个跑一轮测试。
+
+## 六、落地时订正
+
+判据写完后实现，以下十件事是设计稿里没想到的，逐条记原因。
+
+### 6.1 PSR-4 不认「类名和文件名差不多」
+
+第一版叫 `Option.php`、类名 `Opt`。`composer.json` 把 `Drift\Dev\` 映射到 `tools/`，
+`Drift\Dev\Debug\Cli\Opt` 于是去找 `tools/Debug/Cli/Opt.php` —— 找不到。改文件名，不改类名。
+
+### 6.2 集中声明把「默认值抄错」从十处变成一处，也让它被看见
+
+`props` 的 `maxDepth`/`maxFields` 实际默认是 3/120，我在 `Commands::extras()` 里先写成了 0/1；
+`report` 的 `top`/`depth` 实际是 10/6，先写成了 1/1。这类错误在原来十份 if-else 里根本不会
+「错」——每份都自洽，只是彼此不同。集中声明之后它是**一个明确的、可被测试读到的数**。
+
+### 6.3 panel 漏了一个 `$meta`，靠 PanelTest 咬出来
+
+迁移时把 `$meta` 组装和 `Plan::build` 一起换成了 `$args->script()`，但 `panel` 后面还有一句
+`Runner::open(..., $meta, ...)` —— 它要的是**同一份 meta**，不是脚本。结果本地 panel 挂在
+`Argument #4 ($meta) must be of type array, null given`。全量 PHPUnit 唯一一处失败就是它。
+
+这暴露了一个边界：`Parsed::meta()` 与 `Parsed::script()` 必须同时提供。
+只给后者，出口会为了拿回 meta 再拼一次——那就又回到十份组装。
+
+### 6.4 `report` 的 `run_once()` 里那处 `Plan::build` 不是词表
+
+它构造的是**录制分叉**：重放时原脚本不可变，录制落在一份同目标同视口、步骤为空的副本上。
+这是运行语义，不是命令行词表，保留。不要为了"全局只有一处 Plan::build"把它也收进来——
+那条不变量本身是错的。
+
+### 6.5 `--at` 的互斥：解析层一处，语义两个位置
+
+`--from` 与驱动参数互斥放在 `OptionSet::guardSources()`；`report` 的
+「`--at` 与 `--frames` 一起给要提示」仍留在 `serve` 出口。两者不冲突：前者决定**能不能解析**，
+后者决定**跑起来说什么**。混在一起会让"合法但值得提醒"变成"错误"。
+
+### 6.6 `report` 是 CRLF，批量替换的正则先空跑了两轮
+
+`\n\}\n\n` 在那份文件里永远匹配不上，因为是 `\r\n\r\n`。诊断用了
+`re.search('$target = null;')` 打印后续 repr 才看到。批量改文件时先探测换行符，别假设。
+
+### 6.7 `report` / `panel` 的 replay 逻辑夹在解析和 label 之间
+
+它们会**改** `$target` / `$width` / `$rows`（脚本自带这些值，命令行没给时才采用）。
+所以正则不能一路替到 `$label = ...`，只能替到 foreach 的右花括号；后面的 replay 块原样留下。
+这也是为什么迁移后必须保留 `$target`、`$page` 这两个变量而不是全用 `$args`。
+
+### 6.8 错误信息里选项名要带 `--`
+
+原来"未知参数"只列 `assert at click ...`，看着像词表却不能直接抄。测试要求含 `--runs`，
+于是改成 `--assert --at --click ...`。小改动，但错误提示是 CLI 的说明书。
+
+### 6.9 `-h` 原来只有 web 认识
+
+统一后所有出口都从 schema 生成 `--help`，但 web 的短开关 `-h` 会消失。在
+`Commands::parseOrExit()` 里把 `-h` 归一成 `--help`，比让一个出口留着自己的解析分支划算。
+
+### 6.10 八条 schema 判据全绿，三个出口却根本没接上
+
+端到端手验时 `node` / `pick` / `props` 全部挂在 `Undefined variable $args`。批量替换时
+replacement 少了第一行 `$args = Commands::parseOrExit(...)`——八条判据**一条都没红**，
+因为它们测的是 `Commands::set()`，而不是出口脚本自己的入口。
+
+这不是"再小心一点"能解决的：`schema 正确` 与 `脚本接上了 schema` 是两件事。
+补两条子进程判据：10 个出口 `--help` 必须退出 0；7 个一次性出口必须真跑完一次。
+把 `node` 那行再删一遍，第 10 条立刻红。
+
+### 6.11 变异自检七组全咬红
+
+| 变异 | 咬住的判据 | 现象 |
+|---|---|---|
+| 从 driver 删掉 `--click` | 1 | 10 出口同一词表 → 2 条失败 |
+| `Commands::set()` 里重定义 `--width` | 2 | 6 个 error（启动即抛） |
+| 去掉 `--width` 别名 | 3 | 3 条失败 |
+| `guardSources` 把 `--at` 加回互斥 | 4 | 1 条失败 |
+| 恢复非法数值静默改写 | 5 | 2 条失败 |
+| 错误信息不列选项 | 6 | 2 条失败 |
+| 删掉 `node` 的 `parseOrExit` 那行 | 10 | 1 条失败（真跑判据） |
+
+## 七、判据落点
+
+| # | 判据 | 落在哪 |
+|---|---|---|
+| 1 | 10 出口同词同指纹 | `CliTest::testEveryCommandBuildsTheSameScriptFromTheSameWords` |
+| 2 | 重名/重别名拒绝 | `testSchemaRefusesToDefineTheSameNameTwice` |
+| 3 | `--width` 视口、`--text-width` 排版 | `testWidthIsViewportEverywhereAndTextWidthIsSeparate` |
+| 4 | `--from + --at` 三出口一致 | `testAtSelectsAFrameInAnEvidencePackage` |
+| 5 | 非法数值拒绝、越界归一 | `testBadNumbersAreRejectedButRangesStillClamp` |
+| 6 | 错误只列本出口的词 | `testUnknownOptionListsOnlyTheCommandsOwnWords` |
+| 7 | help 与解析集合一致 | `testHelpIsGeneratedFromTheSameSchema` |
+| 8 | 漏声明即拒绝 | `testAnUndeclaredActionCannotSlipThrough` |
+| 9 | 10 个出口都能启动并显示共享词 | `testEveryCommandStartsAndShowsTheSharedWords` |
+| 10 | 7 个一次性出口真跑一次 | `testEveryOneShotCommandActuallyRuns` |
