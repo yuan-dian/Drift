@@ -170,7 +170,7 @@ Web 端的纪律只有一条：**它不知道自己看的是什么**。
 | `GET /api/frames?since=N&limit=M` | `frames` 查询原样 + `session` |
 | `GET /api/boxes?frame=N` | `boxes` 查询原样（含 `rect` 绝对矩形）；结构树由每行的 `parent` 给出 |
 | `GET /api/node?node=K&frame=N` | `boxModel` + `props` 合并（选中节点的事实卡） |
-| `POST /api/ctl` | 透传 `pause` / `resume`（只对自走宿主有效，从属宿主回 `not_applicable`） |
+| `POST /api/ctl` | 透传 `pause` / `resume`（只对自走宿主有效，从属宿主回 `not_applicable`）。带 `frames` 时**等到真的停下才回执**——`resume` 的即时回执是 `running`，而用户按的是"走一步" |
 
 `/api/*` 的响应体一律是**查询层的原样数组**，`Web` 类不加字段、不改名、不排序。
 这一条是"不重算"在服务端的对应物：任何加工都会成为第四份真相。

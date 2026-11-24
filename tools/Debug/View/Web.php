@@ -173,7 +173,7 @@ final class Web
         }
 
         try {
-            return $this->json(($this->control)($action, $body));
+            $result = ($this->control)($action, $body);
         } catch (ProtocolError $e) {
             // 从属宿主上 `pause` 是合法请求但做不到：这是 501 不是 400。
             return $this->error(
@@ -182,6 +182,22 @@ final class Web
                 $e->getMessage(),
             );
         }
+
+        // 单步（`resume` 带 `frames`）要等到**真的停下**才回执。
+        // `resume` 的即时回执是 `running`，而用户按的是"走一步"——回一个 `running`
+        // 会让他以为没生效，再按一次就成了两步。同 `debug ctl` 的出口口径。
+        if ($action === 'resume' && isset($body['frames'])) {
+            $deadline = \microtime(true) + 2.0;
+            while (\microtime(true) < $deadline) {
+                $state = $this->queries->query('state');
+                if (($state['state'] ?? '') !== 'running') {
+                    return $this->json($state);
+                }
+                \usleep(5000);
+            }
+        }
+
+        return $this->json($result);
     }
 
     /**
