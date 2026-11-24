@@ -40,6 +40,16 @@ final class ProtocolError extends \RuntimeException
      */
     public const string UNAUTHORIZED = 'unauthorized';
 
+    /**
+     * 这个方法在这个宿主上没有意义。
+     *
+     * 一个码管两种情形，因为它们是同一个问题的两面 —— **帧由谁推**：
+     * 自走宿主上 `frame` 没意义（两条时间轴），从属宿主上 `pause` / `resume`
+     * 没意义（客户端停手就是暂停）。分开两个码会让客户端得先问"你是什么宿主"
+     * 才知道该捕哪个错，而 `attach` 回执里的 `driven` 已经回答了那个问题。
+     */
+    public const string NOT_APPLICABLE = 'not_applicable';
+
     /** 宿主内部抛了异常（查询失败、页面造不出来……），消息里是原始文本。 */
     public const string CALL_FAILED = 'call_failed';
 

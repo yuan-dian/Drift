@@ -18,18 +18,23 @@ use Drift\Debug\Session\Step;
  *
  * ## 它默认是**从属**的
  *
- * 不给 `$tick` 时，宿主自己不推帧、不读时钟、不做任何"定期"的事。每一次状态变化
+ * 不给 `$drive` 时，宿主自己不推帧、不读时钟、不做任何"定期"的事。每一次状态变化
  * 都来自一条消息。
  *
  * ## 但"从属"不是可判的原因
  *
  * 真正会让结果随机器漂的是**帧的 `t` 来自墙钟**：动画位置、`after()` 到期判断都会
- * 跟着机器速度变。所以开 `$tick` 的前提是 tick 喂进来的仍是**脚本里的 `t`**——
+ * 跟着机器速度变。所以给 `$drive` 的前提是它喂进去的仍是**脚本里的 `t`**——
  * 那时候谁按什么节奏调用 `pump()` 都不影响记录内容，可判性一点没丢。反过来，
- * 拿 `now()` 当 `t` 的自走，无论有没有 tick 都不可判。
+ * 拿 `now()` 当 `t` 的自走，无论有没有驱动都不可判。
  *
  * 这条区分很重要：早先这里写的是"从属是可判的前提"，把手段写成了原因，于是
  * "宿主能不能自己跑"看起来成了路线问题。
+ *
+ * ## 能不能停，读会话的状态
+ *
+ * 宿主不自己记"暂停了没有"：`$session->canAdvance()` 是唯一判据。两套记账
+ * （宿主一个布尔、会话一个 `state`）必然漂开，而漂开的表现是"查着是暂停、其实在动"。
  *
  * ## 一次失败不能带走整个进程
  *
@@ -54,32 +59,29 @@ final class Host
      *   这个是"这个进程的调试面开给谁"，进程活多久就多久。两者混用会让"宿主重启"
      *   与"重新录制"变成同一件事。
      *   `null` = 不校验（stdio 宿主：通道就是父进程的管道，本来没有"外人"这回事）。
+     * @param Drive|null $drive
+     *   自走驱动：给了它，宿主自己按脚本推帧，并且能被 `pause` / `resume` 叫停。
+     *   没给（stdio 宿主 / 被 `--remote` 拉起的从属宿主）时每一帧都得客户端发，
+     *   `pause` / `resume` 对这个宿主没有意义 —— 它们回 `not_applicable`，
+     *   而 `frame` 反过来在有驱动时被拒。
      */
     public function __construct(
         private readonly Server $server,
         private readonly ?string $accessToken = null,
+        private readonly ?Drive $drive = null,
     ) {
     }
 
     /**
      * @param callable(Script): array{session: DebugSession, mountMs: float} $open
      *   由调用方提供"怎么造这一页"（组合根的事）：脚本进，会话与挂载耗时出。
-     * @param null|callable(DebugSession): bool $tick
-     *   每轮"没有消息可读"时调用一次，返回 `false` 表示不再推进（脚本跑完 / 到了
-     *   `--at`）。**它必须喂脚本里的 `t`**，拿墙钟当 `t` 会让记录不可判。
-     *   给了 tick 就要求 `Server::canPoll()`，否则会卡在等消息上、帧再也不动。
-     *   还没 `open` 时不调 tick（没有会话可推进），此时 `wait()` 回到阻塞。
-     * @param Script|null $autoStart
-     *   自走宿主的开局脚本：**进循环前先自己建会话**。没有它就没人发 `open`，
-     *   于是 `tick` 永远等不到会话 —— 自走宿主会安静地不推进任何一帧。
-     *   建出来的会话与客户端 `open` 出来的完全一样，所以观察者带令牌就能接上。
      */
-    public function serve(callable $open, ?callable $tick = null, ?Script $autoStart = null): void
+    public function serve(callable $open): void
     {
-        if ($tick !== null && !$this->server->canPoll()) {
+        if ($this->drive !== null && !$this->server->canPoll()) {
             throw new \LogicException(
                 '这个传输不支持自走：它的 wait() 不能在"没有消息"时立即返回，'
-                . '给了 tick 会卡在等消息上、帧再也不推进。自走请用 socket 宿主。',
+                . '给了驱动会卡在等消息上、帧再也不推进。自走请用 socket 宿主。',
             );
         }
 
@@ -88,22 +90,26 @@ final class Host
         $session = null;
 
         try {
-            if ($autoStart !== null) {
+            if ($this->drive !== null) {
                 // 自走：没有客户端来发 open，会话只能由宿主自己建。
-                $session = $open($autoStart->fork())['session'];
+                $session = $open($this->drive->script()->fork())['session'];
             }
 
             while (true) {
-                // 有 tick 且已经有会话时零超时：扫一眼有没有待办消息，没有就去跑一帧。
-                // 还没 open 时必须阻塞等（否则会空转烧 CPU，而它连帧都推不了）。
-                $timeout = ($tick !== null && $session !== null) ? 0 : -1;
-                $ready = $this->server->wait($channels, $timeout);
+                // 会话在跑才零超时：扫一眼有没有待办消息，没有就推**一步**。
+                // 停下之后必须阻塞等 —— 空转只会烧 CPU，而它连一帧都推不了。
+                // 一步而不是一路推到底：后者让默认的 `--speed=0` 在跑完之前读不到
+                // 任何消息，于是"暂停"要等脚本跑完才生效（等于没有）。
+                //
+                // 这个判断**只**决定要不要零超时，不决定推不推：那一层是
+                // `Drive::advance` 自己的守卫。两处都判会让它们互为冗余 ——
+                // 去掉任何一处都不出错，于是也没有判据能钉住任何一处。
+                $advancing = $this->drive !== null && $session !== null && $session->canAdvance();
+                $ready = $this->server->wait($channels, $advancing ? 0 : -1);
 
                 if ($ready === []) {
-                    if ($tick !== null && $session !== null && $tick($session) === false) {
-                        // 跑完了不再推进，但会话保活：观察者还可以继续问。
-                        // 置 null 而不是 break —— break 会把"跑完了"变成"没人听了"。
-                        $tick = null;
+                    if ($this->drive !== null && $session !== null) {
+                        $this->drive->advance($session);
                     }
 
                     continue;
@@ -123,10 +129,10 @@ final class Host
                     $this->dispatch($channel, $line, $open, $session);
                 }
 
-                // 没有连接了、也不自走、也不是自走宿主 ⇒ 没人听了。自走中则继续跑
-                // （观察者随时可重连）；自走宿主跑完也继续等 —— "served 完就悄悄退出"
-                // 会让下一个人连上来时看到"连接被拒绝"，而他什么都没做错。
-                if ($channels === [] && $tick === null && $autoStart === null) {
+                // 没有连接了、也不自走 ⇒ 没人听了。自走中则继续跑（观察者随时可重连）；
+                // 自走宿主跑完也继续等 —— "serve 完就悄悄退出"会让下一个人连上来时
+                // 看到"连接被拒绝"，而他什么都没做错。
+                if ($channels === [] && $this->drive === null) {
                     return;
                 }
             }
@@ -214,6 +220,26 @@ final class Host
             return;
         }
 
+        if ($method === Methods::PAUSE || $method === Methods::RESUME) {
+            $this->control($channel, $id, $session, $method, $params);
+
+            return;
+        }
+
+        if ($method === Methods::FRAME && $this->drive !== null) {
+            // 两条时间轴：脚本里的 `t` 与客户端编的 `t` 混进同一条记录，而 `digest`
+            // 不含时间（比不出这件事）、`t` 序列只有细看才发现断裂。单步走
+            // `resume` 的 `frames`，那里推进的是脚本自己的下一帧。
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::NOT_APPLICABLE,
+                '这个宿主自己按脚本推帧：不要再喂 t。要单步用 resume --frames=1',
+            );
+
+            return;
+        }
+
         try {
             $this->ok($channel, $id, match ($method) {
                 Methods::FRAME => $this->frame($session, $params),
@@ -282,7 +308,65 @@ final class Host
             // 末帧一起给：观察者的游标要有个起点，否则它得先问一次 state 才知道从哪读。
             'lastFrame' => $session->lastFrameId(),
             'pid' => \getmypid(),
+            // 帧是谁推的。客户端拿到 true 就别发 frame（会被拒），拿到 false 就知道
+            // 自己得推。不发一次 frame 去试探，省一次往返，也不必从错误码去猜。
+            'driven' => $this->drive !== null,
         ]);
+    }
+
+    /**
+     * 暂停 / 恢复。
+     *
+     * 回执**就是**一次 `state` 查询：控制面的输出形状与观察面完全一样，调用方
+     * 不需要学两套。这也是唯一能让"动作生效了没有"被直接读出来的形状。
+     *
+     * @param array<array-key, mixed> $params
+     */
+    private function control(
+        Channel $channel,
+        int $id,
+        DebugSession $session,
+        string $method,
+        array $params,
+    ): void {
+        if ($this->drive === null) {
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::NOT_APPLICABLE,
+                '这个宿主由客户端驱动（每帧都要客户端发）：暂停就是你别再发 frame，不用问它',
+            );
+
+            return;
+        }
+
+        if ($method === Methods::RESUME) {
+            $frames = $params['frames'] ?? null;
+            if ($frames !== null && (!\is_int($frames) || $frames < 1)) {
+                $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'resume 的 frames 是正整数');
+                return;
+            }
+
+            $name = $session->stateName();
+            if ($name === 'finished' || $name === 'crashed') {
+                // 让它回 running 会撒一秒的谎：下一轮立刻又 finished，而观察者已经
+                // 读到"在跑"了。
+                $this->fail(
+                    $channel,
+                    $id,
+                    ProtocolError::NOT_APPLICABLE,
+                    "会话已经 {$name}，恢复不了",
+                );
+
+                return;
+            }
+
+            $this->drive->resume($session, $frames);
+        } else {
+            $this->drive->pause($session);
+        }
+
+        $this->ok($channel, $id, $session->query('state'));
     }
 
     /**
@@ -314,6 +398,9 @@ final class Host
                 // ★ 报告要能说出"这份因果是哪个进程跑出来的"。没有它，`--remote`
                 //   悄悄退化成同进程跑，两份报告也会"逐值相同"。
                 'pid' => \getmypid(),
+                // 与 attach 同一个字段：`open` 出来的一定是客户端驱动（自走宿主上
+                // `open` 会被 already_open 挡住），但形状统一比"这里没有、那里有"好记。
+                'driven' => $this->drive !== null,
             ],
         ];
     }

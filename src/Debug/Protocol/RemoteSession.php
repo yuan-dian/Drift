@@ -46,6 +46,9 @@ final class RemoteSession implements Session
 
     private bool $closed = false;
 
+    /** 帧是不是这个宿主自己推的（`attach` 才知道）；没接过为 `null`。 */
+    private ?bool $driven = null;
+
     public function __construct(private readonly Transport $transport)
     {
     }
@@ -71,6 +74,7 @@ final class RemoteSession implements Session
             throw new ProtocolError(ProtocolError::BAD_RESPONSE, 'open 的响应缺少 mountMs');
         }
         $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
+        $this->driven = \is_bool($result['driven'] ?? null) ? $result['driven'] : null;
 
         return (float) $mount;
     }
@@ -93,11 +97,50 @@ final class RemoteSession implements Session
 
         $result = $this->callObject(Methods::OPEN, ['token' => $token]);
         $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
+        $this->driven = \is_bool($result['driven'] ?? null) ? $result['driven'] : null;
         if (\is_int($result['lastFrame'] ?? null)) {
             $this->lastFrameId = $result['lastFrame'];
         }
 
         return $this->lastFrameId;
+    }
+
+    /**
+     * 帧是不是这个宿主自己推的。
+     *
+     * `true` ⇒ 别发 `frame`（会被拒），要单步用 {@see self::resume()}
+     * 带 `frames: 1`。`false` ⇒ 自己推。`null` ⇒ 没 attach 过，不知道。
+     */
+    public function driven(): ?bool
+    {
+        return $this->driven;
+    }
+
+    /**
+     * 让自走的宿主停一下。回执与 `query('state')` 同形。
+     *
+     * @return array<array-key, mixed>
+     *
+     * @throws ProtocolError `not_applicable`（这个宿主不由自己推帧）
+     */
+    public function pause(): array
+    {
+        return $this->callObject(Methods::PAUSE);
+    }
+
+    /**
+     * 继续跑；`$frames` 给了就只走这么多帧（`1` = 单步），走完回 `paused` + `reason=step`。
+     *
+     * 单步不在这里给时间戳：推进的是**脚本自己的下一帧**，而 `t` 属于脚本。
+     * 客户端编一个 `t` 进来会在一条时间轴里插进另一条，而摘要比不出这件事。
+     *
+     * @return array<array-key, mixed>
+     *
+     * @throws ProtocolError `not_applicable`（不由自己推帧 / 已经 finished 或 crashed）
+     */
+    public function resume(?int $frames = null): array
+    {
+        return $this->callObject(Methods::RESUME, $frames === null ? [] : ['frames' => $frames]);
     }
 
     /** 跑这次会话的宿主进程号；没打开时为 `null`。 */

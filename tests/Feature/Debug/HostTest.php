@@ -9,6 +9,7 @@ use Drift\Debug\Protocol\ProtocolError;
 use Drift\Debug\Protocol\Wire;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
+use Drift\Dev\Debug\Drive;
 use Drift\Dev\Debug\Host;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
@@ -353,5 +354,76 @@ final class HostTest extends SmokeTestCase
         $this->serve([self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()])]);
 
         check('宿主退出后不该留着录制器', !Recorder::installed());
+    }
+
+    /**
+     * 从属宿主上 `pause` / `resume` 没有意义：客户端停手就是暂停。
+     *
+     * 报 `not_applicable` 而不是装作成功 —— 假装成功会让 `ctl pause` 打印一个
+     * `paused` 然后什么也没发生，而用户以为停住了。
+     */
+    public function testPauseOnAClientDrivenHostIsNotApplicable(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::PAUSE),
+            self::call(3, Methods::RESUME),
+            self::call(4, Methods::QUERY, ['name' => 'state']),
+        ])->decoded();
+
+        check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
+        if (\count($replies) !== 4) {
+            return;
+        }
+
+        check(
+            'pause 报 not_applicable',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::NOT_APPLICABLE,
+            self::show($replies[1]),
+        );
+        check(
+            'resume 报 not_applicable',
+            ($replies[2]['error']['code'] ?? '') === ProtocolError::NOT_APPLICABLE,
+            self::show($replies[2]),
+        );
+        check('被拒之后会话没坏', $replies[3]['ok'] === true, self::show($replies[3]));
+        check('状态还是 running（没被谎称暂停）', ($replies[3]['result']['state'] ?? '') === 'running', self::show($replies[3]['result'] ?? null));
+    }
+
+    /** `open` 回执照样说清楚帧是谁推的，客户端不必靠"发一条试试"去猜。 */
+    public function testOpenSaysTheClientDrives(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+        ])->decoded();
+
+        check(
+            'open 回执带 driven=false',
+            ($replies[0]['result']['driven'] ?? null) === false,
+            self::show($replies[0]['result']['driven'] ?? null),
+        );
+    }
+
+    /**
+     * 给了驱动却拿一个不能立即返回的 `wait()`，要当场拒绝。
+     *
+     * 放过去的表现最糟：宿主卡在等消息上，帧一帧不动，而它看起来"起来了"。
+     */
+    public function testDriveRequiresAPollableServer(): void
+    {
+        $host = new Host(new SingleServer(new FakeTransport([])), null, new Drive($this->script()));
+
+        try {
+            $host->serve(static fn(Script $s): array => Runner::open(
+                $s->target,
+                $s->width,
+                $s->height,
+                $s->meta(),
+                $s,
+            ));
+            check('该拒绝却没拒', false, '居然跑起来了');
+        } catch (\LogicException $e) {
+            check('拒绝时说的是"不能自走"', \str_contains($e->getMessage(), '自走'), $e->getMessage());
+        }
     }
 }

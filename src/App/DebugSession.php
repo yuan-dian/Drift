@@ -136,6 +136,23 @@ final class DebugSession implements Session
     }
 
     /**
+     * 还能不能推进。
+     *
+     * 这是"宿主该不该调驱动"的唯一判据 —— 不要另存一个 `bool $paused`：那套记账
+     * 与 `state` 必然漂开（查询报 `paused` 而宿主还在推，或者反过来）。
+     */
+    public function canAdvance(): bool
+    {
+        return $this->state->state === 'running';
+    }
+
+    /** 当前状态名。要区分 `finished` 与 `crashed` 的人读这个，不要读 `state` 对象。 */
+    public function stateName(): string
+    {
+        return $this->state->state;
+    }
+
+    /**
      * 标记会话状态。`reason` 是"为什么停"，而不是"谁让停的"的近义词：
      * `at`（到了 `--at`）与 `requested`（客户端按了暂停）对观察者的含义相反——
      * 前者是"你要看的就在这"，后者是"一会儿还动"。

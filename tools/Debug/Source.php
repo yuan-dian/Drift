@@ -38,6 +38,7 @@ final class Source
 {
     /**
      * @param \Closure():void|null $cleanup 收尾。`null` = 没有要收的（离线读包）
+     * @param RemoteSession|null   $remote  只有 `--attach` 有：干预面要具体类型
      */
     private function __construct(
         private readonly SessionQueries $queries,
@@ -45,6 +46,7 @@ final class Source
         private readonly bool $attached,
         private readonly ?string $out,
         private readonly ?\Closure $cleanup,
+        private readonly ?RemoteSession $remote = null,
     ) {
     }
 
@@ -124,6 +126,7 @@ final class Source
                 static function () use ($live): void {
                     $live->detach();
                 },
+                $live,
             );
         }
 
@@ -170,6 +173,17 @@ final class Source
     public function isAttached(): bool
     {
         return $this->attached;
+    }
+
+    /**
+     * 干预面：只有 `--attach` 的活会话有。
+     *
+     * 离线包与本地跑都返回 `null` —— 它们没有"另一个进程里的调度"可以被暂停，
+     * 本地跑的时候停手的办法就是不调 `pump()`，不需要一个方法。
+     */
+    public function remote(): ?RemoteSession
+    {
+        return $this->remote;
     }
 
     /**
