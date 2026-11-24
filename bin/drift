@@ -63,6 +63,8 @@ $cmd = match ($name) {
     ],
     // 帧因果：无头驱动 + 查询，属手工工具（按需调用、不进 CI）。
     'debug' => $build('debug-report.php', $rest, $root),
+    // 帧因果的面板：在一次会话上反复追问（时间轴 + 因果树 + 原因）。
+    'panel' => $build('debug-panel.php', $rest, $root),
     // 帧因果的宿主进程：由 `debug --remote` 起，也可手工对着 stdio 发消息。
     'debug-host' => $build('debug-host.php', $rest, $root),
     // 手工工具：按需调用，不进 VerifyPlan / CI。
@@ -104,6 +106,7 @@ drift —— 统一开发入口
   手工工具（按需调用，不进 V2 判据清单 / CI）
   composer preview -- --page=<Widget 的 php>   T0 无头 layout+paint → SVG/PNG
   composer debug -- <AppClass> --key=Tab      无头跑 N 帧，看哪些节点重建、因为谁
+  composer panel -- --page=table --click=x,y  同一个会话里反复追问：时间轴 + 因果树 + 原因
   composer debug-host                         帧因果宿主进程（调试协议的另一端，通常由 --remote 起）
   composer codegen                            T1 tpc 翻译层门（秒级，不编译）
   composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价

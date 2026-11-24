@@ -7,8 +7,7 @@ use Drift\Debug\Session\Digest;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\SessionDriver;
-use Drift\Debug\Session\SessionQueries;
+use Drift\Debug\Session\Session;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
 
@@ -34,7 +33,7 @@ use Drift\Input\InputEvent;
  *
  * 不管传输：帧记录仍是内存对象，搬出进程由
  * {@see \Drift\Debug\Protocol\RemoteSession} 这个**镜像**负责 —— 它实现同一对接口
- * （{@see SessionQueries} / {@see SessionDriver}），所以消费者的代码不需要知道
+ * （{@see Session}），所以消费者的代码不需要知道
  * 记录是本地的还是隔着一条管道。**驱动脚本**是另一回事 —— 它只存标量、能存成
  * JSON，因为"再跑一遍"需要的只是输入与时钟，不需要把记录搬过去。
  *
@@ -44,7 +43,7 @@ use Drift\Input\InputEvent;
  *
  * @api
  */
-final class DebugSession implements SessionQueries, SessionDriver
+final class DebugSession implements Session
 {
     /**
      * 查询名 => 一句话说明。`query()` 的 `match` 分支必须与这里一一对应：
