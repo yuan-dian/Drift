@@ -31,82 +31,40 @@ require __DIR__ . '/autoload.php';
 use Drift\App\Replay;
 use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Script;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\Panel;
 
-$target = null;
-$page = null;
-$frames = 1;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$replayPath = null;
-$remote = false;
-$json = false;
-$shots = false;
-$keys = null;
-$frameArg = null;
+$args = Commands::parseOrExit('panel', $argv);
+$target = $args->target();
+$page = $args->str('page');
+$json = $args->bool('json');
+$shots = $args->bool('shots');
+$remote = $args->bool('remote');
+$frames = $args->int('frames');
+$width = $args->float('view-width');
+$height = $args->float('height');
+$rows = $args->int('rows');
+$hold = $args->int('hold');
+$at = $args->at();
+$replayPath = $args->str('replay');
+$keys = $args->str('keys');
+$frameArg = $args->has('frame') ? $args->int('frame') : null;
 $screenWidth = null;
 $screenHeight = null;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--shots') {
-        $shots = true;
-    } elseif ($arg === '--remote') {
-        $remote = true;
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--width=')) {
-        $width = \max(1, (int) \substr($arg, 8));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--save=')) {
-        // 面板里不提供保存：驱动脚本的权威来源是 `composer debug --save`。
-        \fwrite(\STDERR, "面板不支持 --save：要存脚本请用 composer debug --save=<路径>\n");
-        exit(2);
-    } elseif (\str_starts_with($arg, '--replay=')) {
-        $replayPath = \substr($arg, 9);
-    } elseif (\str_starts_with($arg, '--keys=')) {
-        $keys = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--frame=')) {
-        $frameArg = (int) \substr($arg, 8);
-    } elseif (\str_starts_with($arg, '--screen=')) {
-        // `宽x高`：屏幕（终端）尺寸，与 `--width/--height`（页面视口）是两件事。
-        $parts = \explode('x', \strtolower(\substr($arg, 9)));
-        $screenWidth = \max(20, (int) ($parts[0] ?? 0));
-        $screenHeight = \max(6, (int) ($parts[1] ?? 0));
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
+$screen = $args->str('screen');
+if ($screen !== null) {
+    // `宽x高`：屏幕（终端）尺寸，与视口宽高是两件事。
+    $parts = \explode('x', \strtolower($screen));
+    $screenWidth = \max(20, (int) ($parts[0] ?? 0));
+    $screenHeight = \max(6, (int) ($parts[1] ?? 0));
+}
+$steps = $args->steps();
+if ($args->has('save')) {
+    \fwrite(\STDERR, "面板不支持 --save：要存脚本请用 composer debug --save=<路径>\n");
+    exit(2);
 }
 
 // ---------------------------------------------------------------- 脚本：读入
@@ -159,12 +117,8 @@ if ($replay !== null) {
     }
 }
 
-$meta = $rows > 0 ? ['rows' => $rows] : [];
-if ($page !== null) {
-    $meta['page'] = 1;
-}
-
-$drive = $replay ?? Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+$meta = $args->meta();
+$drive = $replay ?? $args->script();
 
 // 屏幕尺寸：命令行 > 环境变量 > 默认。终端里给人看的东西，撑满宽度比"刚好够"好读。
 $screenWidth = $screenWidth ?? (\getenv('COLUMNS') !== false ? \max(40, (int) \getenv('COLUMNS')) : 100);

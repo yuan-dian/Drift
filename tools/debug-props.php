@@ -31,81 +31,28 @@ require __DIR__ . '/autoload.php';
 
 use Drift\App\Replay;
 use Drift\Debug\Protocol\RemoteSession;
-use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\Props;
 
-$target = null;
-$page = null;
-$frames = 1;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$remote = false;
-$json = false;
-$node = 0;
-$maxDepth = 3;
-$maxFields = 120;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--remote') {
-        $remote = true;
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--node=')) {
-        $node = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--maxDepth=')) {
-        $maxDepth = \max(0, (int) \substr($arg, 11));
-    } elseif (\str_starts_with($arg, '--maxFields=')) {
-        $maxFields = \max(1, (int) \substr($arg, 12));
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
-
-$label = $page ?? $target;
+$args = Commands::parseOrExit('props', $argv);
+$width = $args->float('view-width');
+$height = $args->float('height');
+$meta = $args->meta();
+$node = $args->int('node');
+$maxDepth = $args->int('maxDepth');
+$maxFields = $args->int('maxFields');
+$at = $args->at();
+$remote = $args->bool('remote');
+$json = $args->bool('json');
+$label = $args->label();
 if ($label === null || $node <= 0) {
     \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--page=<路由id>] [--json] [--remote]\n");
     exit(2);
 }
 
-$meta = $rows > 0 ? ['rows' => $rows] : [];
-if ($page !== null) {
-    $meta['page'] = 1;
-}
-$drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+$drive = $args->script();
 
 $session = null;
 try {

@@ -34,98 +34,28 @@ declare(strict_types=1);
 require __DIR__ . '/autoload.php';
 
 use Drift\Debug\Session\Thresholds;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\HttpServer;
-use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Web;
 
-$target = null;
-$page = null;
-$frames = 1;
-$framesGiven = false;
-$from = null;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$remote = false;
-$attach = false;
-$sessionId = null;
-$port = 0;
-$host = '127.0.0.1';
-$thresholds = Thresholds::default();
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--remote') {
-        $remote = true;
-    } elseif ($arg === '--attach') {
-        $attach = true;
-    } elseif (\str_starts_with($arg, '--session=')) {
-        $sessionId = \substr($arg, 10);
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-        $framesGiven = true;
-    } elseif (\str_starts_with($arg, '--from=')) {
-        $from = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--port=')) {
-        $port = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--host=')) {
-        $host = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--slow=')) {
-        $thresholds = $thresholds->with(['slowMs' => (float) \substr($arg, 7)]);
-    } elseif (\str_starts_with($arg, '--fanout=')) {
-        $thresholds = $thresholds->with(['fanoutNodes' => (int) \substr($arg, 9)]);
-    } elseif (\str_starts_with($arg, '--repeat=')) {
-        $thresholds = $thresholds->with(['repeatPercent' => (int) \substr($arg, 9)]);
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif ($arg === '--help' || $arg === '-h') {
-        \fwrite(\STDOUT, "用法：debug-web [<AppClass|路由id>] [--page=<路由id>] [--frames=N] [--port=N]\n"
-            . "      debug-web --attach [--session=<id>]\n"
-            . "      debug-web --from=<证据包>\n");
-        exit(0);
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
-
-$label = $from !== null ? \basename($from) : ($page ?? $target);
+$args = Commands::parseOrExit('web', $argv);
+$from = $args->str('from');
+$at = $args->at();
+$remote = $args->bool('remote');
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+$port = $args->int('port');
+$host = $args->str('host') ?? '127.0.0.1';
+$thresholds = Thresholds::default()
+    ->with(['slowMs' => $args->float('slow')])
+    ->with(['fanoutNodes' => $args->int('fanout')])
+    ->with(['repeatPercent' => $args->int('repeat')]);
+$label = $args->label();
 
 $source = null;
 $server = null;
 try {
-    if ($from !== null && ($page !== null || $target !== null || $steps !== [] || $framesGiven)) {
-        throw new \InvalidArgumentException(
-            '--from 与 --page / 目标 / --frames / 驱动参数互斥：包里已经有完整的驱动记录',
-        );
-    }
-
     $drive = null;
     if ($from === null && !$attach) {
         if ($label === null) {
@@ -135,12 +65,7 @@ try {
             exit(2);
         }
 
-        $meta = $rows > 0 ? ['rows' => $rows] : [];
-        if ($page !== null) {
-            $meta['page'] = 1;
-        }
-
-        $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+        $drive = $args->script();
     }
 
     $source = Source::resolve(

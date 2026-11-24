@@ -42,62 +42,19 @@ declare(strict_types=1);
 require __DIR__ . '/autoload.php';
 
 use Drift\Debug\Session\Script;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Discovery;
 use Drift\Dev\Debug\Drive;
 use Drift\Dev\Debug\Host;
 use Drift\Dev\Debug\OutputGuard;
-use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\SocketServer;
 
-$target = null;
-$page = null;
-$frames = 1;
-$width = 800.0;
-$height = 600.0;
-$rows = 0;
-$hold = 1;
-$at = null;
-$speed = 0.0;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = (float) \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = (float) \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--speed=')) {
-        $speed = \max(0.0, (float) \substr($arg, 8));
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
-
-$label = $page ?? $target;
+$args = Commands::parseOrExit('serve', $argv);
+$at = $args->at();
+$speed = $args->float('speed');
+$frames = $args->int('frames');
+$label = $args->label();
 if ($label === null) {
     \fwrite(\STDERR, "用法：debug-serve <AppClass|路由id> [--page=<路由id>] [--frames=N] [--at=N] [--speed=N]\n");
     \fwrite(\STDERR, "      debug-serve --page=async-table --rows=6 --resolve --speed=1\n");
@@ -109,12 +66,7 @@ if ($at !== null && $at > $frames) {
     \fwrite(\STDERR, "--at={$at} 大于 --frames={$frames}，脚本跑完就停，不会再往后推\n");
 }
 
-$meta = $rows > 0 ? ['rows' => $rows] : [];
-if ($page !== null) {
-    $meta['page'] = 1;
-}
-
-$script = Plan::build((string) $label, $width, $height, $meta, $frames, $hold, $steps);
+$script = $args->script();
 
 $drive = new Drive($script, $at, $speed, static function (string $message): void {
     \fwrite(\STDERR, '驱动失败：' . $message . "\n");

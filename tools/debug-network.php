@@ -44,81 +44,21 @@ declare(strict_types=1);
 require __DIR__ . '/autoload.php';
 
 use Drift\Debug\Session\SessionQueries;
-use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Network;
 
-$target = null;
-$page = null;
-$frames = 1;
-$framesGiven = false;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$remote = false;
-$json = false;
-$request = null;
-$from = null;
-$out = null;
-$part = 'both';
-$limit = 50;
-$maxBytes = 8192;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--remote') {
-        $remote = true;
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--request=')) {
-        $request = \max(1, (int) \substr($arg, 10));
-    } elseif (\str_starts_with($arg, '--part=')) {
-        $part = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--limit=')) {
-        $limit = \max(0, (int) \substr($arg, 8));
-    } elseif (\str_starts_with($arg, '--maxBytes=')) {
-        $maxBytes = \max(0, (int) \substr($arg, 11));
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-        $framesGiven = true;
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--from=')) {
-        $from = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--out=')) {
-        $out = \substr($arg, 6);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
-
-$label = $from !== null ? \basename($from) : ($page ?? $target);
+$args = Commands::parseOrExit('network', $argv);
+$from = $args->str('from');
+$out = $args->str('out');
+$at = $args->at();
+$remote = $args->bool('remote');
+$json = $args->bool('json');
+$request = $args->has('request') ? $args->int('request') : null;
+$part = $args->str('part') ?? 'both';
+$limit = $args->int('limit');
+$maxBytes = $args->int('maxBytes');
+$label = $args->label();
 if ($label === null) {
     \fwrite(\STDERR, "用法：debug-network <AppClass|路由id> [--page=<路由id>] [--frames=N] [--request=N] [--json]\n");
     \fwrite(\STDERR, "      debug-network --from=<证据包> [--request=N] [--json]\n");
@@ -131,21 +71,9 @@ $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both'
 $session = null;
 $source = null;
 try {
-    if ($from !== null && ($page !== null || $target !== null || $steps !== [] || $framesGiven || $at !== null)) {
-        // 留在出口：`--at` / `--frames` 是本出口的词，`Source` 看不见它们。
-        throw new \InvalidArgumentException(
-            '--from 与 --page / 目标 / --frames / --at / 驱动参数互斥：包里已经有完整的驱动记录',
-        );
-    }
-
     $drive = null;
     if ($from === null) {
-        $meta = $rows > 0 ? ['rows' => $rows] : [];
-        if ($page !== null) {
-            $meta['page'] = 1;
-        }
-
-        $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+        $drive = $args->script();
     }
 
     $source = Source::resolve(

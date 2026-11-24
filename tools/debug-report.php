@@ -49,87 +49,34 @@ use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Digest;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Step;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\View\TreeRows;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;
 
-$target = null;
-$page = null;
-$frames = 1;
-$width = 800;
-$height = 600;
-$widthSet = false;
-$heightSet = false;
-$json = false;
-$top = 10;
-$depth = 6;
-$why = null;
-$whyFrame = null;
-$rows = 0;
-$rowsSet = false;
-$hold = 1;
-$at = null;
-$savePath = null;
-$replayPath = null;
-$verify = false;
-$remote = false;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--verify') {
-        $verify = true;
-    } elseif ($arg === '--remote') {
-        $remote = true;
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--width=')) {
-        $width = \max(1, (int) \substr($arg, 8));
-        $widthSet = true;
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-        $heightSet = true;
-    } elseif (\str_starts_with($arg, '--top=')) {
-        $top = \max(1, (int) \substr($arg, 6));
-    } elseif (\str_starts_with($arg, '--depth=')) {
-        $depth = \max(1, (int) \substr($arg, 8));
-    } elseif (\str_starts_with($arg, '--why=')) {
-        $why = (int) \substr($arg, 6);
-    } elseif (\str_starts_with($arg, '--frame=')) {
-        $whyFrame = (int) \substr($arg, 8);
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-        $rowsSet = true;
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--save=')) {
-        $savePath = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--replay=')) {
-        $replayPath = \substr($arg, 9);
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
+$args = Commands::parseOrExit('report', $argv);
+$target = $args->target();
+$page = $args->str('page');
+$json = $args->bool('json');
+$verify = $args->bool('verify');
+$remote = $args->bool('remote');
+$frames = $args->int('frames');
+$width = (int) $args->float('view-width');
+$height = (int) $args->float('height');
+$widthSet = $args->has('view-width');
+$heightSet = $args->has('height');
+$top = $args->int('top');
+$depth = $args->int('depth');
+$why = $args->has('why') ? $args->int('why') : null;
+$whyFrame = $args->has('frame') ? $args->int('frame') : null;
+$hold = $args->int('hold');
+$rows = $args->int('rows');
+$rowsSet = $args->has('rows');
+$at = $args->at();
+$savePath = $args->str('save');
+$replayPath = $args->str('replay');
+$steps = $args->steps();
 
 // ---------------------------------------------------------------- 脚本：读入
 //

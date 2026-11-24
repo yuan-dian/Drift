@@ -32,8 +32,8 @@ declare(strict_types=1);
  *   --attach          接一个已经在跑的会话（`drift debug serve` 起的），只读不驱动
  *   --session=<id>    同一目录有多个会话时点名；不给且不止一个就报错列出候选
  *   --budget=N        行预算（默认 40）
- *   --width=N         排版宽度（默认 100）
- *   --view-width=N    视口宽度（默认 800；布局复现用，别与排版宽度混）
+ *   --width=N / --view-width=N  视口宽度（默认 800；十个出口只有一个意思）
+ *   --text-width=N    排版宽度（默认 100；与视口宽度是两件事）
  *   --height=N        视口高度（默认 600）
  *   --slow=<ms>       慢帧阈值（默认 16.7；表头显示的三项都可配）
  *   --fanout=<节点数> 扇出阈值（默认 100）
@@ -46,104 +46,32 @@ declare(strict_types=1);
 require __DIR__ . '/autoload.php';
 
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Brief;
 use Drift\Dev\Debug\View\BriefText;
 use Drift\Dev\Debug\View\Facts;
 use Drift\Dev\Debug\View\Web;
 
-$target = null;
-$page = null;
-$frames = 1;
-$framesGiven = false;
-$from = null;
-$out = null;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$remote = false;
-$attach = false;
-$sessionId = null;
-$json = false;
-$budget = 40;
-$thresholds = Thresholds::default();
-$textWidth = 100;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
-
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--remote') {
-        $remote = true;
-    } elseif ($arg === '--attach') {
-        $attach = true;
-    } elseif (\str_starts_with($arg, '--session=')) {
-        $sessionId = \substr($arg, 10);
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-        $framesGiven = true;
-    } elseif (\str_starts_with($arg, '--from=')) {
-        $from = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--out=')) {
-        $out = \substr($arg, 6);
-    } elseif (\str_starts_with($arg, '--width=')) {
-        $textWidth = \max(40, (int) \substr($arg, 8));
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--budget=')) {
-        $budget = \max(8, (int) \substr($arg, 9));
-    // 只开放表头显示的那三项：表头写什么，就该能配什么。其余五项
-    // （扇出集中度 / 同形组份数 / 约束改写三项）等有消费者再开口子。
-    } elseif (\str_starts_with($arg, '--slow=')) {
-        $thresholds = $thresholds->with(['slowMs' => (float) \substr($arg, 7)]);
-    } elseif (\str_starts_with($arg, '--fanout=')) {
-        $thresholds = $thresholds->with(['fanoutNodes' => (int) \substr($arg, 9)]);
-    } elseif (\str_starts_with($arg, '--repeat=')) {
-        $thresholds = $thresholds->with(['repeatPercent' => (int) \substr($arg, 9)]);
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
-}
-
-$label = $from !== null ? \basename($from) : ($page ?? $target);
+$args = Commands::parseOrExit('brief', $argv);
+$from = $args->str('from');
+$out = $args->str('out');
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+$at = $args->at();
+$remote = $args->bool('remote');
+$json = $args->bool('json');
+$budget = $args->int('budget');
+$textWidth = $args->int('text-width');
+// 只开放表头显示的那三项：表头写什么，就该能配什么。
+$thresholds = Thresholds::default()
+    ->with(['slowMs' => $args->float('slow')])
+    ->with(['fanoutNodes' => $args->int('fanout')])
+    ->with(['repeatPercent' => $args->int('repeat')]);
+$label = $args->label();
 
 $source = null;
 try {
-    if ($from !== null && ($page !== null || $target !== null || $steps !== [] || $framesGiven)) {
-        // 这条留在出口而不搬进 `Source`：`--frames` / 驱动动作是**出口自己的**词，
-        // `Source` 只认"要不要跑"这个意图，看不见"给了帧数却没给页面"。
-        throw new \InvalidArgumentException(
-            '--from 与 --page / 目标 / --frames / 驱动参数互斥：包里已经有完整的驱动记录',
-        );
-    }
-
     $drive = null;
     if ($from === null && !$attach) {
         if ($label === null) {
@@ -153,12 +81,7 @@ try {
             exit(2);
         }
 
-        $meta = $rows > 0 ? ['rows' => $rows] : [];
-        if ($page !== null) {
-            $meta['page'] = 1;
-        }
-
-        $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+        $drive = $args->script();
     }
 
     $source = Source::resolve(

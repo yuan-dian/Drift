@@ -41,74 +41,39 @@ use Drift\App\DebugSession;
 use Drift\Debug\Session\Evidence;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Session;
-use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Reopen;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\LoopReport;
 
-$target = null;
-$page = null;
-$frames = 1;
-$runs = 3;
-$width = 800;
-$height = 600;
-$rows = 0;
-$hold = 1;
-$at = null;
-$out = null;
-$json = false;
-$assert = false;
-/** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
-$steps = [];
+$args = Commands::parseOrExit('loop', $argv);
+$out = $args->str('out');
+$at = $args->at();
+$json = $args->bool('json');
+$assert = $args->bool('assert');
+$runs = $args->int('runs');
+$width = $args->float('view-width');
+$height = $args->float('height');
+$meta = $args->meta();
+$label = $args->label();
 
-foreach (\array_slice($argv, 1) as $arg) {
-    if ($arg === '--json') {
-        $json = true;
-    } elseif ($arg === '--assert') {
-        $assert = true;
-    } elseif ($arg === '--resolve') {
-        $steps[] = ['resolve', ''];
-    } elseif (\str_starts_with($arg, '--runs=')) {
-        $runs = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--frames=')) {
-        $frames = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--out=')) {
-        $out = \substr($arg, 6);
-    } elseif (\str_starts_with($arg, '--view-width=')) {
-        $width = \max(1, (int) \substr($arg, 13));
-    } elseif (\str_starts_with($arg, '--height=')) {
-        $height = \max(1, (int) \substr($arg, 9));
-    } elseif (\str_starts_with($arg, '--rows=')) {
-        $rows = \max(0, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--hold=')) {
-        $hold = \max(1, (int) \substr($arg, 7));
-    } elseif (\str_starts_with($arg, '--at=')) {
-        $at = \max(1, (int) \substr($arg, 5));
-    } elseif (\str_starts_with($arg, '--page=')) {
-        $page = \substr($arg, 7);
-    } elseif (\str_starts_with($arg, '--key=')) {
-        $steps[] = ['key', \substr($arg, 6)];
-    } elseif (\str_starts_with($arg, '--text=')) {
-        $steps[] = ['text', \substr($arg, 7)];
-    } elseif (\str_starts_with($arg, '--click=')) {
-        $steps[] = ['click', \substr($arg, 8)];
-    } elseif (\str_starts_with($arg, '--wheel=')) {
-        $steps[] = ['wheel', \substr($arg, 8)];
-    } elseif ($arg === '--remote' || $arg === '--from' || $arg === '--attach' || \str_starts_with($arg, '--from=')) {
-        // 三条都指向"另一个会话"，而 loop 要的恰恰是"若干个本进程的新会话"。
-        // 不静默忽略：忽略之后报告会看起来正常，只是测的不是他想测的东西。
-        \fwrite(\STDERR, "loop 不支持 {$arg}：它每轮都要在本进程里重建应用，"
-            . "接别人的会话或读离线包都做不到这件事\n");
-        exit(2);
-    } elseif (\str_starts_with($arg, '--')) {
-        \fwrite(\STDERR, "未知参数：{$arg}\n");
-        exit(2);
-    } else {
-        $target = $arg;
-    }
+// 三条都指向"另一个会话"，而 loop 要的恰恰是"若干个本进程的新会话"。
+// 不静默忽略：忽略之后报告会看起来正常，只是测的不是他想测的东西。
+$rejected = [];
+if ($args->bool('remote')) {
+    $rejected[] = '--remote';
 }
-
-$label = $page ?? $target;
+if ($args->has('from')) {
+    $rejected[] = '--from';
+}
+if ($args->bool('attach')) {
+    $rejected[] = '--attach';
+}
+if ($rejected !== []) {
+    \fwrite(\STDERR, 'loop 不支持 ' . \implode(' / ', $rejected) . "：它每轮都要在本进程里重建应用，"
+        . "接别人的会话或读离线包都做不到这件事\n");
+    exit(2);
+}
 if ($label === null) {
     \fwrite(\STDERR, "用法：debug-loop <AppClass|路由id> [--page=<路由id>] [--runs=N] [--json]\n");
     exit(2);
@@ -118,13 +83,8 @@ if ($assert && $runs < 2) {
     exit(2);
 }
 
-$meta = $rows > 0 ? ['rows' => $rows] : [];
-if ($page !== null) {
-    $meta['page'] = 1;
-}
-
 try {
-    $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+    $drive = $args->script();
 
     // 每轮一个新应用：这正是 loop 与被否决的"复用应用"方案的唯一区别，
     // 而它必须是这里的默认，不是选项——给用户开关等于给他一个拿到假结论的捷径。
