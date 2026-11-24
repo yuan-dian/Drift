@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Unit\Debug;
 
 use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Brief;
+use Drift\Dev\Debug\View\BriefText;
 use Drift\Dev\Debug\View\Finding;
 use PHPUnit\Framework\TestCase;
 
@@ -208,7 +209,7 @@ final class BriefTest extends TestCase
             'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 2],
         ]);
 
-        $line = \end(Brief::project($facts, 40, 100)['lines']);
+        $line = \end(BriefText::render($facts, Brief::project($facts), 40, 100)['lines']);
 
         self::assertStringNotContainsString('（完整）', $line, $line);
         self::assertStringContainsString('7 处未展开', $line, $line);
@@ -227,7 +228,7 @@ final class BriefTest extends TestCase
             'cascade' => self::cascade([self::node(1, 'PageShell', [], ['cut' => true])]),
             'cascadeQuery' => ['frame' => 1, 'maxDepth' => 4, 'maxChildren' => 0],
         ]);
-        $deepLine = \end(Brief::project($deep, 40, 100)['lines']);
+        $deepLine = \end(BriefText::render($deep, Brief::project($deep), 40, 100)['lines']);
         self::assertStringContainsString('扫到第 1 层', $deepLine);
         self::assertStringContainsString('1 处未展开', $deepLine);
         self::assertStringContainsString('maxDepth=4', $deepLine);
@@ -236,7 +237,7 @@ final class BriefTest extends TestCase
             'cascade' => self::cascade([self::node(1, 'PageShell', [self::node(2, 'Text')])]),
             'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 0],
         ]);
-        $wholeLine = \end(Brief::project($whole, 40, 100)['lines']);
+        $wholeLine = \end(BriefText::render($whole, Brief::project($whole), 40, 100)['lines']);
         self::assertStringContainsString('扫到第 2 层（完整）', $wholeLine);
     }
 
@@ -260,8 +261,8 @@ final class BriefTest extends TestCase
             'cascadeQuery' => ['frame' => 3, 'maxDepth' => 12, 'maxChildren' => 0],
         ]);
 
-        $first = Brief::project($facts, 40, 100);
-        $second = Brief::project($facts, 40, 100);
+        $first = BriefText::render($facts, Brief::project($facts), 40, 100);
+        $second = BriefText::render($facts, Brief::project($facts), 40, 100);
 
         self::assertSame($first['lines'], $second['lines']);
         self::assertSame($first['omitted'], $second['omitted']);
@@ -312,7 +313,7 @@ final class BriefTest extends TestCase
             'nodes' => [['id' => 1, 'path' => 'A > B', 'rebuilds' => 8, 'self' => 8, 'inherited' => 0]],
         ]);
 
-        $tight = Brief::project($facts, 8, 100);
+        $tight = BriefText::render($facts, Brief::project($facts), 8, 100);
         $tail = \end($tight['lines']);
 
         self::assertGreaterThan(0, $tight['omitted']['findings'], '发现超出预算时要记账');
@@ -514,13 +515,13 @@ final class BriefTest extends TestCase
     /** 裁剪账要写几何扫了哪一帧，不能只写因果树。 */
     public function testOmissionLineStatesGeometryScope(): void
     {
-        $covered = \end(Brief::project(self::facts(), 40, 100)['lines']);
+        $covered = \end(BriefText::render(self::facts(), Brief::project(self::facts()), 40, 100)['lines']);
         self::assertStringContainsString('几何覆盖 #1', (string) $covered);
 
         $missed = self::facts(['geometry' => self::geometry([], ['frame' => 5, 'window' => [
             'frames' => 1, 'capacity' => 60, 'from' => 10, 'to' => 12, 'nodes' => 1,
         ]])]);
-        $tail = \end(Brief::project($missed, 40, 100)['lines']);
+        $tail = \end(BriefText::render($missed, Brief::project($missed), 40, 100)['lines']);
         self::assertStringContainsString('几何窗口 #10–#12 不含 #5', (string) $tail);
     }
 
@@ -539,12 +540,14 @@ final class BriefTest extends TestCase
             ]),
         ]);
 
-        $first = Brief::project($facts, 40, 100);
-        $second = Brief::project($facts, 40, 100);
+        $p1 = Brief::project($facts);
+        $p2 = Brief::project($facts);
+        $first = BriefText::render($facts, $p1, 40, 100);
+        $second = BriefText::render($facts, $p2, 40, 100);
         self::assertSame($first['lines'], $second['lines']);
         self::assertSame(
-            \json_encode($first['findings']),
-            \json_encode($second['findings']),
+            \json_encode(\array_map(static fn($f): array => $f->toArray(), $p1['findings'])),
+            \json_encode(\array_map(static fn($f): array => $f->toArray(), $p2['findings'])),
         );
     }
 

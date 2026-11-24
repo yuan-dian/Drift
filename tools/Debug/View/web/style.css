@@ -1,0 +1,154 @@
+/* 调试面板的配色：中性深色，与行业惯例一致（看图，不读品牌）。 */
+:root {
+  --bg: #1b1b1d;
+  --panel: #232326;
+  --line: #34343a;
+  --text: #d6d6d8;
+  --dim: #8a8a92;
+  --accent: #4ec9b0;
+  --warn: #e2b341;
+  --bad: #e06c75;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+body { display: flex; flex-direction: column; }
+
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+
+.spacer { flex: 1; }
+.dim { color: var(--dim); }
+.small { font-size: 12px; }
+.mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+
+.chip {
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--accent);
+}
+
+button {
+  background: #2c2c31;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+button:hover { border-color: var(--accent); color: var(--accent); }
+button[disabled] { opacity: .4; cursor: default; }
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 320px;
+  /* flex 子项默认 min-height:auto，会让内容把整页撑得比窗口高，画布跟着溢出。 */
+  min-height: 0;
+  overflow: hidden;
+}
+
+section {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+section:last-child { border-right: 0; }
+
+h2 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--dim);
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+/* 发现 */
+#findingList { margin: 0; padding-left: 18px; }
+#findingList li { margin-bottom: 10px; cursor: pointer; }
+#findingList li:hover .title { color: var(--accent); }
+#findingList .title { display: block; }
+#findingList .addr {
+  color: var(--dim);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+
+/* 画布 */
+#stage {
+  padding: 0;
+  position: relative;
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+#canvas { flex: 1; display: block; min-width: 0; min-height: 0; }
+#hint {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  pointer-events: none;
+  background: rgba(27, 27, 29, .82);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+/* 节点面板 */
+#crumbs { color: var(--dim); margin-bottom: 8px; word-break: break-all; }
+#crumbs b { color: var(--text); cursor: pointer; font-weight: 500; }
+#crumbs b:hover { color: var(--accent); }
+#children { margin-bottom: 12px; }
+#children .child {
+  display: block;
+  cursor: pointer;
+  padding: 1px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#children .child:hover { color: var(--accent); }
+#card { border-top: 1px solid var(--line); padding-top: 10px; }
+#card table { border-collapse: collapse; width: 100%; }
+#card th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--dim);
+  padding: 2px 8px 2px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+#card td { font-family: ui-monospace, Consolas, monospace; padding: 2px 0; }
+#card .box {
+  margin: 6px 0 10px;
+  padding: 6px 8px;
+  background: #1f1f22;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+}

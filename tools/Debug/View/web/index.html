@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drift 证据</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header id="bar">
+  <strong id="label">…</strong>
+  <span id="window" class="dim"></span>
+  <span id="digest" class="mono dim"></span>
+  <span id="thresholds" class="dim"></span>
+  <span id="state" class="chip"></span>
+  <span class="spacer"></span>
+  <span id="ctl" class="ctl" hidden>
+    <button data-act="pause">暂停</button>
+    <button data-act="step">单步</button>
+    <button data-act="resume">继续</button>
+  </span>
+  <button id="refresh">刷新</button>
+</header>
+
+<main>
+  <section id="findings">
+    <h2>发现 <span id="findingCount" class="dim"></span></h2>
+    <ol id="findingList"></ol>
+    <p id="coverage" class="dim small"></p>
+  </section>
+
+  <section id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="hint" class="dim small"></div>
+  </section>
+
+  <section id="side">
+    <h2>节点 <span id="selected" class="mono"></span></h2>
+    <div id="crumbs" class="small"></div>
+    <div id="children" class="small"></div>
+    <div id="card"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -35,17 +35,23 @@ declare(strict_types=1);
  *   --width=N         排版宽度（默认 100）
  *   --view-width=N    视口宽度（默认 800；布局复现用，别与排版宽度混）
  *   --height=N        视口高度（默认 600）
- *   --json            输出结构化结果（发现 + 裁剪账 + 指纹）
+ *   --slow=<ms>       慢帧阈值（默认 16.7；表头显示的三项都可配）
+ *   --fanout=<节点数> 扇出阈值（默认 100）
+ *   --repeat=<百分比> 重复重建阈值（默认 50）
+ *   --json            输出结构化结果（发现 + 裁剪账 + 指纹；不含排版行）
  *
  * @internal 未进 VerifyPlan：规则阈值还在定，进 CI 会变成"改阈值就红一片"
  */
 
 require __DIR__ . '/autoload.php';
 
-use Drift\Debug\Session\SessionQueries;
+use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Brief;
+use Drift\Dev\Debug\View\BriefText;
+use Drift\Dev\Debug\View\Facts;
+use Drift\Dev\Debug\View\Web;
 
 $target = null;
 $page = null;
@@ -63,6 +69,7 @@ $attach = false;
 $sessionId = null;
 $json = false;
 $budget = 40;
+$thresholds = Thresholds::default();
 $textWidth = 100;
 /** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
 $steps = [];
@@ -99,6 +106,14 @@ foreach (\array_slice($argv, 1) as $arg) {
         $at = \max(1, (int) \substr($arg, 5));
     } elseif (\str_starts_with($arg, '--budget=')) {
         $budget = \max(8, (int) \substr($arg, 9));
+    // 只开放表头显示的那三项：表头写什么，就该能配什么。其余五项
+    // （扇出集中度 / 同形组份数 / 约束改写三项）等有消费者再开口子。
+    } elseif (\str_starts_with($arg, '--slow=')) {
+        $thresholds = $thresholds->with(['slowMs' => (float) \substr($arg, 7)]);
+    } elseif (\str_starts_with($arg, '--fanout=')) {
+        $thresholds = $thresholds->with(['fanoutNodes' => (int) \substr($arg, 9)]);
+    } elseif (\str_starts_with($arg, '--repeat=')) {
+        $thresholds = $thresholds->with(['repeatPercent' => (int) \substr($arg, 9)]);
     } elseif (\str_starts_with($arg, '--page=')) {
         $page = \substr($arg, 7);
     } elseif (\str_starts_with($arg, '--key=')) {
@@ -157,24 +172,21 @@ try {
     );
     $label = $source->label();
 
-    $facts = gather($source->queries(), $label);
+    $facts = Facts::gather($source->queries(), $label);
 
     // 导出放在取事实之后：几何是帧末采的，早于最后一帧导出会少一段。
     $source->export();
-    $brief = Brief::project($facts, $budget, $textWidth);
+
+    $projection = Brief::project($facts, $thresholds);
+    $brief = BriefText::render($facts, $projection, $budget, $textWidth);
 
     if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode([
-            'label' => $label,
-            'window' => $facts['window'],
-            'digest' => $facts['digest']['digest'] ?? '',
-            'findings' => \array_map(
-                static fn(\Drift\Dev\Debug\View\Finding $one): array => $one->toArray(),
-                $brief['findings'],
-            ),
-            'omitted' => $brief['omitted'],
-            'lines' => $brief['lines'],
-        ], \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT) . "\n");
+        // 与 `debug web` 的 `/api/brief` 是**同一份**：投影 + 裁剪，不含排版行。
+        // 把它做成同一个函数（见 Web::brief()）而不是两处拼装，是 B4 §9 判据 1 的前提。
+        \fwrite(\STDOUT, (string) \json_encode(
+            Web::brief($label, $facts, $projection) + ['omitted' => $brief['omitted']],
+            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
+        ) . "\n");
     } else {
         foreach ($brief['lines'] as $line) {
             \fwrite(\STDOUT, $line . "\n");
@@ -185,78 +197,4 @@ try {
     exit(2);
 } finally {
     $source?->close();
-}
-
-/**
- * 从查询面取事实。**不碰 `Recorder`** —— 远端会话没有它。
- *
- * `limit: 0` 是"不截断"（查询层对 0 的约定）。这一条是自报裁剪的前提：
- * 裁剪只能发生在投影层，由查询层先截断的话，投影层就数不出自己裁了多少。
- *
- * @return array<string, mixed>
- */
-function gather(SessionQueries $session, string $label): array
-{
-    $stats = $session->query('stats');
-    // `frames` 自 schema 收口后返回信封（`frames` / `window` / `dropped`）：裸列表在类型上
-    // 表达不了"漏了 N 帧"，而简报的每个数字都要能说清自己覆盖了哪一段。
-    $framePage = $session->query('frames', ['limit' => 0]);
-    $frames = $framePage['frames'];
-    // `frames: 0` 与 `limit: 0` 是两件事：前者是**聚合窗口**（默认只看最近 300 帧），
-    // 后者是**返回条数**（默认 10 条）。只关掉后者，聚合仍然只数最近 300 帧 ——
-    // 而表头写的是整个窗口，"出现 3 帧"就会与 `frames` 的帧数对不上。
-    // 两处都归零，简报里的每个数字才都能回溯到同一批帧。
-    $hotspots = $session->query('hotspots', ['frames' => 0, 'limit' => 0]);
-    $nodes = $session->query('nodes', ['frames' => 0, 'limit' => 0]);
-    $digest = $session->query('digest');
-
-    $ids = [];
-    $worst = 0;
-    $worstCost = -1.0;
-    foreach ($frames as $frame) {
-        $ids[] = (int) $frame['id'];
-        $cost = (float) ($frame['cost'] ?? 0.0);
-        if ($cost > $worstCost) {
-            $worstCost = $cost;
-            $worst = (int) $frame['id'];
-        }
-    }
-
-    $facts = [
-        'label' => $label,
-        'stats' => $stats,
-        'frames' => $frames,
-        'hotspots' => $hotspots,
-        'nodes' => $nodes,
-        'digest' => $digest,
-        'window' => [
-            'from' => $ids === [] ? 0 : $ids[0],
-            'to' => $ids === [] ? 0 : $ids[\count($ids) - 1],
-            'count' => \count($ids),
-            'capacity' => (int) ($stats['capacity'] ?? 0),
-        ],
-    ];
-
-    if ($worst > 0) {
-        $facts['explain'] = $session->query('explain', ['frame' => $worst]);
-        // 因果树要**全量**（`maxChildren: 0`）：截断交给投影层，它才知道裁了多少。
-        // 深度给 12：同形组常常在第三、第四层（表格页是 `Card > Column > SizedBox ×12`），
-        // 只给 2 层就永远看不到"列表没虚拟化"这一类。
-        //
-        // ★ 请求的深度要**原样记进 facts**：投影层据此判断"规则看到的是不是完整的树"。
-        //   规则自己不许另设一个深度上限 —— 两边各写一个常量，迟早打架，而打架的
-        //   表现形式是"报告显示没问题"。
-        $cascadeQuery = ['frame' => $worst, 'maxDepth' => 12, 'maxChildren' => 0];
-        $facts['cascadeQuery'] = $cascadeQuery;
-        $facts['cascade'] = $session->query('cascade', $cascadeQuery);
-    }
-
-    // 几何读同一个最贵帧：布局的"为什么"要与因果的"为什么"对齐到一帧，
-    // 否则报告里 `frame:2 node:61` 的两种答案来自两次运行。
-    // 走查询面而不是摸 Recorder —— 远端会话没有后者。
-    $facts['geometry'] = $worst > 0
-        ? $session->query('boxes', ['frame' => $worst])
-        : $session->query('boxes');
-
-    return $facts;
 }

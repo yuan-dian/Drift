@@ -81,7 +81,7 @@ final class Brief
         }
 
         if ($found === []) {
-            $window = self::mapOf($facts, 'window');
+            $window = Facts::mapOf($facts, 'window');
             $cov = self::coverage($facts);
             $address = \sprintf('window:%d-%d', (int) ($window['from'] ?? 0), (int) ($window['to'] ?? 0));
 
@@ -120,60 +120,26 @@ final class Brief
     }
 
     /**
-     * 投影：事实 + 预算 → 行 + 裁剪账。
+     * 投影：事实 → 结论。**只排序，不裁剪**。
+     *
+     * 裁剪仍然会发生，但它属于呈现：终端受 40 行预算约束，Web 能滚动。把预算塞进
+     * 这里的后果是签名里多两个排版参数（`budget` / `width`），而"同一份证据给同一
+     * 结论"与行宽毫无关系 —— 第二个消费者进来时，它得先假装自己有 100 列。
+     *
+     * `coverage` 一并给出。裁剪账要写"规则看全了没有"，而那是投影算的统计；
+     * 呈现层自己再算一遍必然漂，漂的表现是"报告说扫全了，其实是猜的"。
      *
      * @param array<string, mixed> $facts
-     * @return array{lines: list<string>, omitted: array<string, int|string>, findings: list<Finding>}
+     * @return array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>}
      */
-    public static function project(array $facts, int $budget = 40, int $width = 100, ?Thresholds $t = null): array
+    public static function project(array $facts, ?Thresholds $t = null): array
     {
         $t ??= Thresholds::default();
-        $findings = self::findings($facts, $t);
-        $head = self::header($facts, $width, $t);
-        $detail = self::detail($facts, $width);
-
-        // 固定开销：表头三行 + "发现 N 条" + 空行 + 裁剪账一行。
-        $fixed = \count($head) + 3;
-        $room = \max(1, $budget - $fixed);
-
-        // 发现优先：每条一行，超了就截，但至少留一条（"没有发现"也是一种结论）。
-        $shown = $findings;
-        $droppedFindings = 0;
-        if (\count($shown) > $room) {
-            $kept = \max(1, $room - 1);
-            $droppedFindings = \count($shown) - $kept;
-            $shown = \array_slice($shown, 0, $kept);
-        }
-
-        $detailRoom = \max(0, $room - \count($shown));
-        $shownDetail = \array_slice($detail, 0, $detailRoom);
-        $droppedDetail = \count($detail) - \count($shownDetail);
-
-        $tail = self::omissions($facts, $droppedFindings, $droppedDetail, $width);
-
-        $lines = $head;
-        $lines[] = \sprintf('发现 %d 条%s', \count($findings), $droppedFindings > 0 ? \sprintf('（显示 %d 条）', \count($shown)) : '');
-        foreach ($shown as $one) {
-            $lines[] = '  ' . $one->line($width - 2);
-        }
-        if ($shownDetail !== []) {
-            $lines[] = '';
-            foreach ($shownDetail as $line) {
-                $lines[] = $line;
-            }
-        }
-        $lines[] = '';
-        $lines[] = $tail;
 
         return [
-            'lines' => $lines,
-            'omitted' => [
-                'findings' => $droppedFindings,
-                'detail' => $droppedDetail,
-                'budget' => $budget,
-                'rows' => \count($lines),
-            ],
-            'findings' => $findings,
+            'findings' => self::findings($facts, $t),
+            'coverage' => self::coverage($facts),
+            'thresholds' => $t->toArray(),
         ];
     }
 
@@ -186,7 +152,7 @@ final class Brief
     private static function slowFindings(array $facts, Thresholds $t): array
     {
         $slow = [];
-        foreach (self::listOf($facts, 'frames') as $frame) {
+        foreach (Facts::listOf($facts, 'frames') as $frame) {
             if ((float) ($frame['cost'] ?? 0.0) > $t->slowMs) {
                 $slow[] = $frame;
             }
@@ -215,7 +181,7 @@ final class Brief
     /** @param array<string, mixed> $facts */
     private static function stageFinding(array $facts): ?Finding
     {
-        $explain = self::mapOf($facts, 'explain');
+        $explain = Facts::mapOf($facts, 'explain');
         $frameId = (int) ($explain['id'] ?? 0);
         $cost = (float) ($explain['cost'] ?? 0.0);
         if ($frameId <= 0 || $cost <= 0.0) {
@@ -225,7 +191,7 @@ final class Brief
         // `stageMs` 已按耗时降序（记录层做的），取第一段就是最大段。
         $name = '';
         $ms = 0.0;
-        foreach (self::mapOf($explain, 'stageMs') as $stage => $value) {
+        foreach (Facts::mapOf($explain, 'stageMs') as $stage => $value) {
             $name = (string) $stage;
             $ms = (float) $value;
             break;
@@ -255,13 +221,13 @@ final class Brief
      */
     private static function fanoutFindings(array $facts, Thresholds $t): array
     {
-        $cascade = self::mapOf($facts, 'cascade');
+        $cascade = Facts::mapOf($facts, 'cascade');
         $rebuilt = (int) ($cascade['rebuilt'] ?? 0);
         if ($rebuilt < $t->fanoutNodes) {
             return [];
         }
 
-        $roots = self::listOf($cascade, 'roots');
+        $roots = Facts::listOf($cascade, 'roots');
         if ($roots === []) {
             return [];
         }
@@ -308,8 +274,8 @@ final class Brief
      */
     private static function groupFinding(array $facts, Thresholds $t): ?Finding
     {
-        $cascade = self::mapOf($facts, 'cascade');
-        $roots = self::listOf($cascade, 'roots');
+        $cascade = Facts::mapOf($facts, 'cascade');
+        $roots = Facts::listOf($cascade, 'roots');
         if ($roots === []) {
             return null;
         }
@@ -363,7 +329,7 @@ final class Brief
                 $best = $node;
                 $bestCount = $count;
             }
-            $kids = self::listOf($node, 'children');
+            $kids = Facts::listOf($node, 'children');
             if ($kids === []) {
                 continue;
             }
@@ -384,7 +350,7 @@ final class Brief
      */
     private static function repeatFindings(array $facts, Thresholds $t): array
     {
-        $window = self::mapOf($facts, 'window');
+        $window = Facts::mapOf($facts, 'window');
         $count = (int) ($window['count'] ?? 0);
         if ($count < 5) {
             return [];
@@ -392,7 +358,7 @@ final class Brief
 
         $need = (int) \ceil($count * $t->repeatPercent / 100);
         $out = [];
-        foreach (self::listOf($facts, 'nodes') as $node) {
+        foreach (Facts::listOf($facts, 'nodes') as $node) {
             $rebuilds = (int) ($node['rebuilds'] ?? 0);
             if ($rebuilds < $need) {
                 continue;
@@ -401,7 +367,7 @@ final class Brief
                 'repeat-rebuild',
                 \sprintf(
                     '%s 在 %d/%d 帧都重建（自写 %d 次）',
-                    self::tailPath((string) ($node['path'] ?? ('#' . $node['id'])), 48),
+                    Fit::tailPath((string) ($node['path'] ?? ('#' . $node['id'])), 48),
                     $rebuilds,
                     $count,
                     (int) ($node['self'] ?? 0),
@@ -437,8 +403,8 @@ final class Brief
      */
     private static function reshapeFindings(array $facts, Thresholds $t): array
     {
-        $geometry = self::mapOf($facts, 'geometry');
-        $rows = self::listOf($geometry, 'rows');
+        $geometry = Facts::mapOf($facts, 'geometry');
+        $rows = Facts::listOf($geometry, 'rows');
         if ($rows === []) {
             return [];
         }
@@ -535,9 +501,9 @@ final class Brief
         $key = $axis === 'w' ? 'maxW' : 'maxH';
         $sizeKey = $axis === 'w' ? 'w' : 'h';
 
-        $offered = self::finiteMax(self::mapOf($parent, 'inner'), $key);
-        $received = self::finiteMax(self::mapOf($row, 'applied'), $key);
-        $actual = self::finiteMax(self::mapOf($row, 'size'), $sizeKey);
+        $offered = self::finiteMax(Facts::mapOf($parent, 'inner'), $key);
+        $received = self::finiteMax(Facts::mapOf($row, 'applied'), $key);
+        $actual = self::finiteMax(Facts::mapOf($row, 'size'), $sizeKey);
         if ($offered === null || $received === null || $actual === null
             || $offered <= 0.0 || $actual < $t->reshapeMinSize) {
             return null;
@@ -548,7 +514,7 @@ final class Brief
             || \abs($delta) * 100.0 < $t->reshapePercent * $offered) {
             return null;
         }
-        $box = self::finiteMax(self::mapOf($row, 'box'), $sizeKey);
+        $box = self::finiteMax(Facts::mapOf($row, 'box'), $sizeKey);
 
         return [
             'node' => (int) ($row['node'] ?? 0),
@@ -575,10 +541,10 @@ final class Brief
      */
     private static function geometryGapFinding(array $facts): ?Finding
     {
-        $geometry = self::mapOf($facts, 'geometry');
-        $rows = self::listOf($geometry, 'rows');
+        $geometry = Facts::mapOf($facts, 'geometry');
+        $rows = Facts::listOf($geometry, 'rows');
         $frame = (int) ($geometry['frame'] ?? 0);
-        $window = self::mapOf($geometry, 'window');
+        $window = Facts::mapOf($geometry, 'window');
         $from = (int) ($window['from'] ?? 0);
         $to = (int) ($window['to'] ?? 0);
         if ($rows !== [] && ($from === 0 || $frame === 0 || $from <= $frame)) {
@@ -630,8 +596,8 @@ final class Brief
      */
     private static function coverage(array $facts): array
     {
-        $cascade = self::mapOf($facts, 'cascade');
-        $roots = self::listOf($cascade, 'roots');
+        $cascade = Facts::mapOf($facts, 'cascade');
+        $roots = Facts::listOf($cascade, 'roots');
         if ($roots === []) {
             // 没有树 = 这一帧没有重建，不是"没查到"。空树本身是完整的 ——
             // 除非帧自己标了不完整（异常中断 / 因果边超限），那时"没有重建"
@@ -651,7 +617,7 @@ final class Brief
         $cut = 0;
         $nested = 0;
         $seen = self::depthScan($roots, 1, $cut, $nested);
-        $requested = (int) (self::mapOf($facts, 'cascadeQuery')['maxDepth'] ?? $seen);
+        $requested = (int) (Facts::mapOf($facts, 'cascadeQuery')['maxDepth'] ?? $seen);
 
         // 顶层 `omitted` / `hidden` 是**根层**被 `maxChildren` 裁掉的（同层分支太多），
         // 那些根根本不在 `roots` 里，递归扫不到，只能单独补。
@@ -685,8 +651,8 @@ final class Brief
     private static function brokenFrames(array $facts): array
     {
         $kinds = [];
-        foreach (self::listOf($facts, 'frames') as $frame) {
-            foreach (self::listOf($frame, 'incomplete') as $kind) {
+        foreach (Facts::listOf($facts, 'frames') as $frame) {
+            foreach (Facts::listOf($frame, 'incomplete') as $kind) {
                 $kinds[(string) $kind] = true;
             }
         }
@@ -721,7 +687,7 @@ final class Brief
                 ++$cut;
             }
             $nested += (int) ($node['omitted'] ?? 0);
-            $kids = self::listOf($node, 'children');
+            $kids = Facts::listOf($node, 'children');
             if ($kids === []) {
                 continue;
             }
@@ -732,222 +698,6 @@ final class Brief
         }
 
         return $deepest;
-    }
-
-    // ------------------------------------------------------------ 排版
-
-    /**
-     * @param array<string, mixed> $facts
-     * @return list<string>
-     */
-    private static function header(array $facts, int $width, Thresholds $t): array
-    {
-        $stats = self::mapOf($facts, 'stats');
-        $window = self::mapOf($facts, 'window');
-        $digest = self::mapOf($facts, 'digest');
-
-        $title = \sprintf(
-            '证据 · %s · 窗口 #%d–#%d / %d 帧 / 容量 %d / 节点 %d',
-            (string) ($facts['label'] ?? '?'),
-            (int) ($window['from'] ?? 0),
-            (int) ($window['to'] ?? 0),
-            (int) ($window['count'] ?? 0),
-            (int) ($stats['capacity'] ?? 0),
-            (int) ($stats['nodes'] ?? 0),
-        );
-
-        $finger = (string) ($digest['digest'] ?? '');
-        $line = \sprintf(
-            '指纹 %s · 规则 慢帧 %.1fms / 扇出 %d / 重复 %d%%',
-            $finger === '' ? '—' : \substr($finger, 0, 12),
-            $t->slowMs,
-            $t->fanoutNodes,
-            $t->repeatPercent,
-        );
-
-        return [
-            Fit::clip($title, $width),
-            Fit::clip($line, $width),
-            Fit::rule($width),
-        ];
-    }
-
-    /**
-     * 明细：最贵帧的段账、最大写入点、最热节点。三行封顶，多了也不是信息。
-     *
-     * @param array<string, mixed> $facts
-     * @return list<string>
-     */
-    private static function detail(array $facts, int $width): array
-    {
-        $out = [];
-
-        $explain = self::mapOf($facts, 'explain');
-        $frameId = (int) ($explain['id'] ?? 0);
-        if ($frameId > 0) {
-            $parts = [];
-            foreach (self::mapOf($explain, 'stageMs') as $stage => $ms) {
-                $parts[] = \sprintf('%s %.1f', (string) $stage, (float) $ms);
-                if (\count($parts) >= 3) {
-                    break;
-                }
-            }
-            $parts[] = \sprintf('段外 %.1f', (float) ($explain['unattributedMs'] ?? 0.0));
-            $out[] = Fit::spread(
-                \sprintf(
-                    '#%d %.2fms  %s',
-                    $frameId,
-                    (float) ($explain['cost'] ?? 0.0),
-                    \implode(' · ', $parts),
-                ),
-                \sprintf('重建 %d', \count(self::listOf($explain, 'rebuilt'))),
-                $width,
-            );
-        }
-
-        $hotspots = self::listOf($facts, 'hotspots');
-        if ($hotspots !== []) {
-            $top = $hotspots[0];
-            $out[] = Fit::clip(\sprintf(
-                '最大写入点 %s → %d 个节点（%d 帧里出现 %d 次）',
-                (string) ($top['site'] ?? '?'),
-                (int) ($top['subtree'] ?? 0),
-                (int) ($top['frames'] ?? 0),
-                (int) ($top['writes'] ?? 0),
-            ), $width);
-        }
-
-        $nodes = self::listOf($facts, 'nodes');
-        if ($nodes !== []) {
-            $top = $nodes[0];
-            // 路径从**尾部**裁：`… > Table > TableBox` 才认得出是哪个节点，
-            // 从头裁只剩 `PageShell > Card > Column > …`，每个节点都长这样。
-            $path = self::tailPath((string) ($top['path'] ?? '?'), \max(20, $width - 34));
-            $out[] = Fit::clip(\sprintf(
-                '最热节点 %s 重建 %d 次（自写 %d / 继承 %d）',
-                $path,
-                (int) ($top['rebuilds'] ?? 0),
-                (int) ($top['self'] ?? 0),
-                (int) ($top['inherited'] ?? 0),
-            ), $width);
-        }
-
-        return $out;
-    }
-
-    /** 长路径保留**尾部**（最能定位的那几段），前面用 `… > ` 表示省略。 */
-    private static function tailPath(string $path, int $width): string
-    {
-        if (Fit::width($path) <= $width) {
-            return $path;
-        }
-
-        $parts = \explode(' > ', $path);
-        $tail = '';
-        while ($parts !== []) {
-            $segment = (string) \array_pop($parts);
-            $candidate = $tail === '' ? $segment : $segment . ' > ' . $tail;
-            if (Fit::width('… > ' . $candidate) > $width) {
-                break;
-            }
-            $tail = $candidate;
-        }
-
-        return $tail === '' ? Fit::clip($path, $width) : '… > ' . $tail;
-    }
-
-    /**
-     * 几何域的扫描范围，写进裁剪账。
-     *
-     * "窗口外"和"这一帧没变所以没记"不是同一件事：前者要明说，后者正常。
-     *
-     * @param array<string, mixed> $facts
-     */
-    private static function geometryScope(array $facts): string
-    {
-        $geometry = self::mapOf($facts, 'geometry');
-        $rows = self::listOf($geometry, 'rows');
-        if ($rows === []) {
-            return '几何未采集';
-        }
-
-        $frame = (int) ($geometry['frame'] ?? 0);
-        $window = self::mapOf($geometry, 'window');
-        $from = (int) ($window['from'] ?? 0);
-        $to = (int) ($window['to'] ?? 0);
-        if ($frame > 0 && $from > $frame) {
-            return \sprintf('几何窗口 #%d–#%d 不含 #%d', $from, $to, $frame);
-        }
-
-        return \sprintf('几何覆盖 #%d（%d 个盒 / %d 帧窗口）', $frame, \count($rows), (int) ($window['capacity'] ?? 0));
-    }
-
-    /**
-     * 裁剪账：裁了什么、裁了多少、怎么取回。**这一行不能省**。
-     *
-     * @param array<string, mixed> $facts
-     */
-    private static function omissions(array $facts, int $droppedFindings, int $droppedDetail, int $width): string
-    {
-        $stats = self::mapOf($facts, 'stats');
-        $window = self::mapOf($facts, 'window');
-
-        $parts = [];
-        if ($droppedFindings > 0) {
-            $parts[] = \sprintf('发现 %d 条未显示', $droppedFindings);
-        }
-        if ($droppedDetail > 0) {
-            $parts[] = \sprintf('明细 %d 行未显示', $droppedDetail);
-        }
-        // 因果树的**扫描范围**必须写出来，哪怕没有节点被省：
-        // "扫到第 2 层没发现问题"和"扫到第 12 层没发现问题"是两句不同的话。
-        $cov = self::coverage($facts);
-        if ($cov['seen'] > 0) {
-            // 不写 "seen/requested"：一个是节点层级（从 1 数），一个是展开次数
-            // （从 0 数），并排写会让人以为 `13/12` 是"超了"。给请求值本身即可。
-            $parts[] = $cov['complete']
-                ? \sprintf('因果树扫到第 %d 层（完整）', $cov['seen'])
-                : \sprintf(
-                    // 两类裁剪分开写：深度到顶（`cut`）与同层分支被折叠（`nested`）
-                    // 是不同的原因，调参的方向也不同（maxDepth vs maxChildren）。
-                    '因果树扫到第 %d 层，%d 处未展开（深度 %d / 同层折叠 %d；请求 maxDepth=%d）',
-                    $cov['seen'],
-                    $cov['cut'] + (int) ($cov['nested'] ?? 0),
-                    $cov['cut'],
-                    (int) ($cov['nested'] ?? 0),
-                    $cov['requested'],
-                );
-        }
-        // 几何也要自报扫描范围：60 帧的几何窗口比 600 帧的因果窗口短，
-        // 不写这一句，读者会把"没报布局问题"当成"全窗口都没有布局问题"。
-        $parts[] = self::geometryScope($facts);
-
-        // 帧级不完整（异常中断 / 因果边超限）必须在裁剪账里出现：这两种情况下
-        // 树和规则都"看起来正常"，只有这一行能说明它们其实缺料。
-        if ($cov['broken'] !== []) {
-            $parts[] = \sprintf('帧级证据不完整（%s）', \implode('/', $cov['broken']));
-        }
-
-        $capacity = (int) ($stats['capacity'] ?? 0);
-        $count = (int) ($window['count'] ?? 0);
-        if ($capacity > 0 && $count < $capacity) {
-            // 窗口没满时，"窗口外没有"是事实；满了就要明说更早的帧已被丢弃。
-            $parts[] = \sprintf('窗口未满（%d/%d），更早的帧尚未产生', $count, $capacity);
-        } elseif ($capacity > 0) {
-            $parts[] = \sprintf('窗口已满（%d/%d），更早的帧已被丢弃', $count, $capacity);
-        }
-        if ($parts === []) {
-            $parts[] = '无裁剪';
-        }
-
-        // 先保"裁了什么"，再保"怎么取回"：提示被截掉只是少一条指路，
-        // 计数被截掉就是"裁剪账不完整"，而这一行唯一不能少的就是计数。
-        $core = '裁剪：' . \implode('；', $parts);
-        $hint = '（--budget=N 看更多，--json 取结构化）';
-
-        return Fit::width($core . $hint) <= $width
-            ? $core . $hint
-            : Fit::clip($core, $width);
     }
 
     // ------------------------------------------------------------ 取值
@@ -965,37 +715,5 @@ final class Brief
         return $nodeId > 0
             ? \sprintf('frame:%d node:%d', $frameId, $nodeId)
             : \sprintf('frame:%d', $frameId);
-    }
-
-    /**
-     * @param array<string, mixed> $source
-     * @return list<array<string, mixed>>
-     */
-    private static function listOf(array $source, string $key): array
-    {
-        $value = $source[$key] ?? null;
-        if (!\is_array($value)) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($value as $item) {
-            if (\is_array($item)) {
-                $out[] = $item;
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * @param array<string, mixed> $source
-     * @return array<string, mixed>
-     */
-    private static function mapOf(array $source, string $key): array
-    {
-        $value = $source[$key] ?? null;
-
-        return \is_array($value) ? $value : [];
     }
 }

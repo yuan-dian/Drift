@@ -81,6 +81,31 @@ final class Fit
         return $left . \str_repeat(' ', $width - $lw - $rw) . $right;
     }
 
+    /**
+     * 长路径保留**尾部**（最能定位的那几段），前面用 `… > ` 表示省略。
+     *
+     * 从头裁只剩 `PageShell > Card > Column > …`，每个节点都长这样。
+     */
+    public static function tailPath(string $path, int $width): string
+    {
+        if (self::width($path) <= $width) {
+            return $path;
+        }
+
+        $parts = \explode(' > ', $path);
+        $tail = '';
+        while ($parts !== []) {
+            $segment = (string) \array_pop($parts);
+            $candidate = $tail === '' ? $segment : $segment . ' > ' . $tail;
+            if (self::width('… > ' . $candidate) > $width) {
+                break;
+            }
+            $tail = $candidate;
+        }
+
+        return $tail === '' ? self::clip($path, $width) : '… > ' . $tail;
+    }
+
     /** @return list<string> */
     private static function chars(string $s): array
     {

@@ -540,8 +540,29 @@ final class Query
                 'inner' => $record->inner,
                 'size' => $record->size,
                 'box' => $record->box,
+                // 相对父**内容盒原点**的偏移与内边距。留原样是为了让"为什么这个盒
+                // 在这儿"能被复算；绝对矩形见下面的 `rect`。
+                'offset' => $record->offset,
+                'pad' => $record->pad,
             ];
             $effective = \max($effective, $record->frame);
+        }
+
+        // 绝对矩形只在这里算一次。
+        //
+        // 让每个消费者自己从 `offset` 累加，等于把一次树的先序遍历发给每个人抄一遍，
+        // 而抄错的表现是**盒子错位**——没有读者会先怀疑自己的遍历。这不是判断（"这里
+        // 不对"），是坐标变换，所以归查询层；口径与 `pick()` 的 `hitTest` 一致：
+        // 子盒原点是相对父内容盒原点的。
+        $abs = self::absoluteRects($rows);
+        foreach ($rows as $i => $row) {
+            $rect = $abs[(int) $row['node']] ?? ['x' => 0.0, 'y' => 0.0];
+            $rows[$i]['rect'] = [
+                'x' => $rect['x'],
+                'y' => $rect['y'],
+                'w' => (float) ($row['size']['w'] ?? 0.0),
+                'h' => (float) ($row['size']['h'] ?? 0.0),
+            ];
         }
 
         return [
@@ -551,6 +572,59 @@ final class Query
             'rows' => $rows,
             'window' => $window,
         ];
+    }
+
+    /**
+     * 把"相对父内容盒原点的偏移"累加成视口坐标（border 盒左上角）。
+     *
+     * 记录里刻意不存绝对坐标：绝对坐标会"因为祖先挪了一像素"而整片失效，而几何是
+     * 按签名变化存的 —— 存相对偏移时，一个盒的位置变只影响它自己这一条。
+     *
+     * 父不在记录里（根，或父本帧没采样）时该节点自成原点；成环时打断并给 0：
+     * 环意味着记录层坏了，视图不该陪着一起死。
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<int, array{x: float, y: float}>
+     */
+    private static function absoluteRects(array $rows): array
+    {
+        $byNode = [];
+        foreach ($rows as $row) {
+            $byNode[(int) $row['node']] = $row;
+        }
+
+        $abs = [];
+        $resolve = function (int $node, array $seen) use (&$resolve, &$abs, $byNode): array {
+            if (isset($abs[$node])) {
+                return $abs[$node];
+            }
+
+            $row = $byNode[$node] ?? null;
+            if ($row === null || isset($seen[$node])) {
+                return $abs[$node] = ['x' => 0.0, 'y' => 0.0];
+            }
+            $seen[$node] = true;
+
+            $x = (float) ($row['offset']['x'] ?? 0.0);
+            $y = (float) ($row['offset']['y'] ?? 0.0);
+            $parent = (int) $row['parent'];
+            if ($parent === $node || !isset($byNode[$parent])) {
+                return $abs[$node] = ['x' => $x, 'y' => $y];
+            }
+
+            $origin = $resolve($parent, $seen);
+
+            return $abs[$node] = [
+                'x' => $origin['x'] + (float) ($byNode[$parent]['pad']['l'] ?? 0.0) + $x,
+                'y' => $origin['y'] + (float) ($byNode[$parent]['pad']['t'] ?? 0.0) + $y,
+            ];
+        };
+
+        foreach ($byNode as $node => $row) {
+            $resolve($node, []);
+        }
+
+        return $abs;
     }
 
     /**
