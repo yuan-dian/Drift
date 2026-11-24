@@ -189,6 +189,32 @@ final class BriefTest extends TestCase
     }
 
     /**
+     * 内层被 `maxChildren` 裁掉时，报告不能说"完整"。
+     *
+     * `foldGroups()` 在**每一层**的 node 上都写了 `omitted`。只读顶层的话，中间
+     * 某层砍掉半棵树也不会体现在 `complete` 上 —— 报告写"扫到的部分没问题"，
+     * 读者读成"整棵树没问题"，而实际上有一段根本没看。
+     */
+    public function testNestedOmissionMakesTheTreeIncomplete(): void
+    {
+        $facts = self::facts([
+            'cascade' => self::cascade([
+                self::node(1, 'PageShell', [
+                    // 中间层被折叠掉 7 支（不是深度到顶，所以 `cut` 仍是 false）
+                    self::node(2, 'Column', [self::node(3, 'Text')], ['omitted' => 7, 'subtree' => 30]),
+                ], ['subtree' => 40]),
+            ], 40),
+            'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 2],
+        ]);
+
+        $line = \end(Brief::project($facts, 40, 100)['lines']);
+
+        self::assertStringNotContainsString('（完整）', $line, $line);
+        self::assertStringContainsString('7 处未展开', $line, $line);
+        self::assertStringContainsString('同层折叠 7', $line, $line);
+    }
+
+    /**
      * 裁剪账要写出**扫描范围**，不能只写"没裁"。
      *
      * "扫到第 2 层没发现问题"和"扫到第 12 层没发现问题"是两句不同的话；只报
@@ -361,6 +387,36 @@ final class BriefTest extends TestCase
         self::assertStringContainsString('240', $found->metric);
         self::assertStringContainsString('constraints(11, 1)', $found->recheck);
         self::assertNotSame('', $found->threshold);
+    }
+
+    /**
+     * 高度改写与宽度改写同等对待。
+     *
+     * 只比 `maxW` 的版本会漏掉"行高被压到 120"这一整类：高度改写是同一个问题
+     * 在另一个轴上的表现，规则却只看了宽度。两个轴的候选各自成条、各自去重。
+     */
+    public function testTightenedHeightIsAlsoReported(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'Column', [
+                    'inner' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 400.0, 'maxH' => 400.0],
+                ]),
+                self::row(11, 2, 'Row', [
+                    // 宽度没变（800 → 800），只有高度被父收紧：400 → 120
+                    'applied' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 120.0, 'maxH' => 120.0],
+                    'size' => ['w' => 800.0, 'h' => 120.0],
+                ]),
+            ]),
+        ]);
+
+        $titles = \implode("\n", \array_map(
+            static fn(Finding $one): string => $one->title,
+            self::findings($facts),
+        ));
+
+        self::assertStringContainsString('高被收紧到 120', $titles, $titles);
+        self::assertStringNotContainsString('宽被收紧', $titles, $titles);
     }
 
     /** 放宽与收紧是两句不同的话：把 320 变成 536 不能报成"收紧"。 */

@@ -257,10 +257,24 @@ final class Query
     public function boxes(?int $frame = null): array
     {
         $frameId = $frame ?? $this->recorder->lastFrameId();
+        $window = $this->recorder->geometryCoverage();
+        if ($frameId < (int) ($window['from'] ?? 0) || $frameId > (int) ($window['to'] ?? 0)) {
+            return [
+                'frame' => $frameId,
+                'rows' => [],
+                'window' => $window,
+                'reason' => 'frame-out-of-window',
+            ];
+        }
+
         $records = $this->recorder->geometryRows($frameId);
         \ksort($records, \SORT_NUMERIC);
 
         $rows = [];
+        // 几何按变化存：目标帧没重新采样就往前找。整张表的"实际生效帧"必须回显，
+        // 否则读者会把 `rows` 当成 `frameId` 那一刻的快照 —— 那正是"三域看起来
+        // 都对齐、实际几何是上一帧"的来源。
+        $effective = 0;
         foreach ($records as $node => $record) {
             $rows[] = [
                 'node' => $node,
@@ -271,12 +285,15 @@ final class Query
                 'size' => $record->size,
                 'box' => $record->box,
             ];
+            $effective = \max($effective, $record->frame);
         }
 
         return [
             'frame' => $frameId,
+            'effective' => $effective,
+            'stale' => $rows !== [] && $effective !== $frameId,
             'rows' => $rows,
-            'window' => $this->recorder->geometryCoverage(),
+            'window' => $window,
         ];
     }
 
@@ -292,13 +309,14 @@ final class Query
     public function boxModel(int $node, ?int $frame = null): array
     {
         $frameId = $frame ?? $this->recorder->lastFrameId();
-        $record = $this->recorder->geometryAt($frameId, $node);
-        $window = $this->recorder->geometryCoverage();
-        if ($record === null) {
-            return $this->geometryMiss($node, $frameId, $window);
+        $hit = $this->geometryLookup($node, $frameId);
+        if ($hit['record'] === null) {
+            return $hit['reason'] === 'frame-out-of-window'
+                ? $this->frameOutOfWindow($node, $frameId, $hit['window'])
+                : $this->geometryMiss($node, $frameId, $hit['window']);
         }
 
-        return ['found' => true] + $record->toArray() + ['window' => $window];
+        return ['found' => true] + $hit['record']->toArray() + ['window' => $hit['window']];
     }
 
     /**
@@ -307,8 +325,10 @@ final class Query
      * 每一跳查两件事：
      * ① 父的 `applied`（tighten 后）经 padding 内缩与 align 放松，是否得到父的 `inner`；
      * ② 父的 `inner` 经子的宽高修饰收紧，是否得到子记录的 `applied`。
-     * 两者都对 ⇒ `base`（基类默认链）；①错 ⇒ `parent-performLayout`（Flex/Expanded
-     * 在 performLayout 里另算了约束）；②错 ⇒ `child-custom`（aspect 等修饰，或中间
+     * 两者都对 ⇒ `base`（基类默认链）；①错 ⇒ `parent-performLayout`（父在
+     * performLayout 里另算了 inner）；②错且"父 inner 无界 + 子带 flex" ⇒
+     * `parent-flex`（Flex 父按 grow/shrink 给子分配尺寸，最典型的是 `Column` 里的
+     * `Expanded`）；②错且不满足那个组合 ⇒ `child-custom`（aspect 等修饰，或中间
      * 还有别人改过）。**对不上不是错误，是答案**：能归默认的归默认，不能的说出不能，
      * 绝不猜一个来源填进去——那是"看起来很有道理"的证据，比没有更危险。
      *
@@ -320,15 +340,20 @@ final class Query
     public function constraints(int $node, ?int $frame = null, int $maxDepth = 12): array
     {
         $frameId = $frame ?? $this->recorder->lastFrameId();
-        $record = $this->recorder->geometryAt($frameId, $node);
-        $window = $this->recorder->geometryCoverage();
-        if ($record === null) {
-            return $this->geometryMiss($node, $frameId, $window);
+        $hit = $this->geometryLookup($node, $frameId);
+        if ($hit['record'] === null) {
+            return $hit['reason'] === 'frame-out-of-window'
+                ? $this->frameOutOfWindow($node, $frameId, $hit['window'])
+                : $this->geometryMiss($node, $frameId, $hit['window']);
         }
 
+        $window = $hit['window'];
         $all = [];
-        $cursor = $record;
-        while ($cursor !== null && $cursor->parent > 0) {
+        $cursor = $hit['record'];
+        // 环保护：父链来自记录，记录一旦坏掉（父指向自己/互指）这里会无限循环。
+        // 与 `pathOf()` 的 `$guard` 同一条纪律：报告不该陪着记录一起死。
+        $guard = 0;
+        while ($cursor !== null && $cursor->parent > 0 && $guard++ < 64) {
             $parent = $this->recorder->geometryAt($frameId, $cursor->parent);
             if ($parent === null) {
                 $all[] = [
@@ -363,6 +388,19 @@ final class Query
             }
             $appliedOk = GeometryRecord::pack($expectedApplied) === $cursor->applied;
 
+            // ---- 第四类：Flex 父在 performLayout 里按 grow/shrink 分配尺寸。
+            //
+            // 判据是两个**结构事实**，不猜：
+            // ① 父是 Flex 容器（`Column` / `Row` / 任何 `extends Flex`，由记录层
+            //    在登记节点时按 `instanceof` 判定，不是类名清单）；
+            // ② 子自己**没有**宽高修饰（`box` / `aspect` 都为 null）。
+            // 子没改约束却拿不到父的 inner ⇒ 只能是父在 performLayout 里重新分的。
+            //
+            // 有 box/aspect 的子不算：那是子侧改的，即使父是 Flex 也归 `child-custom`
+            // —— 归因要指向真正动手的那一方。
+            $childTweaked = $cursor->box !== null || $cursor->aspect !== null;
+            $parentFlex = $this->recorder->isFlex($parent->node);
+
             $all[] = [
                 'from' => $parent->node,
                 'fromType' => $this->recorder->typeOf($parent->node),
@@ -374,7 +412,9 @@ final class Query
                 'verified' => $innerOk && $appliedOk,
                 'source' => !$innerOk
                     ? 'parent-performLayout'
-                    : ($appliedOk ? 'base' : 'child-custom'),
+                    : ($appliedOk
+                        ? 'base'
+                        : (($parentFlex && !$childTweaked) ? 'parent-flex' : 'child-custom')),
             ];
             $cursor = $parent;
         }
@@ -471,23 +511,13 @@ final class Query
         }
 
         // ---- 几何：记录自带实际帧号，stale 由它判定，不靠调用方猜。
-        // ★ 先判窗口再查：geometryAt 的"往前找最近"会把窗口外的帧号 clamp 到
-        //   窗口末端，若直接调用，frame=99（窗口只到 2）会返回 frame=1 的旧记录
-        //   并报 found=true —— 一个根本没采样过的帧看起来有几何。这是静默错误。
-        $geoWindow = $win['geometry'];
-        $geoInWindow = (int) ($geoWindow['from'] ?? 0) <= $frame
-            && $frame <= (int) ($geoWindow['to'] ?? 0);
-        $geo = $geoInWindow ? $this->recorder->geometryAt($frame, $node) : null;
+        // 判窗口与查记录都走 `geometryLookup()`：与另外三个查询同一份语义。
+        $hit = $this->geometryLookup($node, $frame, $win['geometry']);
+        $geo = $hit['record'];
         if ($geo === null) {
-            $geometry = $geoInWindow
-                ? $this->geometryMiss($node, $frame, $geoWindow)
-                : [
-                    'found' => false,
-                    'node' => $node,
-                    'frame' => $frame,
-                    'reason' => 'frame-out-of-window',
-                    'window' => $geoWindow,
-                ];
+            $geometry = $hit['reason'] === 'frame-out-of-window'
+                ? $this->frameOutOfWindow($node, $frame, $win['geometry'])
+                : $this->geometryMiss($node, $frame, $win['geometry']);
         } else {
             $geometry = [
                 'found' => true,
@@ -665,9 +695,7 @@ final class Query
                     'rows' => [],
                     'window' => $window,
                     'total' => 0,
-                    'miss' => $request <= ($window['from'] ?? 0) - 1
-                        ? 'outside-network-window'
-                        : 'unknown-request',
+                    'miss' => $this->networkMissReason($request, $window),
                 ];
             }
 
@@ -681,7 +709,9 @@ final class Query
         $total = \count($rows);
 
         return [
-            'rows' => $limit > 0 ? \array_slice($rows, 0, $limit) : $rows,
+            // 取**最新**的 N 条：查网络面板的人要看刚发的请求。早先 `array_slice($rows, 0, …)`
+            // 取的是最旧的 —— 窗口满 500 条时，列表里全是几分钟前的东西。
+            'rows' => $limit > 0 ? \array_slice($rows, -$limit) : $rows,
             'window' => $window,
             'total' => $total,
         ];
@@ -714,12 +744,12 @@ final class Query
             return [
                 'request' => $request,
                 'found' => false,
-                // 报文窗口为空时 from=0：任何 id 都还没被存过，一律报窗口外。
-                // 用 from 判而不用 total 判，才能把"曾经存过、被裁掉了"与"从没存过"分开。
+                // 骨架在 ⇒ 报文只是没存/被裁（`body-not-retained`）；骨架不在 ⇒
+                // 连请求本身都查不到，这时才用**网络**窗口判"窗口外还是没这条"。
+                // 用报文窗口判会错：报文窗口(200)比网络窗口(500)小，网络里还在的
+                // 请求会被说成"窗口外"。
                 'miss' => $skeleton === null
-                    ? ((int) ($window['requests'] ?? 0) === 0 || $request < (int) ($window['from'] ?? 0)
-                        ? 'outside-network-window'
-                        : 'unknown-request')
+                    ? $this->networkMissReason($request, $this->recorder->networkCoverage())
                     : 'body-not-retained',
                 'window' => $window,
             ];
@@ -729,6 +759,63 @@ final class Query
     }
 
     // ------------------------------------------------------------------ 内部
+
+    /**
+     * 请求查不到时是"窗口外"还是"根本没有这条"。
+     *
+     * ★ 两个查询各写一遍必然漂：早先 `network()` 只比 `from`（空窗口 `from=0`，
+     *   任何 id 都大于它 ⇒ 一律报 `unknown-request`），`networkBody()` 先看
+     *   `requests === 0`。同一个请求，两个查询给两种答案。
+     *
+     * @param array<string, mixed> $window 需含 `requests` 与 `from`
+     */
+    private function networkMissReason(int $request, array $window): string
+    {
+        return (int) ($window['requests'] ?? 0) === 0 || $request < (int) ($window['from'] ?? 0)
+            ? 'outside-network-window'
+            : 'unknown-request';
+    }
+
+    /**
+     * 几何查证的**唯一入口**：先判帧在不在窗口内，再查记录。
+     *
+     * ★ 为什么必须收成一处：`geometryAt()` 的"往前找最近一次"只对**窗口内**成立。
+     *   四个查询各判一遍窗口，实际上只会修到其中几个 —— 早先只有 `align()` 判了，
+     *   `boxModel` / `boxes` / `constraints` 照样把窗口末端的旧几何当成目标帧的，
+     *   于是"查一个根本没采样过的帧"返回 `found=true`。这类答案自洽、可读、全错。
+     *
+     * @param array<string, mixed>|null $window 已知窗口时传进来，省一次遍历
+     * @return array{record: ?GeometryRecord, window: array<string, mixed>, reason: ?string}
+     *   `reason` 非 null = 帧不在窗口，"连有没有这个盒"都回答不了。
+     */
+    private function geometryLookup(int $node, int $frame, ?array $window = null): array
+    {
+        $window ??= $this->recorder->geometryCoverage();
+        $from = (int) ($window['from'] ?? 0);
+        $to = (int) ($window['to'] ?? 0);
+        if ($frame < $from || $frame > $to) {
+            return ['record' => null, 'window' => $window, 'reason' => 'frame-out-of-window'];
+        }
+
+        return ['record' => $this->recorder->geometryAt($frame, $node), 'window' => $window, 'reason' => null];
+    }
+
+    /**
+     * 帧号在窗口外：与"窗口内但没有这个盒"是两件事，不能混。
+     *
+     * @param array<string, mixed> $window
+     * @return array<string, mixed>
+     */
+    private function frameOutOfWindow(int $node, int $frame, array $window): array
+    {
+        return [
+            'found' => false,
+            'node' => $node,
+            'frame' => $frame,
+            'reason' => 'frame-out-of-window',
+            'window' => $window,
+        ];
+    }
 
     /**
      * 几何查不到的三种原因必须分开说。
@@ -902,8 +989,10 @@ final class Query
     /**
      * 把一层的兄弟按结构指纹分组，返回 `[组节点, 未显示的兄弟数, 未显示的节点数]`。
      *
-     * `$ids` 必须是**同一个父**的孩子（或森林的根）。后两个返回值是**每个实例**的口径，
-     * 调用方按自己的 `count` 换算成这一帧里的实际数量。
+     * `$ids` 必须是**同一个父**的孩子（或森林的根）。后两个返回值是**本层**口径
+     * （`maxChildren` 裁掉的那部分），不含子层递归的量 —— 内层节点的规模已经算在
+     * 根的 `subtree` 里，累加会超算。内层的裁剪由节点上的 `omitted` 逐层报出，
+     * 那是**支**口径，消费者递归读它。
      *
      * @param list<int>             $ids
      * @param array<int, list<int>> $children
@@ -952,6 +1041,14 @@ final class Query
             $nodes[] = $this->groupNode($group, $children, $causeOf, $subtree, $signature, $depth, $maxDepth, $maxChildren);
         }
 
+        // ★ 这里**只**返回本层被裁的量，不累加子层递归上来的。
+        //   看起来"漏了内层裁剪"，其实是口径不同：`hidden` 是**节点**口径，
+        //   而内层节点的规模已经算在根的 `subtree` 里（`Σ(根.subtree × 根.count)`
+        //   覆盖整棵子树，不论展开与否）。累加子层会让恒等式
+        //   `Σ(根.subtree × 根.count) + hidden == rebuilt` 超算。
+        //
+        //   "内层被 maxChildren 裁掉了"这件事由节点上的 `omitted` 逐层报出，
+        //   消费者（`Brief::coverage()`）递归读它 —— 那是**支**口径，可以累加。
         return [$nodes, $omitted, $hidden];
     }
 

@@ -6,6 +6,7 @@ namespace Drift\Debug\Session;
 use Drift\Input\InputEvent;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
+use Drift\Widget\Flex;
 use Drift\Widget\State;
 
 /**
@@ -112,6 +113,14 @@ final class Recorder
     /** @var array<int, true> 本帧已重建过的节点（同帧去重） */
     private array $openSaw = [];
 
+    /**
+     * 本帧有因果边被 `MAX_CAUSES` 拒收了。
+     *
+     * 不标出来的后果：这一帧的树只画了一半，而报告看不出任何异常 ——
+     * "没触发规则"于是变成"没问题"。拒收必须留痕，落到 `FrameRecord::$incomplete`。
+     */
+    private bool $causesTruncated = false;
+
     /** @var array<int, NetworkRecord> 请求 id => 记录，按 id 升序（独立 500 条窗口） */
     private array $network = [];
 
@@ -130,7 +139,21 @@ final class Recorder
 
     private int $networkSeq = 0;
 
+    /**
+     * 本会话发出的节点号序列（每个会话从 1 开始）。
+     *
+     * ★ 必须是**每会话**计数，不能是全局计数：`Digest` 拿"两次重放的重建集合
+     *   逐值相同"当判据，前提就是同一批控件拿到同一批号。全局计数会让第二次
+     *   重放的号从上次的末尾接着走，指纹永远对不上 —— 那不是"引擎不确定"，
+     *   是编号方式错了。
+     */
     private int $seq = 0;
+
+    /** 本会话的代号；与 {@see Element::$debugSession} 比对，判断元素身上的号是不是本会话发的。 */
+    private readonly int $tag;
+
+    /** 会话代号发号器：只用来区分"谁发的号"，不参与证据。 */
+    private static int $sessionSeq = 0;
 
     private int $frameId = 0;
 
@@ -141,13 +164,30 @@ final class Recorder
     public function __construct(
         private readonly int $capacity = self::DEFAULT_CAPACITY,
         private readonly ?Script $script = null,
+        /**
+         * 报文脱敏开关（默认开）。
+         *
+         * 为什么默认开：浏览器 DevTools 不脱敏，是因为它的数据**不出进程** ——
+         * 关掉标签页就没了。本仓的证据会过 NDJSON 协议到另一个进程、会进
+         * `Brief` 喂给 AI 读、可能随 CI artifact 上传，三处都在开发者控制之外。
+         *
+         * 为什么仍然给开关：本地排查"密码到底传对没有"时需要看原文，而脱敏一旦
+         * 发生就不可逆（存的就是换过的那份）。关掉时 meta 会记 `redact: false` ——
+         * `redacted: 0` 必须能被区分成"没扫"和"扫了没发现"，否则读者会把
+         * "没脱敏"读成"没敏感字段"，那又是一次自报说谎。
+         */
+        private readonly bool $redactBodies = true,
     ) {
+        $this->tag = ++self::$sessionSeq;
     }
 
     // ---------------------------------------------------------------- 生命周期
 
-    public static function install(int $capacity = self::DEFAULT_CAPACITY, ?Script $script = null): self
-    {
+    public static function install(
+        int $capacity = self::DEFAULT_CAPACITY,
+        ?Script $script = null,
+        bool $redactBodies = true,
+    ): self {
         // 段耗时不用第二套计时：`SurfaceProfile` 已经是全仓唯一的"计一段"入口
         // （九段里的 settle/layout/paint 在 `Frame::run()` 里记，壳的 stage() 拿不到）。
         // 装录制器就把量具打开，帧首清零、帧末读账 —— 两条驱动路径拿到同一份数据。
@@ -158,7 +198,7 @@ final class Recorder
             }
         }
 
-        return self::$current = new self($capacity, $script);
+        return self::$current = new self($capacity, $script, $redactBodies);
     }
 
     public static function uninstall(): void
@@ -209,8 +249,10 @@ final class Recorder
      * 挂在重建挂点上会静默漏掉"没重建但尺寸变了"这一类最常见的布局问题。
      *
      * @param array{stages?: list<string>, settleSkipped?: bool, paintSkipped?: bool} $facts
+     * @param bool $aborted 帧内抛了异常（调用方用 `try/finally` 保证成对）；半截的证据
+     *                      必须标出来，否则读者会把"只跑了一半的帧"当成"这帧就变了这些"
      */
-    public function endFrame(array $facts, float $costMs, ?Element $root = null): void
+    public function endFrame(array $facts, float $costMs, ?Element $root = null, bool $aborted = false): void
     {
         if (!$this->open) {
             return;
@@ -218,6 +260,13 @@ final class Recorder
         $this->open = false;
         if ($root !== null) {
             $this->sampleGeometry($root, $this->frameId);
+        }
+        $incomplete = [];
+        if ($this->causesTruncated) {
+            $incomplete[] = FrameRecord::CAUSES_TRUNCATED;
+        }
+        if ($aborted) {
+            $incomplete[] = FrameRecord::ABORTED;
         }
         $this->frames[$this->frameId] = new FrameRecord(
             $this->frameId,
@@ -230,11 +279,13 @@ final class Recorder
             self::$ownsProfile ? SurfaceProfile::$ns : [],
             (bool) ($facts['settleSkipped'] ?? false),
             (bool) ($facts['paintSkipped'] ?? false),
+            $incomplete,
         );
         $this->openCauses = [];
         $this->openRebuilt = [];
         $this->openWrote = [];
         $this->openSaw = [];
+        $this->causesTruncated = false;
         // 归因标记只在结算的同步段内有效：跨帧残留会把下一帧无关的 setState
         // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
         $this->activeRequest = 0;
@@ -255,7 +306,10 @@ final class Recorder
             return;
         }
         if (\count($this->openCauses) >= self::MAX_CAUSES) {
-            return; // 防御：装了录制却一直不跑帧时，不让缓冲无界增长
+            // 拒收要留痕：不标的话这一帧的树只是"少了半棵"，而报告显示正常。
+            $this->causesTruncated = true;
+
+            return;
         }
         $this->openWrote[$id] = true;
         // `from` 记的是**结构父**，不是"谁让它写的"（那由 `site` 回答）。不记它，
@@ -265,12 +319,19 @@ final class Recorder
         $parentId = $parent === null ? 0 : $this->idOf($parent);
 
         // 网络归因：此刻正在结算某条请求 ⇒ 这条 state 边就是它的"落地"。写进 detail，
-        // 于是 why(node) 得到"因为 api/rows.php 在 #N 帧返回"，而不只是"谁写了状态"。
+        // 于是 why(node) 得到"因为 request:#N 在 #M 帧返回"，而不只是"谁写了状态"。
         // 记在边上的同时回填请求的 landed 列表，两边可互相复核。
+        //
+        // ★ 只记 id，**不拼 URL**。三条理由：
+        //   ① URL 带签名参数（`?sig=…&ts=…`）时每帧都不同，而 detail 进
+        //      `Digest::ofFrame()` ⇒ facts 指纹永远对不上，"重放两遍比对"失去意义；
+        //   ② URL 里的 token / api_key 会随证据包导出，绕过报文脱敏；
+        //   ③ 消费者要 URL 就 `network(request:N)` 查 —— 一份数一个名字，
+        //      同一件事存两处必漂。
         $detail = self::shortClass($state);
         if ($this->activeRequest > 0 && isset($this->network[$this->activeRequest])) {
             $request = $this->network[$this->activeRequest];
-            $detail .= ' <- request:' . $request->requestId . ' ' . $request->method . ' ' . $request->url;
+            $detail .= ' <- request:' . $request->requestId;
             if (!\in_array($id, $request->landed, true)) {
                 $landed = $request->landed;
                 $landed[] = $id;
@@ -302,6 +363,14 @@ final class Recorder
 
         if (isset($this->openWrote[$id])) {
             return; // 自己的 state 边已经记过
+        }
+        // ★ 上限必须在这里也查一遍。早先只有 `noteStateWrite()` 查，`noteRebuild()`
+        //   不查 —— 一帧里重建的节点远多于写状态的节点（一次写入波及整树），
+        //   于是"上限"只管住了一半，`openCauses` 照样能涨到全树规模。
+        if (\count($this->openCauses) >= self::MAX_CAUSES) {
+            $this->causesTruncated = true;
+
+            return;
         }
 
         $parent = $element->parent();
@@ -344,15 +413,27 @@ final class Recorder
     }
 
     /**
-     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名。
+     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名 + 是否 Flex 容器。
      *
      * 摘要与将来的跨进程传输都要它：光有一串 id，换台机器就不知道是谁。
      *
-     * @return array<int, array{p: int, c: string}>
+     * @return array<int, array{p: int, c: string, x: bool}>
      */
     public function nodeIndex(): array
     {
         return $this->nodes;
+    }
+
+    /**
+     * 这个节点是不是 Flex 容器（`Column` / `Row` / 任何 `extends Flex`）。
+     *
+     * 归因要用：Flex 父在 `performLayout()` 里按 grow/shrink 给子分配尺寸，
+     * 子拿到的 `applied` 因此不等于"父 inner 原样传下来"，与基类默认链对不上。
+     * 这是**合法的对不上**，要归成 `parent-flex` 而不是兜底的 `child-custom`。
+     */
+    public function isFlex(int $nodeId): bool
+    {
+        return ($this->nodes[$nodeId]['x'] ?? false) === true;
     }
 
     /**
@@ -361,6 +442,15 @@ final class Recorder
      * 该帧没记不代表"那时没这个节点"——只代表**这一帧几何没变**，所以往前找最近
      * 的一次记录。找不到时返回 null，调用方必须区分"节点不存在"和"窗口外"，不能
      * 把 null 当成默认几何（那会凭空造出一个盒子）。
+     *
+     * ★ **未来帧一律返回 null**，不 clamp 到窗口末端。
+     *   早先是 `for ($f = \min($frame, $max); ...)`：查 `frame=99`（窗口只到 2）
+     *   会拿到 `frame=1` 的记录并报 `found=true` —— 一个根本没采样过的帧看起来
+     *   有几何。这类答案比"没查到"危险得多，因为它自洽、可读、且完全错。
+     *
+     *   修在这里而不是修在每个查询里：四个查询（`boxModel` / `boxes` /
+     *   `constraints` / `align`）各判一遍窗口，必然只修到其中几处 —— 之前就是
+     *   只有 `align` 判了，另外三个照样返回旧帧。
      */
     public function geometryAt(int $frame, int $node): ?GeometryRecord
     {
@@ -371,7 +461,10 @@ final class Recorder
         $keys = \array_keys($this->geometry);
         $min = \min($keys);
         $max = \max($keys);
-        for ($f = \min($frame, $max); $f >= $min; --$f) {
+        if ($frame > $max) {
+            return null; // 未来帧：窗口里没有这一帧的采样，往前找等于伪造
+        }
+        for ($f = $frame; $f >= $min; --$f) {
             if (isset($this->geometry[$f][$node])) {
                 return $this->geometry[$f][$node];
             }
@@ -409,6 +502,12 @@ final class Recorder
      */
     public function geometryRows(int $frame): array
     {
+        // 未来帧不给"每节点最近一次"：那会把窗口末端的一整套几何当成"该帧生效"，
+        // 与 `geometryAt()` 的 clamp 是同一个错误，只是从单节点变成整张表。
+        if ($this->geometry === [] || $frame > \max(\array_keys($this->geometry))) {
+            return [];
+        }
+
         $out = [];
         foreach ($this->geometry as $f => $rows) {
             if ($f > $frame) {
@@ -528,7 +627,13 @@ final class Recorder
         if ($requestId <= 0 || !isset($this->network[$requestId])) {
             return; // 骨架已被裁掉：不复活半份报文
         }
-        $this->bodies[$requestId] = NetworkBodyRecord::capture($requestId, $requestRaw, $responseRaw);
+        $this->bodies[$requestId] = NetworkBodyRecord::capture(
+            $requestId,
+            $requestRaw,
+            $responseRaw,
+            NetworkBodyRecord::MAX_BYTES,
+            $this->redactBodies,
+        );
     }
 
     public function bodyAt(int $requestId): ?NetworkBodyRecord
@@ -681,14 +786,33 @@ final class Recorder
         });
     }
 
-    /** 节点 id；首次见到时登记父链与类名（父 id 解析一次，`-1` = 根）。 */
+    /**
+     * 节点 id；表里没有就登记父链与类名（父 id 解析一次，`-1` = 根）。
+     *
+     * ★ 判"号是不是**本会话**发的"，不是判"元素有没有号"。会话重开时元素还带着
+     *   上一个会话的号、登记表却是空的：只看 `debugId === 0` 会直接读
+     *   `$nodes[旧号]` 拿到 `Undefined array key`（该节点从此没有父也没有类型，
+     *   `pathOf()` 空串、`cascade` 把它画成根，全都看起来正常）；只看"表里没有"
+     *   又会把号重新发一遍，可能撞上本会话已经发给别的元素的号 —— 两个元素共用
+     *   一个地址，证据串味。会话戳同时堵住这两个洞。
+     */
     public function idOf(Element $element): int
     {
-        if ($element->debugId === 0) {
+        if ($element->debugSession !== $this->tag) {
             $element->debugId = ++$this->seq;
+            $element->debugSession = $this->tag;
             // 记 **Widget** 名而不是 Element 子类名：面板上要看到 `Table` / `Column`，
             // 不是一屏 `StatefulElement` / `MultiChildElement`。
-            $this->nodes[$element->debugId] = ['p' => -2, 'c' => self::shortClass($element->widget())];
+            //
+            // `x` = 这个节点是 Flex 容器。归因要用它（Flex 父在 performLayout 里
+            // 按 grow/shrink 给子分配尺寸，`applied` 因此不等于"父 inner 原样传下来"）。
+            // 记成**布尔事实**而不是让查询去比对类名清单：`Column extends Flex`
+            // 这类继承关系由语言回答，新增 Flex 子类时这里自动覆盖，清单不会腐烂。
+            $this->nodes[$element->debugId] = [
+                'p' => -2,
+                'c' => self::shortClass($element->widget()),
+                'x' => $element->widget() instanceof Flex,
+            ];
         }
 
         $meta = $this->nodes[$element->debugId];
@@ -865,6 +989,14 @@ final class Recorder
         $this->bodies = [];
         $this->networkSeq = 0;
         $this->activeRequest = 0;
+        // ★ 几何与签名必须一起清。`trim()` 里"签名不清"说的是**窗口滚动**
+        //   （记录被裁掉了，但这份几何确实记过）；`reset()` 是"重新开始录"，
+        //   语义不同。不清签名的话，下一帧 `frameId` 从 1 重新开始，签名说
+        //   "这个几何记过" ⇒ 一条都不写，而查询还能从残留的旧 #1..#60 里读到
+        //   上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报，看起来完美。
+        $this->geometry = [];
+        $this->geometryDigest = [];
+        // `$nodes` / `$boxless` 描述的是**树**，不描述帧，保留（id 仍可用）。
     }
 
     // ------------------------------------------------------------ 静态热路径入口

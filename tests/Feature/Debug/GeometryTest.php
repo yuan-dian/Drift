@@ -99,8 +99,8 @@ final class GeometryTest extends SmokeTestCase
         foreach ($chain as $hop) {
             $sources[] = $hop['source'];
             check(
-                '来源在四种已定义的值里',
-                \in_array($hop['source'], ['base', 'parent-performLayout', 'child-custom', 'parent-outside-window'], true),
+                '来源在五种已定义的值里',
+                \in_array($hop['source'], ['base', 'parent-performLayout', 'parent-flex', 'child-custom', 'parent-outside-window'], true),
                 (string) $hop['source'],
             );
             // 判据的核心：说不出来源的跳不许被标成"基类默认且已验证"。
@@ -110,6 +110,10 @@ final class GeometryTest extends SmokeTestCase
             \in_array('base', $sources, true) && \count(\array_unique($sources)) > 1,
             \implode('/', \array_unique($sources)),
         );
+        // ★ Flex 归因必须真的被用到：表格页里有 Column + Expanded，若全被判成
+        //   `child-custom`，那条归因就等于没写（"看起来说了来源，其实是兜底"）。
+        check('Flex 父分配尺寸的跳归到 parent-flex，不落到 child-custom',
+            \in_array('parent-flex', $sources, true), \implode('/', \array_unique($sources)));
     }
 
     public function testDepthCutIsDeclaredWithItsSize(): void
@@ -141,6 +145,91 @@ final class GeometryTest extends SmokeTestCase
 
         check('不存在的地址说地址错', !$unknown['found'] && $unknown['reason'] === 'unknown-node', (string) ($unknown['reason'] ?? ''));
         check('不给无盒节点的建议', !\array_key_exists('suggest', $unknown));
+    }
+
+    /**
+     * 窗口外的帧号必须报"帧不在窗口"，不能拿窗口末端的旧几何顶替。
+     *
+     * 早先 `geometryAt()` 把帧号 clamp 到窗口末端：查 `frame=99`（窗口只到 2）会
+     * 返回 `frame=1` 的记录并报 `found=true` —— 一个根本没采样过的帧看起来有几何。
+     * 更糟的是四个查询里只有 `align()` 自己判了窗口，另外三个照样返回旧帧，
+     * 于是"同一份证据、同一帧号"在不同查询里给出互相矛盾的答案。
+     */
+    public function testOutOfWindowFrameIsReportedInsteadOfClamped(): void
+    {
+        $opened = $this->session();
+        $session = $opened['session'];
+        $node = $this->boxedNode($opened);
+        check('未来帧的判据拿到一个有盒节点', $node > 0, 'node=' . $node);
+        $to = (int) $session->query('boxes')['window']['to'];
+        $future = $to + 10;
+
+        $model = $session->query('boxModel', ['node' => $node, 'frame' => $future]);
+        check(
+            '未来帧的 boxModel 报 frame-out-of-window，不报 found',
+            ($model['found'] ?? true) === false && ($model['reason'] ?? '') === 'frame-out-of-window',
+            \json_encode($model),
+        );
+
+        $chain = $session->query('constraints', ['node' => $node, 'frame' => $future]);
+        check(
+            '未来帧的 constraints 同样报窗口外',
+            ($chain['found'] ?? true) === false && ($chain['reason'] ?? '') === 'frame-out-of-window',
+            \json_encode($chain),
+        );
+
+        $boxes = $session->query('boxes', ['frame' => $future]);
+        check(
+            '未来帧的 boxes 不给旧帧整表',
+            ($boxes['rows'] ?? ['x']) === [] && ($boxes['reason'] ?? '') === 'frame-out-of-window',
+            \json_encode(['rows' => \count($boxes['rows'] ?? []), 'reason' => $boxes['reason'] ?? '']),
+        );
+
+        $aligned = $session->query('align', ['node' => $node, 'frame' => $future]);
+        check(
+            '未来帧的 align 也报窗口外（四个查询同一份语义）',
+            ($aligned['geometry']['reason'] ?? '') === 'frame-out-of-window',
+            \json_encode($aligned['geometry'] ?? []),
+        );
+
+        // ★ 上面四条咬的是查询层的窗口判断（第一道防线）。记录层自己那道也得咬住：
+        //   查询层判窗口是"消费者各自守规矩"，而 `geometryAt()` 的 clamp 会让**任何**
+        //   直接调它的地方（新查询、面板、将来的消费者）静默拿到旧帧。两道都要有牙，
+        //   否则修掉一道另一道就会悄悄退回。
+        $raw = $session->recorder()->geometryAt($future, $node);
+        check('记录层的 geometryAt 对未来帧返回 null（不许 clamp 到窗口末端）', $raw === null,
+            'record=' . ($raw === null ? 'null' : 'frame#' . $raw->frame));
+    }
+
+    /**
+     * `reset()` 必须把几何与签名一起清。
+     *
+     * `trim()` 里"签名不清"说的是**窗口滚动**（记录被裁掉了，但这份几何确实记过）。
+     * `reset()` 是"重新开始录"，语义不同：不清签名的话，下一帧 `frameId` 从 1
+     * 重新开始，签名说"这个几何记过" ⇒ 一条都不写，而查询还能从残留的旧 #1..#60
+     * 里读到上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报。
+     */
+    public function testResetDropsGeometrySoTheNextFrameIsVisible(): void
+    {
+        $opened = $this->session();
+        $session = $opened['session'];
+        $node = $this->boxedNode($opened);
+        check('reset 前查得到几何', $session->query('boxModel', ['node' => $node])['found'] === true);
+
+        $session->recorder()->reset();
+        $session->pump(16.0);
+        $after = $session->query('boxModel', ['node' => $node]);
+
+        check(
+            'reset 后新帧的几何可见（签名没把新记录吃掉）',
+            ($after['found'] ?? false) === true,
+            \json_encode($after),
+        );
+        check(
+            'reset 后不残留旧窗口',
+            (int) ($after['window']['from'] ?? -1) === 1,
+            \json_encode($after['window'] ?? []),
+        );
     }
 
     public function testFrameArgumentDoesNotSilentlyFallForward(): void

@@ -282,10 +282,25 @@ abstract class Application
 
         // 录制只在装了之后才多这两次调用；帧边界必须成对，故收在这里而不是壳里
         // （壳有零视口提前返回，散在壳里会漏掉那一帧）。
+        //
+        // ★ `try/finally`：帧内抛异常时也必须 `endFrame`，否则 recorder 停在
+        //   `open` 状态，**下一帧**的 `openCauses` 会把这一帧的残余一起吞进去 ——
+        //   一条"看起来合理、实际跨越了两帧"的因果边。异常帧本身标 `aborted`：
+        //   半截的 `rebuilt` / `costMs` 不能当正常帧读。
         $t0 = \hrtime(true);
         $recorder->beginFrame($timestampMs);
-        $this->shell->frame($timestampMs, $constraints);
-        $recorder->endFrame($this->shell->frameFacts(), (\hrtime(true) - $t0) / 1e6, $this->root());
+        $aborted = true;
+        try {
+            $this->shell->frame($timestampMs, $constraints);
+            $aborted = false;
+        } finally {
+            $recorder->endFrame(
+                $this->shell->frameFacts(),
+                (\hrtime(true) - $t0) / 1e6,
+                $this->root(),
+                $aborted,
+            );
+        }
     }
 
     /** 拖动 resize 专用的轻量重绘。 */

@@ -44,12 +44,34 @@ abstract class Element
     protected bool $animationActive = false;
 
     /**
-     * 调试录制用的稳定节点号（`0` = 还没登记）。
+     * 调试录制用的稳定节点号（`0` = 还没分配）。
      *
      * 元素生命周期内不变，跨帧 diff 与 `why()` 寻址都用它；`key` 属于调和身份，
      * 位置一变就不稳，不能拿来当调试引用。
+     *
+     * 号由**录制器**发（{@see \Drift\Debug\Session\Recorder::idOf()}），不在这里分配：
+     * 编号必须"每个会话从 1 开始、按首次出现顺序递增"，否则 `Digest` 的
+     * "两次重放逐值相同" 判据永远红（它拿 id 序列当同一批控件的证据）。
+     *
+     * 与 {@see $debugSession} 一起读：号只在**发它的那个会话**里有效。
      */
     public int $debugId = 0;
+
+    /**
+     * 发 `$debugId` 的那个录制会话的代号（`0` = 还没发过）。
+     *
+     * ★ 没有这个字段就只能靠 `$debugId === 0` 判"要不要分配"，而会话重开时
+     *   元素还带着上一个会话的号、新会话的登记表却是空的 —— 于是
+     *   ① 直接读 `$nodes[旧号]` 得到 `Undefined array key`，该节点从此没有父也
+     *      没有类型（`pathOf()` 空串、`cascade` 把它画成根，全都看起来正常）；
+     *   ② 就算改成"表里没有就重新分配"，新会话可能已经把同一个号发给了另一个
+     *      元素，两个元素共用一个地址，证据直接串味。
+     *
+     * 判"号是不是本会话发的"，这两个洞一起堵住。
+     *
+     * @internal
+     */
+    public int $debugSession = 0;
 
     public function __construct(Widget $widget)
     {

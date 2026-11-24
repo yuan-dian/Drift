@@ -176,8 +176,12 @@ final class NetworkTest extends SmokeTestCase
                     }
                 }
             }
-            check('状态写入的因果边带上网络归因', \str_contains($detail, 'request:' . $id)
-                && \str_contains($detail, 'api.example.com/rows.php'), 'detail=' . $detail);
+            // ★ detail 只带 request id，**不带 URL**。URL 带签名参数时每帧都不同，
+            //   而 detail 进 `Digest::ofFrame()` ⇒ facts 指纹永远对不上；URL 里的
+            //   token 还会绕过报文脱敏随证据导出。要 URL 就 `network(request:N)` 查。
+            check('状态写入的因果边带上网络归因', \str_contains($detail, 'request:' . $id), 'detail=' . $detail);
+            check('因果 detail 不夹带 URL（否则污染 facts 指纹）',
+                !\str_contains($detail, '://') && !\str_contains($detail, 'api.example.com'), 'detail=' . $detail);
         } finally {
             Recorder::uninstall();
         }
@@ -269,6 +273,47 @@ final class NetworkTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * 空窗口的 miss 分类，以及"列表取最新"。
+     *
+     * 两处都是同源判据写了两遍的后果：`network()` 只比 `from`（空窗口 `from=0`，
+     * 任何 id 都大于它 ⇒ 一律报 `unknown-request`，把"还没开始录"说成"这个 id
+     * 不存在"）；`array_slice($rows, 0, …)` 取的是最旧的 N 条，窗口满 500 条时
+     * 列表里全是几分钟前的请求。
+     */
+    public function testNetworkMissDistinguishesEmptyWindowAndTakesNewest(): void
+    {
+        $recorder = Recorder::install();
+        try {
+            $query = new \Drift\Debug\Session\Query($recorder);
+
+            $empty = $query->network(5);
+            check(
+                '空窗口的 network() 报窗口外，不报 unknown-request',
+                ($empty['miss'] ?? '') === 'outside-network-window',
+                \json_encode($empty),
+            );
+
+            for ($i = 1; $i <= 5; ++$i) {
+                $recorder->beginFrame((float) $i);
+                Recorder::tapNetworkStart('GET', 'https://api.example.com/r' . $i, 'inline');
+                $recorder->endFrame([], 0.0);
+            }
+
+            $newest = $query->network(null, 2);
+            $ids = \array_column($newest['rows'], 'request');
+            check(
+                'network() 取最新的几条，不是最旧的',
+                $ids === [4, 5] && $newest['total'] === 5,
+                \json_encode($ids) . ' total=' . $newest['total'],
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
     public function testBodyCaptureTruncatesAndReportsSecretCount(): void
     {
         $big = \str_repeat('x', 100);
@@ -284,7 +329,14 @@ final class NetworkTest extends SmokeTestCase
             \json_encode($rec->response));
         check('原始字节数照报（不是截断后的长度）', $rec->request['bytes'] === \strlen('{"password":"' . $big . '"}')
             && $rec->response['bytes'] === 100, \json_encode($rec->request));
-        check('截断后不是 JSON 就不谎报格式', $rec->request['format'] === 'text', $rec->request['format']);
+        // ★ 格式按**原文**判，不按截断后的片段判：片段 `{"password` 不是 JSON，
+        //   但原文是。报 `text` 才是谎报（读者会以为原文就是纯文本）。片段这件事
+        //   由 `truncated=true` 单独说，两者合起来才完整。
+        check('格式按原文判，不因截断而谎报 text', $rec->request['format'] === 'json', $rec->request['format']);
+        // ★ 顺序牙：脱敏必须在截断之前。若退回"先截断"，片段 `{"password` 后面
+        //   没有值，正则匹配不到 ⇒ redacted=0，密码就会原样留在存档里。
+        check('脱敏在截断之前：被截断的请求体也换掉了密码', $rec->request['redacted'] === 1,
+            \json_encode($rec->request));
 
         $json = \Drift\Debug\Session\NetworkBodyRecord::capture(
             8,
@@ -297,6 +349,46 @@ final class NetworkTest extends SmokeTestCase
         check('业务字段留在报文里（否则定位不了字段错）', \is_array($decoded)
             && ($decoded['rows'] ?? null) === []
             && !\str_contains($json->requestBody, 'hunter2'), $json->responseBody);
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 脱敏可以关，但关掉必须自报。
+     *
+     * 关的理由：本地排查"密码到底传对没有"需要看原文（DevTools 就是这么用的）。
+     * 但 `redacted: 0` 有两种含义 —— "扫过、没发现" 与 "根本没扫"。不带
+     * `redact` 位，读者会把明文当成"已检查且干净"，那是一次自报说谎。
+     */
+    public function testRedactionCanBeTurnedOffAndSaysSo(): void
+    {
+        $off = \Drift\Debug\Session\NetworkBodyRecord::capture(
+            9,
+            '{"password":"hunter2"}',
+            '{"token":"abc"}',
+            \Drift\Debug\Session\NetworkBodyRecord::MAX_BYTES,
+            false,
+        );
+        check('关掉脱敏时明文原样保留', \str_contains($off->requestBody, 'hunter2'), $off->requestBody);
+        check(
+            '关掉脱敏时 meta 记 redact=false（0 处 ≠ 扫过没发现）',
+            $off->request['redact'] === false && $off->request['redacted'] === 0,
+            \json_encode($off->request),
+        );
+
+        $text = \implode("\n", \Drift\Dev\Debug\View\Network::body([
+            'found' => true,
+            'request' => 9,
+            'requestBody' => $off->requestBody,
+            'requestMeta' => $off->request,
+            'responseBody' => $off->responseBody,
+            'responseMeta' => $off->response,
+        ]));
+        check(
+            '视图对未脱敏的报文说"含明文"，不报"脱敏 0 处"',
+            \str_contains($text, '含明文') && !\str_contains($text, '脱敏 0 处'),
+            $text,
+        );
 
         $this->flushChecks();
     }

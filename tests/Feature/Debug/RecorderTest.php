@@ -197,6 +197,183 @@ final class RecorderTest extends SmokeTestCase
             'debugId=' . \var_export(CounterState::$last?->element()?->debugId, true),
         );
     }
+
+    /**
+     * 同一棵**活树**先后被两个会话录 —— 这是"重开调试会话"的最小复现。
+     *
+     * 旧实现靠 `debugId === 0` 判"要不要分配"：会话重开时元素还带着上个会话的号、
+     * 登记表却是空的，于是直接读 `$nodes[旧号]` 拿到 `Undefined array key`，该节点
+     * 从此没有类名也没有父（`pathOf()` 空串、`cascade` 把它画成根，全都看起来正常）。
+     *
+     * 三个判据缺一不可：① 重开后每个节点都登记完整；② 编号每会话从 1 开始
+     * （`Digest` 的"两次重放逐值相同"靠它）；③ 旧会话的证据不被新会话改写。
+     */
+    /**
+     * `aborted` 标记要落到记录上，且不污染下一帧。
+     *
+     * ★ 为什么不用"真抛异常"来测：帧内异常目前会让进程直接崩（`AppShell::frame()`
+     *   在 `build()` 抛异常后的状态不安全 —— 这是既有缺陷，与 `try/finally` 无关，
+     *   去掉 `try/finally` 同样崩）。所以这里测的是标记语义本身：
+     *   `endFrame()` 收 `$aborted` ⇒ 记录带 `aborted` ⇒ 下一帧干净。
+     *
+     *   `Application::frame()` 的 `try/finally` 仍然必要：它保证"异常不崩"的那天，
+     *   recorder 不会停在 `open` 状态把这一帧的残余吞进下一帧。
+     */
+    public function testAbortedFrameIsMarkedAndDoesNotLeakIntoTheNextOne(): void
+    {
+        $recorder = Recorder::install();
+
+        try {
+            $recorder->beginFrame(0.0);
+            $recorder->endFrame([], 1.0, null, true);
+
+            $bad = $recorder->frame($recorder->lastFrameId());
+            check(
+                '异常帧标 aborted',
+                ($bad?->incomplete ?? []) === [FrameRecord::ABORTED],
+                \json_encode($bad?->incomplete ?? []),
+            );
+            check(
+                'aborted 进 toArray（跨进程也看得见）',
+                ($bad?->toArray()['incomplete'] ?? null) === [FrameRecord::ABORTED],
+                \json_encode($bad?->toArray()['incomplete'] ?? null),
+            );
+
+            $recorder->beginFrame(16.0);
+            $recorder->endFrame([], 1.0);
+            $next = $recorder->frame($recorder->lastFrameId());
+            check(
+                '下一帧不带 aborted（标记不跨帧）',
+                ($next?->incomplete ?? []) === [],
+                \json_encode($next?->incomplete ?? []),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
+    /**
+     * 因果边撞上限时这一帧要标 `causes-truncated`。
+     *
+     * 早先只有 `noteStateWrite()` 查上限、`noteRebuild()` 不查，而且拒收不留痕 ——
+     * 一帧里重建的节点远多于写状态的节点，于是"上限"只关住了一半，树缺了半棵
+     * 而报告看不出任何异常。
+     */
+    public function testCauseCapIsMarkedOnTheFrame(): void
+    {
+        $recorder = Recorder::install();
+
+        try {
+            $app = new WideApplication();
+            $app->attach(new SurfaceProbe(), $this->constraints());
+            $app->frame(0.0, $this->constraints());
+
+            WideState::$last?->bump();
+            $app->frame(16.0, $this->constraints());
+
+            $frame = $recorder->frame($recorder->lastFrameId());
+            $causes = $frame === null ? -1 : \count($frame->causes);
+            check('一次写入波及 600 个节点，边数被上限挡住', $causes >= 0 && $causes <= 512, 'causes=' . $causes);
+            check(
+                '撞上限要在帧上留痕，不能静默少半棵树',
+                \in_array(FrameRecord::CAUSES_TRUNCATED, $frame?->incomplete ?? [], true),
+                \json_encode($frame?->incomplete ?? []),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
+    public function testReopenSessionRebuildsNodeIndexWithoutLosingIdentity(): void
+    {
+        $app = $this->boot();
+
+        $first = Recorder::install();
+        $app->frame(0.0, $this->constraints());
+        $ids1 = \array_keys($first->nodeIndex());
+        $path1 = $first->pathOf((int) ($ids1[0] ?? 0));
+        Recorder::uninstall();
+
+        $second = Recorder::install();
+        try {
+            $app->frame(16.0, $this->constraints());
+            $index = $second->nodeIndex();
+            $ids2 = \array_keys($index);
+
+            $broken = [];
+            foreach ($index as $id => $meta) {
+                if ($meta['c'] === '' || $meta['p'] === -2) {
+                    $broken[] = $id;
+                }
+            }
+            // `$index === []` 时下面的 foreach 一次都不跑，`$broken === []` 恒真 ——
+            // 那是"空集合恒真"的假绿，必须先把非空作为前提。
+            check('会话重开后登记表非空', $index !== [], 'nodes=0');
+            check('会话重开后每个节点都有类型与父链', $broken === [], 'broken=' . \json_encode($broken));
+            check(
+                '会话重开后登记的节点数不变',
+                \count($ids2) === \count($ids1),
+                'first=' . \count($ids1) . ' second=' . \count($ids2),
+            );
+            check(
+                '编号每会话从 1 开始（Digest 靠它比对两次重放）',
+                $ids1 !== [] && $ids2 !== [] && \min($ids1) === 1 && \min($ids2) === 1,
+                'min1=' . ($ids1 === [] ? 0 : \min($ids1)) . ' min2=' . ($ids2 === [] ? 0 : \min($ids2)),
+            );
+            $last2 = (int) ($ids2[\count($ids2) - 1] ?? 0);
+            check('重开后 pathOf 仍给得出类名路径', $second->pathOf($last2) !== '', 'path=' . $second->pathOf($last2));
+            check('首个会话的证据不被第二个会话改写', $first->pathOf((int) ($ids1[0] ?? 0)) === $path1, $path1);
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+}
+
+/** @internal 判据夹具：一次 setState 波及 600 个节点，用来撞因果边上限 */
+final class WideApplication extends Application
+{
+    public function buildRoot(): Widget
+    {
+        return Column::make()->children([new WideProbe()]);
+    }
+}
+
+/** @internal 判据夹具 */
+final class WideProbe extends StatefulWidget
+{
+    public function createState(): State
+    {
+        return new WideState();
+    }
+}
+
+/** @internal 判据夹具：build 出 600 个兄弟，重建一次就是 600 条边 */
+final class WideState extends State
+{
+    public static ?self $last = null;
+
+    public function initState(): void
+    {
+        self::$last = $this;
+    }
+
+    public function bump(): void
+    {
+        $this->setState(static function (): void {
+        });
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        return Column::make()->children(\array_map(
+            static fn(int $i): Widget => Text::make('r' . $i),
+            \range(1, 600),
+        ));
+    }
 }
 
 /** @internal 判据夹具：一个只有自增计数的应用 */

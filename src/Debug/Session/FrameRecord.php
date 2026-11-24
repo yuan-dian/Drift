@@ -18,6 +18,7 @@ final readonly class FrameRecord
      * @param list<int>               $rebuilt 本帧重建过的节点 id，先序
      * @param list<string>            $stages  本帧跑过的段名
      * @param array<string, int>      $stageNs 段名 → 本帧累计纳秒（整数，跨进程序列化逐值相同）
+     * @param list<string>            $incomplete 本帧证据为什么不全（空 = 全）
      */
     public function __construct(
         public int $id,
@@ -29,8 +30,25 @@ final readonly class FrameRecord
         public array $stageNs,
         public bool $settleSkipped,
         public bool $paintSkipped,
+        /**
+         * 证据不完整的原因，值域见 {@see self::CAUSES_TRUNCATED} / {@see self::ABORTED}。
+         *
+         * ★ 为什么是一个列表而不是几个布尔：不完整的原因会越加越多（因果边超限、
+         *   帧内抛异常、将来可能还有几何采样失败），每加一个就多一个字段，投影层
+         *   就得多认一个名字 —— 而漏认一个，报告就把"不完整"显示成"干净"。
+         *   一个列表 + 一组常量，新增原因不用改形状。
+         *
+         * ★ 默认 `[]` 是为了构造兼容：这个类被测试和反序列化路径直接 new。
+         */
+        public array $incomplete = [],
     ) {
     }
+
+    /** 因果边撞到 `Recorder::MAX_CAUSES` 上限：这一帧的树是缺的。 */
+    public const string CAUSES_TRUNCATED = 'causes-truncated';
+
+    /** 帧内抛了异常：`rebuilt` / `costMs` 都是半截，不能当正常帧读。 */
+    public const string ABORTED = 'aborted';
 
     public function rebuilt(int $nodeId): bool
     {
@@ -121,6 +139,8 @@ final readonly class FrameRecord
             'unattributedMs' => $this->unattributedMs(),
             'settleSkipped' => $this->settleSkipped,
             'paintSkipped' => $this->paintSkipped,
+            // 空列表也照样输出：消费者不必判"这个键在不在"，只需判它空不空。
+            'incomplete' => $this->incomplete,
             'rebuilt' => $this->rebuilt,
             'causes' => \array_map(static fn(Edge $e): array => $e->toArray(), $this->causes),
         ];

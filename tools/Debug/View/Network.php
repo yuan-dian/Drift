@@ -93,19 +93,29 @@ final class Network
             )];
         }
 
-        $lines = ["请求 #{$request} 报文（已脱敏；只看这一条，不进证据包）"];
+        // 关掉脱敏时标题必须说清"含明文"：`redacted: 0` 与"没扫过"是两件事，
+        // 只报数字会让读者把明文当成"已检查且干净"。
+        $plain = ($answer['requestMeta']['redact'] ?? true) === false
+            || ($answer['responseMeta']['redact'] ?? true) === false;
+        $lines = [
+            "请求 #{$request} 报文（"
+            . ($plain ? '含明文，未脱敏' : '已脱敏')
+            . '；只看这一条，不进证据包）',
+        ];
         foreach (['request' => '请求', 'response' => '响应'] as $key => $name) {
             if (!\array_key_exists($key . 'Body', $answer)) {
                 continue;
             }
-            /** @var array{bytes: int, truncated: bool, redacted: int, format: string} $meta */
+            /** @var array{bytes: int, truncated: bool, redacted: int, redact: bool, format: string} $meta */
             $meta = $answer[$key . 'Meta'] ?? [];
             $lines[] = \sprintf(
-                '  %s  %s  %d 字节  脱敏 %d 处  %s',
+                '  %s  %s  %d 字节  %s  %s',
                 $name,
                 (string) ($meta['format'] ?? 'text'),
                 (int) ($meta['bytes'] ?? 0),
-                (int) ($meta['redacted'] ?? 0),
+                ($meta['redact'] ?? true) === false
+                    ? '未脱敏（明文）'
+                    : '脱敏 ' . (int) ($meta['redacted'] ?? 0) . ' 处',
                 ($meta['truncated'] ?? false) === true ? '已截断' : '完整',
             );
             foreach (\explode("\n", (string) ($answer[$key . 'Body'] ?? '')) as $line) {

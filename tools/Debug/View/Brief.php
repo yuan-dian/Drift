@@ -127,14 +127,15 @@ final class Brief
                 : new Finding(
                     'inconclusive',
                     \sprintf(
-                        '扫过的那部分没有触发规则，但因果树只展开到第 %d 层、%d 处被截断',
+                        '扫过的那部分没有触发规则，但因果树不完整：展开到第 %d 层、%d 处深度截断、%d 支同层分支被折叠',
                         $cov['seen'],
                         $cov['cut'],
+                        (int) ($cov['nested'] ?? 0),
                     ),
                     $address,
-                    \sprintf('%d 处未展开', $cov['cut']),
+                    \sprintf('%d 处未展开', $cov['cut'] + (int) ($cov['nested'] ?? 0)),
                     '扫描完整度 = 100%',
-                    '调大 cascade 的 maxDepth 重取一次，或直接 cascade(' . (int) ($window['to'] ?? 0) . ')',
+                    '调大 cascade 的 maxDepth / maxChildren 重取一次，或直接 cascade(' . (int) ($window['to'] ?? 0) . ')',
                 );
         }
 
@@ -477,71 +478,112 @@ final class Brief
                 continue;
             }
             $parent = $byNode[$parentId];
-            $offered = self::finiteMax(self::mapOf($parent, 'inner'), 'maxW');
-            $received = self::finiteMax(self::mapOf($row, 'applied'), 'maxW');
-            $actual = self::finiteMax(self::mapOf($row, 'size'), 'w');
-            if ($offered === null || $received === null || $actual === null
-                || $offered <= 0.0 || $actual < self::RESHAPE_MIN_SIZE) {
-                continue;
+            // 两个轴各算一次。只比宽度会漏掉"行高被压到 12"那一类 —— 高度改写
+            // 与宽度改写是同一个问题在不同轴上的表现，规则却只看了宽度。
+            foreach (['w', 'h'] as $axis) {
+                $one = self::reshapeAxis($parent, $row, $axis);
+                if ($one !== null) {
+                    $candidates[] = $one;
+                }
             }
-            // `INF` 不参与比较：父允许任意宽时，"子比它窄"不是改写。
-            $delta = $received - $offered;
-            if (\abs($delta) < self::RESHAPE_PX
-                || \abs($delta) * 100.0 < self::RESHAPE_PERCENT * $offered) {
-                continue;
-            }
-            $width = self::finiteMax(self::mapOf($row, 'box'), 'w');
-            $candidates[] = [
-                'node' => $node,
-                'delta' => $delta,
-                'offered' => $offered,
-                'received' => $received,
-                'from' => (string) ($parent['type'] ?? '?'),
-                'to' => (string) ($row['type'] ?? '?'),
-                'cause' => $width !== null ? \sprintf('宽度修饰 %.0f', $width) : '自定义布局',
-            ];
         }
         \usort($candidates, static fn(array $a, array $b): int => (\abs($b['delta']) <=> \abs($a['delta']))
-            ?: ($a['node'] <=> $b['node']));
+            ?: ($a['node'] <=> $b['node'])
+            ?: \strcmp((string) $a['axis'], (string) $b['axis']));
 
         $frame = (int) ($geometry['frame'] ?? 0);
         $out = [];
-        $directions = [];
+        $seen = [];
         foreach ($candidates as $candidate) {
             $wide = $candidate['delta'] > 0;
-            $dir = $wide ? 'wide' : 'tight';
-            if (isset($directions[$dir])) {
+            $axisName = $candidate['axis'] === 'w' ? '宽' : '高';
+            // 去重按"轴 + 方向"：宽放宽 / 宽收紧 / 高放宽 / 高收紧各最多一条。
+            // 只看方向会把"高收紧"和"宽收紧"当成同一条，后者被丢掉。
+            $key = $candidate['axis'] . ':' . ($wide ? 'wide' : 'tight');
+            if (isset($seen[$key])) {
                 continue;
             }
-            $directions[$dir] = true;
+            $seen[$key] = true;
 
             $out[] = new Finding(
                 $wide ? 'constraint-widened' : 'constraint-tightened',
                 \sprintf(
-                    '%s → %s 宽被%s到 %.0f（父内容 %.0f，%+.0fpx，%s）',
+                    '%s → %s %s被%s到 %.0f（父内容%s %.0f，%+.0fpx，%s）',
                     $candidate['from'],
                     $candidate['to'],
+                    $axisName,
                     $wide ? '放宽' : '收紧',
                     $candidate['received'],
+                    $axisName,
                     $candidate['offered'],
                     $candidate['delta'],
                     $candidate['cause'],
                 ),
                 self::addressOf($frame, (int) $candidate['node']),
-                \sprintf('%.0f → %.0f（%+.0fpx）', $candidate['offered'], $candidate['received'], $candidate['delta']),
-                \sprintf('≥ %.0fpx 且 ≥ 父内容宽 %.0f%%', self::RESHAPE_PX, self::RESHAPE_PERCENT),
+                \sprintf(
+                    '%s %.0f → %.0f（%+.0fpx）',
+                    $axisName,
+                    $candidate['offered'],
+                    $candidate['received'],
+                    $candidate['delta'],
+                ),
+                \sprintf('≥ %.0fpx 且 ≥ 父内容%s %.0f%%', self::RESHAPE_PX, $axisName, self::RESHAPE_PERCENT),
                 \sprintf(
                     'constraints(%d, %d).chain 的 %s → %s 跳；boxModel(%d, %d)',
                     (int) $candidate['node'], $frame, $candidate['from'], $candidate['to'],
                     (int) $candidate['node'], $frame,
                 ),
             );
-            if (\count($out) >= 2) {
+            if (\count($out) >= 4) {
                 break;
             }
         }
 
         return $out;
+    }
+
+    /**
+     * 一个轴上的约束改写候选（宽度或高度）。
+     *
+     * 两轴共用同一组阈值：`RESHAPE_MIN_SIZE` 挡的是"盒子太小，相对百分比没有意义"，
+     * 对高度同样成立 —— 12px 的行报"收紧 8px"只是噪音。
+     *
+     * @param array<string, mixed> $parent
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>|null
+     */
+    private static function reshapeAxis(array $parent, array $row, string $axis): ?array
+    {
+        $key = $axis === 'w' ? 'maxW' : 'maxH';
+        $sizeKey = $axis === 'w' ? 'w' : 'h';
+
+        $offered = self::finiteMax(self::mapOf($parent, 'inner'), $key);
+        $received = self::finiteMax(self::mapOf($row, 'applied'), $key);
+        $actual = self::finiteMax(self::mapOf($row, 'size'), $sizeKey);
+        if ($offered === null || $received === null || $actual === null
+            || $offered <= 0.0 || $actual < self::RESHAPE_MIN_SIZE) {
+            return null;
+        }
+        // `INF` 不参与比较：父允许任意尺寸时，"子比它小"不是改写。
+        $delta = $received - $offered;
+        if (\abs($delta) < self::RESHAPE_PX
+            || \abs($delta) * 100.0 < self::RESHAPE_PERCENT * $offered) {
+            return null;
+        }
+        $box = self::finiteMax(self::mapOf($row, 'box'), $sizeKey);
+
+        return [
+            'node' => (int) ($row['node'] ?? 0),
+            'axis' => $axis,
+            'delta' => $delta,
+            'offered' => $offered,
+            'received' => $received,
+            'from' => (string) ($parent['type'] ?? '?'),
+            'to' => (string) ($row['type'] ?? '?'),
+            'cause' => $box !== null
+                ? \sprintf('%s修饰 %.0f', $axis === 'w' ? '宽度' : '高度', $box)
+                : '自定义布局',
+        ];
     }
 
     /**
@@ -613,36 +655,83 @@ final class Brief
         $cascade = self::mapOf($facts, 'cascade');
         $roots = self::listOf($cascade, 'roots');
         if ($roots === []) {
-            // 没有树 = 这一帧没有重建，不是"没查到"。空树本身就是完整的。
-            return ['seen' => 0, 'cut' => 0, 'requested' => 0, 'complete' => true];
+            // 没有树 = 这一帧没有重建，不是"没查到"。空树本身是完整的 ——
+            // 除非帧自己标了不完整（异常中断 / 因果边超限），那时"没有重建"
+            // 可能只是"还没走到那一步"。
+            $broken = self::brokenFrames($facts);
+
+            return [
+                'seen' => 0,
+                'cut' => 0,
+                'nested' => 0,
+                'requested' => 0,
+                'broken' => $broken,
+                'complete' => $broken === [],
+            ];
         }
 
         $cut = 0;
-        $seen = self::depthScan($roots, 1, $cut);
+        $nested = 0;
+        $seen = self::depthScan($roots, 1, $cut, $nested);
         $requested = (int) (self::mapOf($facts, 'cascadeQuery')['maxDepth'] ?? $seen);
 
-        // 顶层 `omitted` / `hidden` 是 `maxChildren` 造成的（同层分支太多），
-        // `cut` 只是"还有孩子的节点没往下展开"。两者都算不完整。
-        $lost = (int) ($cascade['omitted'] ?? 0) + (int) ($cascade['hidden'] ?? 0);
+        // 顶层 `omitted` / `hidden` 是**根层**被 `maxChildren` 裁掉的（同层分支太多），
+        // 那些根根本不在 `roots` 里，递归扫不到，只能单独补。
+        // `cut` 是"还有孩子的节点没往下展开"（`maxDepth` 到顶）。
+        $lost = (int) ($cascade['omitted'] ?? 0) + (int) ($cascade['hidden'] ?? 0) + $nested;
+
+        // 帧级不完整同样让"没触发规则"变成假结论：`aborted` 的帧因果是半截的，
+        // `causes-truncated` 的帧树是缺的 —— 两种情况下树看起来都很正常。
+        $broken = self::brokenFrames($facts);
 
         return [
             'seen' => $seen,
             'cut' => $cut,
+            'nested' => $nested,
             'requested' => $requested,
-            'complete' => $cut === 0 && $lost === 0,
+            'broken' => $broken,
+            'complete' => $cut === 0 && $lost === 0 && $broken === [],
         ];
     }
 
     /**
-     * 最深走到第几层，以及有多少处被标了 `cut`。
+     * 帧级不完整的原因集合（空 = 窗口里每一帧都完整）。
+     *
+     * 来源是 `FrameRecord::$incomplete`：录制器在"因果边被上限拒收"和"帧内抛异常"
+     * 时各自留痕。这里只做去重汇总 —— 读者要知道"是哪类不完整"，不需要知道
+     * "哪一帧"，后者由 `frames()` 逐帧给。
+     *
+     * @param array<string, mixed> $facts
+     * @return list<string>
+     */
+    private static function brokenFrames(array $facts): array
+    {
+        $kinds = [];
+        foreach (self::listOf($facts, 'frames') as $frame) {
+            foreach (self::listOf($frame, 'incomplete') as $kind) {
+                $kinds[(string) $kind] = true;
+            }
+        }
+
+        return \array_keys($kinds);
+    }
+
+    /**
+     * 最深走到第几层、有多少处被标了 `cut`、内层一共丢了多少支。
      *
      * 深度上限 32 只是**防环的保险**（真出现环说明记录层坏了，报告不该陪着一起死）。
      * 它不承担裁剪职责：能不能往下走由 `children` 决定，而 `children` 已经由
      * 查询层按 `maxDepth` 裁过。
      *
+     * ★ 内层裁剪必须递归累加：`foldGroups()` 在**每一层**的 node 上都写了
+     *   `omitted`（`maxChildren` 裁掉几支），只看顶层会把"内层被裁"漏成
+     *   `complete=true` —— 报告说"树是完整的"，而实际上中间某层砍掉了半棵树。
+     *   只累 `omitted` 不累 `hidden`：后者是**节点**口径，内层节点的规模已经
+     *   算在根的 `subtree` 里，递归累加会重复。
+     *
      * @param list<array<string, mixed>> $nodes
      */
-    private static function depthScan(array $nodes, int $depth, int &$cut): int
+    private static function depthScan(array $nodes, int $depth, int &$cut, int &$nested): int
     {
         if ($depth > 32) {
             return $depth;
@@ -653,11 +742,12 @@ final class Brief
             if (($node['cut'] ?? false) === true) {
                 ++$cut;
             }
+            $nested += (int) ($node['omitted'] ?? 0);
             $kids = self::listOf($node, 'children');
             if ($kids === []) {
                 continue;
             }
-            $deep = self::depthScan($kids, $depth + 1, $cut);
+            $deep = self::depthScan($kids, $depth + 1, $cut, $nested);
             if ($deep > $deepest) {
                 $deepest = $deep;
             }
@@ -840,15 +930,25 @@ final class Brief
             $parts[] = $cov['complete']
                 ? \sprintf('因果树扫到第 %d 层（完整）', $cov['seen'])
                 : \sprintf(
-                    '因果树扫到第 %d 层，%d 处未展开（请求 maxDepth=%d）',
+                    // 两类裁剪分开写：深度到顶（`cut`）与同层分支被折叠（`nested`）
+                    // 是不同的原因，调参的方向也不同（maxDepth vs maxChildren）。
+                    '因果树扫到第 %d 层，%d 处未展开（深度 %d / 同层折叠 %d；请求 maxDepth=%d）',
                     $cov['seen'],
+                    $cov['cut'] + (int) ($cov['nested'] ?? 0),
                     $cov['cut'],
+                    (int) ($cov['nested'] ?? 0),
                     $cov['requested'],
                 );
         }
         // 几何也要自报扫描范围：60 帧的几何窗口比 600 帧的因果窗口短，
         // 不写这一句，读者会把"没报布局问题"当成"全窗口都没有布局问题"。
         $parts[] = self::geometryScope($facts);
+
+        // 帧级不完整（异常中断 / 因果边超限）必须在裁剪账里出现：这两种情况下
+        // 树和规则都"看起来正常"，只有这一行能说明它们其实缺料。
+        if ($cov['broken'] !== []) {
+            $parts[] = \sprintf('帧级证据不完整（%s）', \implode('/', $cov['broken']));
+        }
 
         $capacity = (int) ($stats['capacity'] ?? 0);
         $count = (int) ($window['count'] ?? 0);
