@@ -96,6 +96,7 @@ final class PageHostTest extends SmokeTestCase
             'PageHost · 未命中的页名 ⇒ 末槽是可见的 NoPage（不崩、不静默错误）',
             $ghostSlot instanceof OffstageElement
                 && $ghostSlot->childCount() === 1
+                // 未命中页走 NoPage 直挂，不过 pageFor() 的默认边界
                 && $ghostSlot->childAt(0)?->widget() instanceof NoPage
         );
 
@@ -141,13 +142,14 @@ final class PageHostTest extends SmokeTestCase
 
         $element = PageHost::make()->current('a')->table($table)->createElement();
         $element->mount(null, $context);
-        $a = $element->childAt(0)?->childAt(0)?->childAt(0)?->state();
+        // 默认错误边界包在页槽内，activation 控件在边界的下一层
+        $a = $element->childAt(0)?->childAt(0)?->childAt(0)?->childAt(0)?->state();
         check('PageHost · 首帧可见页激活一次', $a instanceof ActivationState && $a->activations === 1);
         check('PageHost · 首帧隐藏页不在树里（ parked 不参与可见遍历）', $element->childAt(0)?->childAt(1)?->childCount() === 0);
 
         $element->update(PageHost::make()->current('b')->table($table));
         $element->settle();
-        $b = $element->childAt(0)?->childAt(1)?->childAt(0)?->state();
+        $b = $element->childAt(0)?->childAt(1)?->childAt(0)?->childAt(0)?->state();
         check('PageHost · 首次切到隐藏页 ⇒ 激活一次', $b instanceof ActivationState && $b->activations === 1);
         check('PageHost · 切走的页不重复激活', $a instanceof ActivationState && $a->activations === 1);
 

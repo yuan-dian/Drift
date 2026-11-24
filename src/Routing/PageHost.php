@@ -44,6 +44,9 @@ final class PageHost extends StatefulWidget
 
     private bool $expanded = false;
 
+    /** 页面子树是否默认套错误边界（A45；严格模式可关） */
+    private bool $guarded = true;
+
     private function __construct()
     {
         parent::__construct();
@@ -113,6 +116,29 @@ final class PageHost extends StatefulWidget
         $this->expanded = $value;
 
         return $this;
+    }
+
+    /**
+     * 路由页面是否默认套错误边界：默认开，一页崩只换该页占位，窗口与兄弟页继续。
+     *
+     * ★ 关掉它得到的是**严格模式**：页面构造 / build / 渲染异常照旧冒到帧循环
+     *   走 Fatal 序列，适合 CI 与开发期把页面错误当硬失败。开关只决定"包不包"，
+     *   不改 `Frame` 对无边界异常的策略（G2）。
+     *
+     * @api
+     */
+    public function guard(bool $value = true): self
+    {
+        $this->mutate();
+        $this->guarded = $value;
+
+        return $this;
+    }
+
+    /** @internal PageHostState 读它 */
+    public function guardsPages(): bool
+    {
+        return $this->guarded;
     }
 
     /** @internal PageHostState 读它 */

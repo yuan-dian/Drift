@@ -5,6 +5,7 @@ namespace Drift\Routing;
 
 use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
+use Drift\Widget\ErrorBoundary;
 use Drift\Widget\Expanded;
 use Drift\Widget\Offstage;
 use Drift\Widget\State;
@@ -93,6 +94,12 @@ final class PageHostState extends State
             /** @var PageHost $widget */
             $widget = $this->widget();
             $page = $this->table?->build($name) ?? new NoPage();
+            // 默认给每个路由页面套一层边界（A45）：这里而非 Page::host() 才是
+            // 页面生命周期的唯一漏斗 —— 缓存与 Offstage 保活都在这里，包在
+            // `Expanded` 内层也才不把 Flex 与 Expanded 之间的约束链切断。
+            if ($widget->guardsPages()) {
+                $page = ErrorBoundary::make($page);
+            }
             // 包装后的实例一起缓存：否则每次切页都 new Expanded，隐藏页的
             // OffstageElement 会误判"换了新描述"而对隐藏页白跑 rebuild。
             $this->pages[$name] = $widget->isExpanded() ? Expanded::make($page) : $page;
