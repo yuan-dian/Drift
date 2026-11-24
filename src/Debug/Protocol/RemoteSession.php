@@ -176,9 +176,16 @@ final class RemoteSession implements Session
      *
      * @return mixed 宿主侧回调的返回值；只能是标量 / 数组 / null
      */
-    public function effect(string $name, array $args = []): mixed
+    public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed
     {
-        $result = $this->callObject(Methods::EFFECT, ['name' => $name, 'args' => $args]);
+        $params = ['name' => $name, 'args' => $args];
+        if ($timestampMs !== null) {
+            // 只在给了的情况下发：老宿主不认识 `t`，而缺省（null）与"用 lastT"
+            // 在那边是同一件事，多发一个键只是让报文变长。
+            $params['t'] = $timestampMs;
+        }
+
+        $result = $this->callObject(Methods::EFFECT, $params);
 
         return $result['value'] ?? null;
     }

@@ -118,7 +118,8 @@ final class Replay
 
         try {
             match ($step->kind) {
-                Step::EFFECT => $session->effect(self::effectName($step), self::effectArgs($step)),
+                // 时刻照脚本给：副作用发生在帧外，取哪一端决定脚本能不能被逐值复现。
+                Step::EFFECT => $session->effect(self::effectName($step), self::effectArgs($step), (float) $step->t),
                 default => $session->send(InputScript::unpack($step), $step->t),
             };
         } catch (\Throwable $e) {

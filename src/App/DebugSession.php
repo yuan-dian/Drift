@@ -204,11 +204,14 @@ final class DebugSession implements Session
      * 结果是否一致由记录摘要判定。这就是为什么异步页的脚本必须带 `resolve` ——
      * 少了它，重放会得到一整段静止画面，而报告本身看不出少了什么。
      *
+     * 时刻默认取 `lastT`（最近一帧），重放时会显式给脚本里的那个 —— 见
+     * {@see \Drift\Debug\Session\SessionDriver::effect()} 的"为什么时刻要由调用方给"。
+     *
      * @param array<string, scalar|null> $args
      *
      * @return mixed 回调的返回值
      */
-    public function effect(string $name, array $args = []): mixed
+    public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed
     {
         $run = $this->effects[$name] ?? null;
         if ($run === null) {
@@ -218,7 +221,7 @@ final class DebugSession implements Session
         }
 
         // 先记后跑：回调抛异常时，脚本里仍如实留下"这一步被尝试过"。
-        $this->recorder->noteEffect($name, $args, $this->lastT);
+        $this->recorder->noteEffect($name, $args, $timestampMs ?? $this->lastT);
 
         return $run($args);
     }

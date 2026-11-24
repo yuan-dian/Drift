@@ -19,8 +19,16 @@ namespace Drift\Debug\Session;
  * {@see \Drift\Debug\Protocol\RemoteSession}（记录在另一个进程里）。消费者不需要
  * 知道是哪一个——这正是 D3 判据"跨进程读到的值与同进程逐值相同"的前提。
  *
+ * ## 为什么 `close()` 也进接口
+ *
+ * 没有它，每个消费者都要自己猜"这个会话跑完之后谁来关"。本地那份关闭时会卸下
+ * 录制器，而录制器是**进程内单例**：不关就开不了下一个会话。于是一段"开 N 次"
+ * 的循环（`loop`）必须知道手里这个东西能关，否则它写的就不是循环，是猜。
+ *
  * @api
  */
 interface Session extends SessionQueries, SessionDriver
 {
+    /** 结束这次会话。重复调用必须无害。 */
+    public function close(): void;
 }

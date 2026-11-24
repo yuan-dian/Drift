@@ -185,6 +185,16 @@ final class VerifyPlan
                 'label'   => '行为 smoke（渲染 / 布局 / 输入 / 异步）',
                 'command' => [$php, $root . '/tools/smoke.php'],
             ],
+            // 重开判据：不比对基线，只要求"三次重开得到同一份因果与结构"。
+            // 它咬的是跨会话残留（单例没清、静态缓存跨页漂），不是像素或数值阈值。
+            'reopen' => [
+                'id'      => 'reopen',
+                'layer'   => 'behavior',
+                'tier'    => 'full',
+                'class'   => 'behavior',
+                'label'   => '重开同一页三次：因果 / 结构 / 录下的脚本逐值相同（--assert）',
+                'command' => [$php, $root . '/tools/debug-loop.php', '--page=table', '--runs=3', '--assert'],
+            ],
             'aot' => [
                 'id'      => 'aot',
                 'layer'   => 'device',

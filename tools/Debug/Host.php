@@ -451,8 +451,14 @@ final class Host
             throw new ProtocolError(ProtocolError::BAD_REQUEST, 'effect 的 args 必须是对象');
         }
 
+        // `t` 可缺：老客户端不发，那就用宿主自己的 `lastT`（旧行为）。
+        $t = $params['t'] ?? null;
+        if ($t !== null && !\is_int($t) && !\is_float($t)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'effect 的 t 必须是数字');
+        }
+
         /** @var array<string, scalar|null> $args */
-        return ['value' => $session->effect($name, $args)];
+        return ['value' => $session->effect($name, $args, $t === null ? null : (float) $t)];
     }
 
     /**

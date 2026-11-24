@@ -45,7 +45,7 @@ $build = static function (string $script, array $rest, string $root): array {
 $verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
 
 /**
- * `drift debug <verb> …` —— 十一个调试出口共用一个动词。
+ * `drift debug <verb> …` —— 十二个调试出口共用一个动词。
  *
  * 它们共享同一套驱动词表（`--page` / `--frames` / `--click` / `--hold` …），
  * 只有"问什么"不同。平级子命令时这套词表要背八遍，且拼错一个只能靠
@@ -70,6 +70,7 @@ $debug = static function (array $rest, string $root): array {
         'serve' => ['debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看'],
         'ctl' => ['debug-ctl.php', '控制面：让自走的宿主停一下 / 走一步 / 接着跑'],
         'web' => ['debug-web.php', '浏览器视图：同一份证据的第三个消费者（几何画布 + 发现）'],
+        'loop' => ['debug-loop.php', '重开 N 次：证明关掉这一页再打开是等价的'],
     ];
 
     $list = static function (array $verbs): void {
@@ -147,7 +148,7 @@ $cmd = match ($name) {
         $root . '/tools/probe-window.py',
         ...$rest,
     ],
-    // 调试：一个动词 + 十一个出口，见 $debug。下面两个平级名（`panel` / `brief`）
+    // 调试：一个动词 + 十二个出口，见 $debug。下面两个平级名（`panel` / `brief`）
     // 是收敛前的旧入口，过渡期保留薄转发，下一轮删。
     'debug' => $debug($rest, $root),
     'panel' => $build('debug-panel.php', $rest, $root),

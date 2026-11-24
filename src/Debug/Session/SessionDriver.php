@@ -37,9 +37,20 @@ interface SessionDriver
      * 返回值只能是标量或数组：跨进程时它要过一遍 JSON。对象在这里是**编码错误**，
      * 不是"悄悄变成 null"。
      *
+     * ## 为什么时刻要由调用方给
+     *
+     * 副作用发生在**帧外**，而"帧外"跨着两帧，取哪一端是两个不同的值。原来记录
+     * 一律用"上一帧的 `t`"（`lastT`），可脚本里写的是"下一帧的 `t`"——于是同一份
+     * 驱动在被录下来之后，脚本指纹就变了，任何"源脚本与录制脚本相同"的判据恒红，
+     * 而红的理由是对的：脚本里存了一个执行时从没人读过的时间。
+     *
+     * 现在由驱动方给：重放时给脚本里的 `t`，与输入同一套口径（都在下一帧被消费，
+     * 就都记下一帧的时刻）；调用方不给（测试、直接点击效果）才退回 `lastT`。
+     *
      * @param array<string, scalar|null> $args
+     * @param float|null $timestampMs 这次副作用算在哪一刻；`null` = 用最近一帧的时刻
      */
-    public function effect(string $name, array $args = []): mixed;
+    public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed;
 
     /** 最近一次推进产生的帧号；一帧都没推时为 0。 */
     public function lastFrameId(): int;

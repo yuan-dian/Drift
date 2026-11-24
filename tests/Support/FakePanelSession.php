@@ -130,9 +130,14 @@ final class FakePanelSession implements Session
     {
     }
 
-    public function effect(string $name, array $args = []): mixed
+    public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed
     {
         return null;
+    }
+
+    /** 假会话没有录制器要卸，也没有连接要断 —— 关它是空操作，但必须能关。 */
+    public function close(): void
+    {
     }
 
     public function lastFrameId(): int
