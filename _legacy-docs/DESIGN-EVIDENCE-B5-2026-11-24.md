@@ -219,3 +219,80 @@ $ drift debug loop --page=async-table --runs=3 --resolve --frames=2
 1. **`--remote` 的会话状态没人标 `finished`**（B4 §11）：宿主在子进程，本进程管不到。修法是在协议里加一个"脚本跑完了"的通知，属于协议变更，不与 loop 同批。
 2. **驱动词表四处各一份**（`brief` / `network` / `serve` / `web`）：加 `loop` 就是第五份。它已经越过"复制一次是省事"的线，下一轮该收成一个解析器 —— 但那是重构，不是本文档的落点。
 
+## 十三、落地时订正
+
+判据 3 在写出来的第一分钟就红了。以下八条都是实现过程中发现的，逐条记原因。
+
+### 13.1 `Session` 接口原来没有 `close()`
+
+`Reopen` 的循环必须"关掉这一轮再开下一轮"——录制器是进程内单例，不关就抛「已有录制器在运行」。而 `Session` 接口上只有 `query()` 与四个驱动方法，`close()` 在两个具体类上各有一份却没进契约。
+
+补进接口。理由不是"方便"：**"能关"必须是类型能保证的事**，否则任何"开 N 次"的循环都只能靠 `instanceof` 猜手里是什么。
+
+### 13.2 脚本指纹与录制指纹对不上：effect 的时刻取了两端
+
+实测（`async-table`，`resolve` + `click`）：
+
+| | 脚本里的 `effect.t` | 录制器记的 `t` |
+|---|---|---|
+| 第一版 | 32 | 16 |
+
+`Plan` 让动作与**之后那一帧**同刻（`PlanTest` 明文要求："动作后的第一帧必须与动作同一时间戳"）；而 `DebugSession::effect()` 记的是 `lastT`，即**之前那一帧**。两端都对，但都不等于对方。后果：`Script::digest()` 修前 `02b9ed39fb07`、修后 `196e2ec40040`，判据 3 恒红。
+
+更要紧的是脚本里存了一个**执行时从没人读过**的时间：`Replay::advance` 的 effect 分支根本不传 `t`。死数据 + 两份证据互相打架 = 排查时白丢半天。
+
+修法：`SessionDriver::effect()` 加可选 `$timestampMs`，`Replay` 传脚本的 `t`，`RemoteSession` 只在给了的情况下才把它放进报文（老宿主不认识这个键，而"没有"与"用 lastT"在那边是同一件事）。**不传时仍用 `lastT`**，直接调 `effect()` 的测试与用户代码一个字不用改。
+
+修后判据 3 从"恒红"变成"逐值相同"，而它咬的是真东西：重放丢步、多步、时刻被改，帧因果可能一帧都不差。
+
+### 13.3 单轮的"一致"是空话，JSON 里也不能是 `true`
+
+判据 6 要求单轮不假装通过。实现时发现首版 `consistent` 是 `bool`，单轮算出来是 `true` —— `--assert` 于是打勾通过。
+
+改成 `bool|null`：`null` = 没测。出口再补一道 `--assert` 拒绝 `--runs<2`（状态码 2），两处各管一层——数据层不该编造结论，出口层不该接受一个测不了的请求。
+
+### 13.4 JSON 里 `runs` 撞名，被 `+` 静默吃掉
+
+出口原本写 `['label' => $label, 'runs' => $runs] + $report`，想同时给"跑了几次"与"逐轮记录"。而 `$report` 里的 `runs` 是逐轮数组，`+` 保留左边同键 ⇒ 输出里 `runs` 成了一个整数。测试第一次跑就撞出来了（`count(): Argument must be of type Countable|array, int given`）。
+
+去掉那个次数：轮数就是 `count(runs)`，一个数不该有两个来源。
+
+### 13.5 判据 5 的夹具必须用**累积型**输入
+
+第一版夹具用 `Tab` + `Space` 激活一个开关：复用应用时两轮**一致**，判据 5 咬不住。原因是点击是自反的——一来一回回到原值，第二轮看到的是同一个世界。
+
+换滚轮就咬住了：滚动位置累积，第二轮从第一轮的终点继续滚，`divergence` 报 `part=frame`、`frame=1`、`rounds=[2,3,4]`。
+
+这条与 §2.2 的"第 2、3 轮彼此相同"是同一件事的两面：**自反输入**与**饱和输入**都会长出假的一致。夹具必须避开这两类。
+
+### 13.6 `rising` 是事实，不是警告
+
+三轮内存 27.543 → 27.608 MB，严格递增，于是打了"逐轮上升"——总量只涨 65KB。这个标签会让人去查一个不存在的问题。
+
+报告改成：只在"涨了 1% 以上**且**逐轮升"时才提。`Reopen` 里那个布尔值保持原样（它是事实，测试要能用），措辞与阈值归渲染。
+
+### 13.7 首轮挂载系统性偏慢，正好印证了 §四
+
+实测：`table` 首轮 138.9ms、后续 44.8ms；`async-table` 首轮 66.1ms、后续 8.2ms。差的是类加载与 autoload，全记在第一次上。
+
+如果性能列按首轮判断，**每一次都会得到"慢了 3 倍"**。这就是"性能取中位"不是洁癖而是必需——报告里还加了一行提示（首轮 > 中位 1.5 倍时出现），因为人不记得这件事，而它每次都在。
+
+### 13.8 `--out` 需要一个"关闭之前"的钩子
+
+`Reopen` 在 `finally` 里关会话，而导出证据必须在会话活着时做（关掉之后录制器就卸了）。原设计漏了这一点。
+
+加了 `$watch(int $round, Session $session)`：取完快照、**关闭之前**调一次。出口用它导出第 1 轮，测试用它证明了"导的是首轮"。
+
+这个参数同时说明了为什么 `--out` 只导出首轮是自然的：钩子对每轮都调，而"只导第一轮"是出口的一个 `if`，不是 `Reopen` 的特殊分支。
+
+## 十四、判据的最终形态
+
+| # | 判据 | 落在哪 |
+|---|---|---|
+| 1 | N 轮 `digest` 逐值相同，不同时报第一处（节点数 / 节点表 / 脚本 / 第几帧） | `LoopTest::testRebuildingThePageRepeatsTheSameDigest` + `--assert` |
+| 2 | 会话令牌互不相同、节点数与节点表指纹相同 | 同上 |
+| 3 | 每轮录下的脚本与喂进去的逐值相同 | `LoopTest::testRecordedScriptMatchesTheDriveOnEveryRun` |
+| 4 | 五轮内存涨幅 < 5% | `LoopTest::testMemoryStaysFlatAcrossRuns` |
+| 5 | 复用同一应用时判据 1 必须红 | `LoopTest::testReusingTheApplicationBreaksConsistency` |
+| 6 | 单轮 `consistent === null`，出口拒绝 `--assert --runs=1` | `testSingleRunDoesNotClaimConsistency` / `testAssertRefusesASingleRun` |
+| 7 | `--out` 导首轮；`--remote` 被拒并说明理由 | `testRemoteIsRefusedWithAReason`（导出靠 `$watch` 的 `if`） |
