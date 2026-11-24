@@ -45,7 +45,7 @@ $build = static function (string $script, array $rest, string $root): array {
 $verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
 
 /**
- * `drift debug <verb> …` —— 八个调试出口共用一个动词。
+ * `drift debug <verb> …` —— 九个调试出口共用一个动词。
  *
  * 它们共享同一套驱动词表（`--page` / `--frames` / `--click` / `--hold` …），
  * 只有"问什么"不同。平级子命令时这套词表要背八遍，且拼错一个只能靠
@@ -64,6 +64,7 @@ $debug = static function (array $rest, string $root): array {
         'pick' => ['debug-pick.php', '按视口坐标点选，给命中链与每层路径'],
         'props' => ['debug-props.php', '按节点读 Widget / State 配置'],
         'host' => ['debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）'],
+        'serve' => ['debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看'],
     ];
 
     $list = static function (array $verbs): void {
@@ -141,7 +142,7 @@ $cmd = match ($name) {
         $root . '/tools/probe-window.py',
         ...$rest,
     ],
-    // 调试：一个动词 + 八个出口，见 $debug。下面两个平级名（`panel` / `brief`）
+    // 调试：一个动词 + 九个出口，见 $debug。下面两个平级名（`panel` / `brief`）
     // 是收敛前的旧入口，过渡期保留薄转发，下一轮删。
     'debug' => $debug($rest, $root),
     'panel' => $build('debug-panel.php', $rest, $root),
@@ -195,6 +196,7 @@ drift —— 统一开发入口
         pick     按视口坐标点选，给命中链与每层路径
         props    按节点读 Widget / State 配置
         host     宿主进程（调试协议另一端，通常由 --remote 起）
+        serve    常驻宿主：自己推帧，另一个终端用 `brief --attach` 看
      旧名 composer panel / composer brief / composer debug-host 过渡期仍是别名
   composer codegen                            T1 tpc 翻译层门（秒级，不编译）
   composer aot-equiv                          T2 解释器 ↔ 全 AOT 逐值几何等价

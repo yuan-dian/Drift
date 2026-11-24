@@ -276,6 +276,42 @@ final class QueryTest extends SmokeTestCase
     }
 
     /**
+     * S-live 判据 5：游标落在窗口外时，`dropped` 说清裁了多少，**不返回空数组**。
+     *
+     * 这条防的是"把被裁掉读成那时没有"。两者的表现一样（都是查不到帧），后果相反：
+     * 前者该提示"你看太慢了，中间没了"，后者是"这段时间确实没动"。
+     */
+    public function testCursorBehindTheWindowReportsWhatWasDropped(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+
+        try {
+            $capacity = (int) ($recorder->stats()['capacity'] ?? 0);
+            $total = $capacity + 100;
+
+            $app->frame(0.0, $this->constraints());
+            for ($i = 1; $i < $total; ++$i) {
+                $app->frame($i * 16.0, $this->constraints());
+            }
+
+            $page = (new Query($recorder))->frames(0, false, 0);
+            $from = $total - $capacity + 1;
+
+            check('窗口被撑到容量上限', $page['window']['frames'] === $capacity, (string) $page['window']['frames']);
+            check('窗口从最新的那一段开始', $page['window']['from'] === $from, (string) $page['window']['from']);
+            check('被裁掉的条数如实给出', $page['dropped'] === $total - $capacity, (string) $page['dropped']);
+            check(
+                '不返回空数组 —— 空会被读成「那时没有」',
+                \count($page['frames']) === $capacity,
+                'count=' . \count($page['frames']),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    /**
      * 排序判据：构造"路径序"与"子树序"给出**相反**答案的结构。
      *
      * `FanOutState` 下先挂 `Align`（名字靠前、子树小），再挂内层 `Column`

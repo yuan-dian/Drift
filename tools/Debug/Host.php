@@ -47,8 +47,18 @@ use Drift\Debug\Session\Step;
  */
 final class Host
 {
-    public function __construct(private readonly Server $server)
-    {
+    /**
+     * @param string|null $accessToken
+     *   访问令牌：**能不能连上这个宿主**。与 `DebugSession::sessionToken()` 不是一回事 ——
+     *   那个是"这次录制的时间线身份"，每次 `open` 换一个，用来判跨会话的游标；
+     *   这个是"这个进程的调试面开给谁"，进程活多久就多久。两者混用会让"宿主重启"
+     *   与"重新录制"变成同一件事。
+     *   `null` = 不校验（stdio 宿主：通道就是父进程的管道，本来没有"外人"这回事）。
+     */
+    public function __construct(
+        private readonly Server $server,
+        private readonly ?string $accessToken = null,
+    ) {
     }
 
     /**
@@ -59,8 +69,12 @@ final class Host
      *   `--at`）。**它必须喂脚本里的 `t`**，拿墙钟当 `t` 会让记录不可判。
      *   给了 tick 就要求 `Server::canPoll()`，否则会卡在等消息上、帧再也不动。
      *   还没 `open` 时不调 tick（没有会话可推进），此时 `wait()` 回到阻塞。
+     * @param Script|null $autoStart
+     *   自走宿主的开局脚本：**进循环前先自己建会话**。没有它就没人发 `open`，
+     *   于是 `tick` 永远等不到会话 —— 自走宿主会安静地不推进任何一帧。
+     *   建出来的会话与客户端 `open` 出来的完全一样，所以观察者带令牌就能接上。
      */
-    public function serve(callable $open, ?callable $tick = null): void
+    public function serve(callable $open, ?callable $tick = null, ?Script $autoStart = null): void
     {
         if ($tick !== null && !$this->server->canPoll()) {
             throw new \LogicException(
@@ -74,6 +88,11 @@ final class Host
         $session = null;
 
         try {
+            if ($autoStart !== null) {
+                // 自走：没有客户端来发 open，会话只能由宿主自己建。
+                $session = $open($autoStart->fork())['session'];
+            }
+
             while (true) {
                 // 有 tick 且已经有会话时零超时：扫一眼有没有待办消息，没有就去跑一帧。
                 // 还没 open 时必须阻塞等（否则会空转烧 CPU，而它连帧都推不了）。
@@ -104,8 +123,10 @@ final class Host
                     $this->dispatch($channel, $line, $open, $session);
                 }
 
-                // 没有连接了、也不自走 ⇒ 没人听了。自走中则继续跑（观察者随时可重连）。
-                if ($channels === [] && $tick === null) {
+                // 没有连接了、也不自走、也不是自走宿主 ⇒ 没人听了。自走中则继续跑
+                // （观察者随时可重连）；自走宿主跑完也继续等 —— "served 完就悄悄退出"
+                // 会让下一个人连上来时看到"连接被拒绝"，而他什么都没做错。
+                if ($channels === [] && $tick === null && $autoStart === null) {
                     return;
                 }
             }
@@ -162,6 +183,15 @@ final class Host
         }
 
         if ($method === Methods::OPEN) {
+            // 带令牌的 open 是**接现有会话**，不是新建：应用已经在跑，重建一遍会把
+            // 观察者看到的"那一次运行"换成另一次，而两次的帧号、节点号本来就不保证相同。
+            $token = $params['token'] ?? null;
+            if (\is_string($token) && $token !== '') {
+                $this->attach($channel, $id, $session, $token);
+
+                return;
+            }
+
             if ($session !== null) {
                 $this->fail($channel, $id, ProtocolError::ALREADY_OPEN, '这个宿主已经打开过会话：先 close 或新开一个宿主进程');
 
@@ -203,6 +233,57 @@ final class Host
     }
 
     // ------------------------------------------------------------------ 方法
+
+    /**
+     * 接上一个已经在跑的会话：发令牌、拿回会话身份与末帧号，**不重建应用**。
+     *
+     * 回执刻意不给 `mountMs`：这次没有挂载，填 0 会被读成"挂载花了 0 毫秒"。
+     * 用 `reused` 明说是复用，调用方就不必靠字段有没有来猜。
+     */
+    private function attach(Channel $channel, int $id, ?DebugSession $session, string $token): void
+    {
+        if ($this->accessToken === null) {
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::UNAUTHORIZED,
+                '这个宿主没开访问令牌（stdio 通道本来只有父进程能说上话），接不了',
+            );
+
+            return;
+        }
+
+        // 定长比较，别让令牌在第一次不同字节处停下。
+        if (!\hash_equals($this->accessToken, $token)) {
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::UNAUTHORIZED,
+                'token 对不上：去 .drift/session.json 拿当前那个（宿主重启后令牌会换）',
+            );
+
+            return;
+        }
+
+        if ($session === null) {
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::NOT_OPEN,
+                '这个宿主上没有会话可接：它可能已经 close 过，或者刚被重启过',
+            );
+
+            return;
+        }
+
+        $this->ok($channel, $id, [
+            'reused' => true,
+            'session' => $session->sessionToken(),
+            // 末帧一起给：观察者的游标要有个起点，否则它得先问一次 state 才知道从哪读。
+            'lastFrame' => $session->lastFrameId(),
+            'pid' => \getmypid(),
+        ]);
+    }
 
     /**
      * @param callable(Script): array{session: DebugSession, mountMs: float} $open

@@ -52,6 +52,31 @@ final class SocketChannel implements Channel
         return $this->stream;
     }
 
+    /**
+     * 连一个已经在监听的宿主。
+     *
+     * 连不上时**只报端口与系统原因**：更该说的话（宿主是不是已经退出）需要查发现
+     * 文件里的 pid，那是 {@see Discovery::diagnose()} 的事 —— 这里拿不到那条记录。
+     *
+     * @throws \RuntimeException 连不上
+     */
+    public static function connect(int $port, float $timeoutSeconds = 3.0): self
+    {
+        $errno = 0;
+        $errstr = '';
+        $stream = @\stream_socket_client(
+            'tcp://127.0.0.1:' . $port,
+            $errno,
+            $errstr,
+            $timeoutSeconds,
+        );
+        if ($stream === false) {
+            throw new \RuntimeException("连不上 127.0.0.1:{$port}：{$errstr}");
+        }
+
+        return new self($stream);
+    }
+
     public function read(): ?string
     {
         if ($this->closed) {

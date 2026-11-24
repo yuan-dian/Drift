@@ -29,6 +29,8 @@ declare(strict_types=1);
  *   --remote          用宿主进程跑（验证跨进程读到同一份证据）
  *   --out=<文件>      把这次会话导出成证据包（NDJSON，首行 manifest）
  *   --from=<文件>     不跑会话，直接读证据包复算（与 --page / 驱动参数互斥）
+ *   --attach          接一个已经在跑的会话（`drift debug serve` 起的），只读不驱动
+ *   --session=<id>    同一目录有多个会话时点名；不给且不止一个就报错列出候选
  *   --budget=N        行预算（默认 40）
  *   --width=N         排版宽度（默认 100）
  *   --view-width=N    视口宽度（默认 800；布局复现用，别与排版宽度混）
@@ -40,15 +42,9 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
-use Drift\Debug\Session\Evidence;
-use Drift\Debug\Session\QueryRouter;
-use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\SessionQueries;
 use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\ProcessTransport;
-use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Brief;
 
 $target = null;
@@ -63,6 +59,8 @@ $rows = 0;
 $hold = 1;
 $at = null;
 $remote = false;
+$attach = false;
+$sessionId = null;
 $json = false;
 $budget = 40;
 $textWidth = 100;
@@ -74,6 +72,10 @@ foreach (\array_slice($argv, 1) as $arg) {
         $json = true;
     } elseif ($arg === '--remote') {
         $remote = true;
+    } elseif ($arg === '--attach') {
+        $attach = true;
+    } elseif (\str_starts_with($arg, '--session=')) {
+        $sessionId = \substr($arg, 10);
     } elseif ($arg === '--resolve') {
         $steps[] = ['resolve', ''];
     } elseif (\str_starts_with($arg, '--frames=')) {
@@ -117,36 +119,23 @@ foreach (\array_slice($argv, 1) as $arg) {
 
 $label = $from !== null ? \basename($from) : ($page ?? $target);
 
-$session = null;
-$closable = null;
+$source = null;
 try {
-    if ($from !== null) {
-        // 离线：包里已经有完整的驱动记录，再给驱动参数就是两套说法，不猜以谁为准。
-        if ($page !== null || $target !== null || $steps !== [] || $framesGiven) {
-            throw new \InvalidArgumentException(
-                '--from 与 --page / 目标 / --frames / 驱动参数互斥：包里已经有完整的驱动记录',
-            );
-        }
-        if ($out !== null) {
-            // 离线读出的录制器是游离实例，不再产生新记录。真要另存（裁域 / 换格式）
-            // 得重跑一次会话——顺手"读进来再写出去"会写出与源包不同的东西而不自知。
-            throw new \InvalidArgumentException(
-                '--from 与 --out 不能同用：离线复算不产生新记录，要另存请重跑一次会话',
-            );
-        }
+    if ($from !== null && ($page !== null || $target !== null || $steps !== [] || $framesGiven)) {
+        // 这条留在出口而不搬进 `Source`：`--frames` / 驱动动作是**出口自己的**词，
+        // `Source` 只认"要不要跑"这个意图，看不见"给了帧数却没给页面"。
+        throw new \InvalidArgumentException(
+            '--from 与 --page / 目标 / --frames / 驱动参数互斥：包里已经有完整的驱动记录',
+        );
+    }
 
-        $offline = Recorder::hydrate(Evidence::read($from));
-        $session = QueryRouter::offline($offline);
-        // 标签优先取包里的脚本目标：那才是"这份证据是跑哪一页得到的"。
-        $label = $offline->script()?->target ?? \basename($from);
-    } else {
+    $drive = null;
+    if ($from === null && !$attach) {
         if ($label === null) {
             \fwrite(\STDERR, "用法：debug-brief <AppClass|路由id> [--page=<路由id>] [--frames=N] [--json]\n");
             \fwrite(\STDERR, "      debug-brief --from=<证据包> [--json]\n");
+            \fwrite(\STDERR, "      debug-brief --attach [--session=<id>] [--json]\n");
             exit(2);
-        }
-        if ($out !== null && $remote) {
-            throw new \InvalidArgumentException('--out 不能与 --remote 同用：导出要本地那份记录');
         }
 
         $meta = $rows > 0 ? ['rows' => $rows] : [];
@@ -155,33 +144,23 @@ try {
         }
 
         $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
-
-        if ($remote) {
-            $session = new RemoteSession(ProcessTransport::spawn([
-                \PHP_BINARY,
-                \dirname(__DIR__) . '/tools/debug-host.php',
-            ]));
-            $session->open($drive->fork());
-        } else {
-            $opened = Runner::open((string) $label, (float) $width, (float) $height, $meta, $drive->fork());
-            $session = $opened['session'];
-        }
-        $closable = $session;
-
-        Replay::apply($session, $drive, [], $at, static function (int $id, float $ms): void {
-        });
     }
 
-    $facts = gather($session, (string) $label);
+    $source = Source::resolve(
+        from: $from,
+        attach: $attach,
+        remote: $remote,
+        drive: $drive,
+        at: $at,
+        out: $out,
+        session: $sessionId,
+    );
+    $label = $source->label();
+
+    $facts = gather($source->queries(), $label);
 
     // 导出放在取事实之后：几何是帧末采的，早于最后一帧导出会少一段。
-    if ($out !== null) {
-        $recorder = Recorder::current();
-        if ($recorder === null) {
-            throw new \RuntimeException('--out 要本地那份记录，当前没有录制器');
-        }
-        Evidence::write($recorder, $out);
-    }
+    $source->export();
     $brief = Brief::project($facts, $budget, $textWidth);
 
     if ($json) {
@@ -205,7 +184,7 @@ try {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);
 } finally {
-    $closable?->close();
+    $source?->close();
 }
 
 /**

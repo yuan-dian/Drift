@@ -41,8 +41,9 @@ final class HostTest extends SmokeTestCase
     /**
      * @param list<array<string, mixed>> $commands
      * @param null|callable(Script): array{session: DebugSession, mountMs: float} $open
+     * @param string|null $token 访问令牌；给了才允许 attach
      */
-    private function serve(array $commands, ?callable $open = null): FakeTransport
+    private function serve(array $commands, ?callable $open = null, ?string $token = null): FakeTransport
     {
         $lines = [];
         foreach ($commands as $command) {
@@ -50,7 +51,7 @@ final class HostTest extends SmokeTestCase
         }
 
         $transport = new FakeTransport($lines);
-        $host = new Host(new SingleServer($transport));
+        $host = new Host(new SingleServer($transport), $token);
         $host->serve($open ?? static fn(Script $s): array => Runner::open(
             $s->target,
             $s->width,
@@ -154,6 +155,80 @@ final class HostTest extends SmokeTestCase
             '第二次被拒绝',
             ($replies[1]['error']['code'] ?? '') === ProtocolError::ALREADY_OPEN,
             self::show($replies[1] ?? null),
+        );
+    }
+
+    /**
+     * 带令牌的 `open` 是「接现有会话」，令牌不对必须说清楚是令牌不对。
+     *
+     * 这条与上一条分开的意义：`already_open` 让调用方去新开进程，而令牌不对时新开
+     * 进程是错的动作 —— 会话还在跑，该做的是去发现文件里拿当前令牌。
+     */
+    public function testAttachWithWrongTokenIsUnauthorizedNotAlreadyOpen(): void
+    {
+        $script = $this->script()->toArray();
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $script]),
+            self::call(2, Methods::OPEN, ['token' => \str_repeat('0', 32)]),
+            // 被拒之后循环还活着：会话仍然可以查
+            self::call(3, Methods::QUERY, ['name' => 'state']),
+        ], token: 'secret')->decoded();
+
+        check('回了三次', \count($replies) === 3, self::show(\count($replies)));
+        check(
+            '令牌不对报 unauthorized',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::UNAUTHORIZED,
+            self::show($replies[1] ?? null),
+        );
+        check('被拒之后会话没坏', $replies[2]['ok'] === true, self::show($replies[2] ?? null));
+    }
+
+    /**
+     * 令牌对上了就**复用**，不重建：重建会把观察者要看的"那一次运行"换成另一次，
+     * 而两次的帧号、节点号本来就不保证相同。
+     */
+    public function testAttachWithRightTokenReusesTheRunningSession(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::FRAME, ['t' => 0.0]),
+            self::call(3, Methods::OPEN, ['token' => 'secret']),
+            self::call(4, Methods::QUERY, ['name' => 'frames']),
+        ], token: 'secret')->decoded();
+
+        $first = $replies[0]['result'] ?? [];
+        $attach = $replies[2]['result'] ?? [];
+
+        check('接上了', ($attach['reused'] ?? null) === true, self::show($attach));
+        check(
+            '会话令牌与第一次 open 给的是同一个（不是新开的）',
+            ($attach['session'] ?? null) === ($first['session'] ?? 'x'),
+            self::show($attach['session'] ?? null),
+        );
+        check('末帧号一并给出，观察者的游标有起点', ($attach['lastFrame'] ?? null) === 1, self::show($attach['lastFrame'] ?? null));
+        check(
+            '接上之后能直接读到刚才那一帧',
+            \count($replies[3]['result']['frames'] ?? []) === 1,
+            self::show($replies[3] ?? null),
+        );
+    }
+
+    /** 宿主上还没有会话时去接，要报「没有会话可接」，而不是把它当成新建。 */
+    public function testAttachBeforeOpenSaysThereIsNoSession(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['token' => 'secret']),
+        ], token: 'secret')->decoded();
+
+        check(
+            '没有会话可接时明确报错',
+            ($replies[0]['error']['code'] ?? '') === ProtocolError::NOT_OPEN,
+            self::show($replies[0] ?? null),
+        );
+        check(
+            '错误里说清楚是「没有会话」而不是「没 open」',
+            \str_contains((string) ($replies[0]['error']['message'] ?? ''), '没有会话可接'),
+            self::show($replies[0]['error']['message'] ?? null),
         );
     }
 

@@ -31,6 +31,15 @@ final class ProtocolError extends \RuntimeException
     /** `open` 之后又 `open`。 */
     public const string ALREADY_OPEN = 'already_open';
 
+    /**
+     * 带着令牌去接一个已经在跑的会话，令牌对不上。
+     *
+     * 与 {@see self::ALREADY_OPEN} 分开，因为下一步动作不同：那个说「你该新开进程」，
+     * 这个说「令牌不对，去看发现文件」。也刻意不说「会话过期」——过期是原因，令牌
+     * 不对才是观察者能验证的事实。
+     */
+    public const string UNAUTHORIZED = 'unauthorized';
+
     /** 宿主内部抛了异常（查询失败、页面造不出来……），消息里是原始文本。 */
     public const string CALL_FAILED = 'call_failed';
 

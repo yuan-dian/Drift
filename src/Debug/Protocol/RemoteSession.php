@@ -75,6 +75,31 @@ final class RemoteSession implements Session
         return (float) $mount;
     }
 
+    /**
+     * 接上宿主里**已经在跑**的会话，不重建应用。返回末帧号（观察者游标的起点）。
+     *
+     * 与 {@see self::open()} 同一个方法名会更好看，但两者的前置条件相反：`open` 要求
+     * 宿主上还没有会话，`attach` 要求已经有。合成一个方法就得靠"带没带 script"分支，
+     * 而那种分支的错误表现是"本来想接上，结果把别人的会话重建了"。
+     *
+     * @throws ProtocolError `unauthorized`（令牌不对）/ `not_open`（宿主上没有会话可接）
+     */
+    public function attach(string $token): int
+    {
+        if ($this->opened) {
+            throw new \LogicException('这个远端会话已经打开过：一个宿主进程只服务一次运行');
+        }
+        $this->opened = true;
+
+        $result = $this->callObject(Methods::OPEN, ['token' => $token]);
+        $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
+        if (\is_int($result['lastFrame'] ?? null)) {
+            $this->lastFrameId = $result['lastFrame'];
+        }
+
+        return $this->lastFrameId;
+    }
+
     /** 跑这次会话的宿主进程号；没打开时为 `null`。 */
     public function hostPid(): ?int
     {
@@ -152,6 +177,21 @@ final class RemoteSession implements Session
         } finally {
             $this->transport->close();
         }
+    }
+
+    /**
+     * 只断开，**不**关会话：接别人的会话时退出，不该把人家正在看的那次运行结束掉。
+     *
+     * 宿主发现这条通道没了只是把它从等待集合里摘掉；会话与录制都还在，下一个人
+     * 随时可以再接上来（`CLOSE` 才是"这次运行到此为止"）。
+     */
+    public function detach(): void
+    {
+        if ($this->closed) {
+            return;
+        }
+        $this->closed = true;
+        $this->transport->close();
     }
 
     // ------------------------------------------------------------------ 收发

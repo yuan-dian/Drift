@@ -83,31 +83,54 @@ final class Replay
                 break;
             }
 
-            if ($step->kind === Step::FRAME) {
-                $ms = $session->pump((float) $step->t);
-                ++$frames;
-                if ($onFrame !== null) {
-                    $onFrame($session->lastFrameId(), $ms);
-                }
+            $ms = self::advance($session, $step, $index);
+            if ($ms === null) {
                 continue;
             }
 
-            try {
-                match ($step->kind) {
-                    Step::EFFECT => $session->effect(self::effectName($step), self::effectArgs($step)),
-                    default => $session->send(InputScript::unpack($step), $step->t),
-                };
-            } catch (\Throwable $e) {
-                // 带步号重抛：脚本是给人改的，报错必须指到那一行。
-                throw new \RuntimeException(
-                    "重放第 {$index} 步失败（{$step->describe()}）：" . $e->getMessage(),
-                    0,
-                    $e,
-                );
+            ++$frames;
+            if ($onFrame !== null) {
+                $onFrame($session->lastFrameId(), $ms);
             }
         }
 
         return $frames;
+    }
+
+    /**
+     * 推**一步**。给自走宿主用：它的帧循环是"没消息时推一步"，而不是"一口气跑完"。
+     *
+     * `apply()` 也走这里 —— 两份循环的唯一区别是"谁决定下一步"，而这一步的动作
+     * （帧怎么推、输入怎么派发、效果参数怎么剥）必须只有一份。分开写的话，`--at`
+     * 的边界、步号报错、效果参数剥离会各自漂，而漂出来的差异只在某一条路径上出现。
+     *
+     * @param int $index 步号（从 1 起），只用来把报错指到脚本里的那一行
+     *
+     * @return float|null 推了一帧就返回整帧墙钟毫秒；非帧步骤返回 `null`
+     *
+     * @internal 逐步驱动入口；一般用 {@see self::apply()}
+     */
+    public static function advance(SessionDriver $session, Step $step, int $index): ?float
+    {
+        if ($step->kind === Step::FRAME) {
+            return $session->pump((float) $step->t);
+        }
+
+        try {
+            match ($step->kind) {
+                Step::EFFECT => $session->effect(self::effectName($step), self::effectArgs($step)),
+                default => $session->send(InputScript::unpack($step), $step->t),
+            };
+        } catch (\Throwable $e) {
+            // 带步号重抛：脚本是给人改的，报错必须指到那一行。
+            throw new \RuntimeException(
+                "重放第 {$index} 步失败（{$step->describe()}）：" . $e->getMessage(),
+                0,
+                $e,
+            );
+        }
+
+        return null;
     }
 
     private static function effectName(Step $step): string
