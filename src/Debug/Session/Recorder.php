@@ -353,6 +353,30 @@ final class Recorder
         return null;
     }
 
+    /**
+     * 目标帧上生效的全部盒几何：每个节点取不晚于该帧的最新一条。
+     *
+     * 与 {@see geometryAt()} 是同一套"往前找最近记录"的语义，只是这里一次给全，
+     * 供投影层跨盒扫描（例如比较父给子的约束与子实际收到的约束）。逐节点各问一次
+     * 会得到同样的答案，但那要多 N 次往返，而且让消费者自己拼一张表。
+     *
+     * @return array<int, GeometryRecord> node id => 该帧生效的几何记录
+     */
+    public function geometryRows(int $frame): array
+    {
+        $out = [];
+        foreach ($this->geometry as $f => $rows) {
+            if ($f > $frame) {
+                break;
+            }
+            foreach ($rows as $node => $record) {
+                $out[$node] = $record;
+            }
+        }
+
+        return $out;
+    }
+
     /** @return array{frames: int, capacity: int, from: int, to: int, nodes: int} */
     public function geometryCoverage(): array
     {

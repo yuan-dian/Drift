@@ -6,7 +6,7 @@ declare(strict_types=1);
  * `debug-brief` —— 证据层的第一个可用出口：跑一段页面，把它压成一份预算内的简报。
  *
  * 它存在的目的不是"多一个命令"，是验证证据模型里那条假设：
- * **现有六域事实足以自动指出"哪里不对"，不需要任何新采集。**
+ * **现有查询面的事实足以自动指出"哪里不对"，不需要任何新采集。**
  * 如果这份简报读起来像"有人已经看过一遍"，假设成立；如果它只能复述数字，
  * 说明缺的不是投影层，是采集层 —— 那要在写 S1 之前就知道。
  *
@@ -29,6 +29,8 @@ declare(strict_types=1);
  *   --remote          用宿主进程跑（验证跨进程读到同一份证据）
  *   --budget=N        行预算（默认 40）
  *   --width=N         排版宽度（默认 100）
+ *   --view-width=N    视口宽度（默认 800；布局复现用，别与排版宽度混）
+ *   --height=N        视口高度（默认 600）
  *   --json            输出结构化结果（发现 + 裁剪账 + 指纹）
  *
  * @internal 未进 VerifyPlan：规则阈值还在定，进 CI 会变成"改阈值就红一片"
@@ -70,6 +72,8 @@ foreach (\array_slice($argv, 1) as $arg) {
         $frames = \max(1, (int) \substr($arg, 9));
     } elseif (\str_starts_with($arg, '--width=')) {
         $textWidth = \max(40, (int) \substr($arg, 8));
+    } elseif (\str_starts_with($arg, '--view-width=')) {
+        $width = \max(1, (int) \substr($arg, 13));
     } elseif (\str_starts_with($arg, '--height=')) {
         $height = \max(1, (int) \substr($arg, 9));
     } elseif (\str_starts_with($arg, '--rows=')) {
@@ -216,6 +220,13 @@ function gather(SessionQueries $session, string $label): array
         $facts['cascadeQuery'] = $cascadeQuery;
         $facts['cascade'] = $session->query('cascade', $cascadeQuery);
     }
+
+    // 几何读同一个最贵帧：布局的"为什么"要与因果的"为什么"对齐到一帧，
+    // 否则报告里 `frame:2 node:61` 的两种答案来自两次运行。
+    // 走查询面而不是摸 Recorder —— 远端会话没有后者。
+    $facts['geometry'] = $worst > 0
+        ? $session->query('boxes', ['frame' => $worst])
+        : $session->query('boxes');
 
     return $facts;
 }

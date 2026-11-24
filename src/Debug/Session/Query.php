@@ -243,6 +243,44 @@ final class Query
     }
 
     /**
+     * 一帧里所有盒的几何摘要，按 node id 升序。
+     *
+     * 这是 `boxModel` 的"整帧版"，只读同一份几何记录，不碰活盒、不新采集。
+     * 它给投影层的是**原料**而不是结论：父子约束怎么比、什么算异常，由投影层
+     * 按规则决定。查询层一旦自己判"这里不对"，证据与意见就长在同一处了。
+     *
+     * `window` 随答案一起给：几何窗口只有 60 帧（帧窗口是 600），查不到时
+     * 必须说得清是"窗口外"还是"没有这个盒"。
+     *
+     * @return array{frame: int, rows: list<array<string, mixed>>, window: array<string, mixed>}
+     */
+    public function boxes(?int $frame = null): array
+    {
+        $frameId = $frame ?? $this->recorder->lastFrameId();
+        $records = $this->recorder->geometryRows($frameId);
+        \ksort($records, \SORT_NUMERIC);
+
+        $rows = [];
+        foreach ($records as $node => $record) {
+            $rows[] = [
+                'node' => $node,
+                'parent' => $record->parent,
+                'type' => $this->recorder->typeOf($node),
+                'applied' => $record->applied,
+                'inner' => $record->inner,
+                'size' => $record->size,
+                'box' => $record->box,
+            ];
+        }
+
+        return [
+            'frame' => $frameId,
+            'rows' => $rows,
+            'window' => $this->recorder->geometryCoverage(),
+        ];
+    }
+
+    /**
      * 一个节点的盒模型：margin / border / padding / content 四层 + 位置。
      *
      * 全部来自帧边界的几何快照，不碰活盒——所以导出的证据在另一个进程里也能问

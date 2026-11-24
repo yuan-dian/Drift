@@ -38,6 +38,40 @@ final class BriefTest extends TestCase
             'nodes' => [],
             'digest' => ['digest' => 'abcdef012345'],
             'window' => ['from' => 1, 'to' => 1, 'count' => 1, 'capacity' => 600],
+            'geometry' => self::geometry(),
+        ], $over);
+    }
+
+    /**
+     * 一行盒事实；缺省是一块 800 宽的根盒，不触发任何约束改写规则。
+     *
+     * @param array<string, mixed> $over
+     * @return array<string, mixed>
+     */
+    private static function row(int $node, int $parent, string $type, array $over = []): array
+    {
+        return \array_merge([
+            'node' => $node,
+            'parent' => $parent,
+            'type' => $type,
+            'applied' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 0.0, 'maxH' => 600.0],
+            'inner' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 0.0, 'maxH' => 600.0],
+            'size' => ['w' => 800.0, 'h' => 600.0],
+            'box' => null,
+        ], $over);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @param array<string, mixed>       $over
+     * @return array<string, mixed>
+     */
+    private static function geometry(array $rows = [], array $over = []): array
+    {
+        return \array_merge([
+            'frame' => 1,
+            'rows' => $rows === [] ? [self::row(2, -1, 'Card')] : $rows,
+            'window' => ['frames' => 1, 'capacity' => 60, 'from' => 1, 'to' => 1, 'nodes' => 1],
         ], $over);
     }
 
@@ -290,5 +324,170 @@ final class BriefTest extends TestCase
             self::assertNotSame('', $one->threshold);
             self::assertNotSame('', $one->recheck);
         }
+    }
+
+    /**
+     * "为什么只有 240 宽"要能由几何事实自己说出口：哪两跳、从多少到多少、
+     * 是谁改的，以及怎么复算。不能只说"这个盒子有点窄"。
+     */
+    public function testTightenedWidthIsExplainedAsEvidence(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'Column', [
+                    'applied' => ['minW' => 760.0, 'maxW' => 760.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'inner' => ['minW' => 760.0, 'maxW' => 760.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'size' => ['w' => 760.0, 'h' => 600.0],
+                ]),
+                self::row(11, 2, 'TableBox', [
+                    'applied' => ['minW' => 240.0, 'maxW' => 240.0, 'minH' => 0.0, 'maxH' => 100.0],
+                    'size' => ['w' => 240.0, 'h' => 100.0],
+                ]),
+            ]),
+        ]);
+
+        $found = null;
+        foreach (self::findings($facts) as $one) {
+            if ($one->rule === 'constraint-tightened') {
+                $found = $one;
+                break;
+            }
+        }
+
+        self::assertNotNull($found, '收紧 520px 应该被报出来');
+        self::assertSame('frame:1 node:11', $found->address);
+        self::assertStringContainsString('Column → TableBox', $found->title);
+        self::assertStringContainsString('-520px', $found->title);
+        self::assertStringContainsString('240', $found->metric);
+        self::assertStringContainsString('constraints(11, 1)', $found->recheck);
+        self::assertNotSame('', $found->threshold);
+    }
+
+    /** 放宽与收紧是两句不同的话：把 320 变成 536 不能报成"收紧"。 */
+    public function testWideningKeepsItsDirection(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'TableBox', [
+                    'inner' => ['minW' => 320.0, 'maxW' => 320.0, 'minH' => 0.0, 'maxH' => 600.0],
+                ]),
+                self::row(11, 2, 'Column', [
+                    'applied' => ['minW' => 536.0, 'maxW' => 536.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'size' => ['w' => 536.0, 'h' => 600.0],
+                ]),
+            ]),
+        ]);
+
+        $rules = \array_map(static fn(Finding $one): string => $one->rule, self::findings($facts));
+        self::assertContains('constraint-widened', $rules);
+        self::assertNotContains('constraint-tightened', $rules);
+    }
+
+    /** 1px 图标从 760 收到 1，不是布局发现；否则表格页会刷出十二条噪声。 */
+    public function testTinyBoxesDoNotBecomeFindings(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'Stack'),
+                self::row(3, 2, 'SizedBox', [
+                    'applied' => ['minW' => 1.0, 'maxW' => 1.0, 'minH' => 0.0, 'maxH' => 16.0],
+                    'size' => ['w' => 1.0, 'h' => 16.0],
+                ]),
+            ]),
+        ]);
+
+        foreach (self::findings($facts) as $one) {
+            self::assertStringStartsNotWith('constraint-', $one->rule);
+        }
+    }
+
+    /** 12 个同形单元格给出的是一条事实，不是 12 条发现。 */
+    public function testIdenticalReshapesAreReportedOnce(): void
+    {
+        $rows = [self::row(2, -1, 'Stack')];
+        for ($i = 0; $i < 12; ++$i) {
+            $rows[] = self::row(10 + $i, 2, 'SizedBox', [
+                'applied' => ['minW' => 240.0, 'maxW' => 240.0, 'minH' => 0.0, 'maxH' => 40.0],
+                'size' => ['w' => 240.0, 'h' => 40.0],
+            ]);
+        }
+
+        $hits = 0;
+        foreach (self::findings(self::facts(['geometry' => self::geometry($rows)])) as $one) {
+            if ($one->rule === 'constraint-tightened') {
+                ++$hits;
+            }
+        }
+
+        self::assertSame(1, $hits);
+    }
+
+    /** 没有几何事实就不许说 clean：与因果树被截断时同一条纪律。 */
+    public function testMissingGeometryIsInconclusiveRatherThanClean(): void
+    {
+        $facts = self::facts();
+        unset($facts['geometry']);
+
+        $rules = \array_map(static fn(Finding $one): string => $one->rule, self::findings($facts));
+        self::assertContains('geometry-inconclusive', $rules);
+        self::assertNotContains('clean', $rules);
+    }
+
+    /** 几何窗口从 #10 开始，问 #5 时不能假装没发现问题。 */
+    public function testGeometryWindowMissIsDeclared(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([], ['frame' => 5, 'window' => [
+                'frames' => 1, 'capacity' => 60, 'from' => 10, 'to' => 12, 'nodes' => 1,
+            ]]),
+        ]);
+
+        $gap = null;
+        foreach (self::findings($facts) as $one) {
+            if ($one->rule === 'geometry-inconclusive') {
+                $gap = $one;
+                break;
+            }
+        }
+        self::assertNotNull($gap);
+        self::assertSame('frame:5', $gap->address);
+        self::assertStringContainsString('几何窗口从 #10', $gap->title);
+    }
+
+    /** 裁剪账要写几何扫了哪一帧，不能只写因果树。 */
+    public function testOmissionLineStatesGeometryScope(): void
+    {
+        $covered = \end(Brief::project(self::facts(), 40, 100)['lines']);
+        self::assertStringContainsString('几何覆盖 #1', (string) $covered);
+
+        $missed = self::facts(['geometry' => self::geometry([], ['frame' => 5, 'window' => [
+            'frames' => 1, 'capacity' => 60, 'from' => 10, 'to' => 12, 'nodes' => 1,
+        ]])]);
+        $tail = \end(Brief::project($missed, 40, 100)['lines']);
+        self::assertStringContainsString('几何窗口 #10–#12 不含 #5', (string) $tail);
+    }
+
+    /** 几何发现进投影后，逐字节稳定仍然成立。 */
+    public function testGeometryFindingsAreByteStable(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'TableBox', [
+                    'inner' => ['minW' => 320.0, 'maxW' => 320.0, 'minH' => 0.0, 'maxH' => 600.0],
+                ]),
+                self::row(11, 2, 'Column', [
+                    'applied' => ['minW' => 536.0, 'maxW' => 536.0, 'minH' => 0.0, 'maxH' => 600.0],
+                    'size' => ['w' => 536.0, 'h' => 600.0],
+                ]),
+            ]),
+        ]);
+
+        $first = Brief::project($facts, 40, 100);
+        $second = Brief::project($facts, 40, 100);
+        self::assertSame($first['lines'], $second['lines']);
+        self::assertSame(
+            \json_encode($first['findings']),
+            \json_encode($second['findings']),
+        );
     }
 }

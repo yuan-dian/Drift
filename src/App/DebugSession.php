@@ -59,6 +59,7 @@ final class DebugSession implements Session
         'hotspots' => '跨帧聚合根因（kind=state）：调用点 + State 类',
         'nodes' => '跨帧聚合节点：重建次数、自身写入与父传播',
         'cascade' => '单帧因果森林：结构根、同形兄弟折叠、子树规模、state 写入点、按类型构成',
+        'boxes' => '一帧全部盒的几何摘要（只读几何记录，供投影层跨盒比较约束）',
         'boxModel' => '单节点盒模型：margin / border / padding / content 四层与位置（几何快照）',
         'constraints' => '单节点约束链：逐跳复算并与快照交叉验证，标出归不到基类默认的跳',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
@@ -233,6 +234,9 @@ final class DebugSession implements Session
                 self::needInt($name, $args, 'frame'),
                 self::intArg($name, $args, 'maxDepth', 5),
                 self::intArg($name, $args, 'maxChildren', 8),
+            ),
+            'boxes' => $this->queries->boxes(
+                isset($args['frame']) ? (int) $args['frame'] : null,
             ),
             'boxModel' => $this->queries->boxModel(
                 self::needInt($name, $args, 'node'),

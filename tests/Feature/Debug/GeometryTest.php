@@ -7,6 +7,8 @@ use Drift\App\DebugSession;
 use Drift\App\Replay;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\View\Brief;
+use Drift\Dev\Debug\View\Finding;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -33,11 +35,11 @@ final class GeometryTest extends SmokeTestCase
     }
 
     /** @return array<string, mixed> */
-    private function session(): array
+    private function session(float $width = 800.0, float $height = 600.0): array
     {
         $meta = ['page' => 1];
-        $drive = Plan::build('table', 800.0, 600.0, $meta, 1, 1, [['click', '400,300']]);
-        $opened = Runner::open('table', 800.0, 600.0, $meta, $drive->fork());
+        $drive = Plan::build('table', $width, $height, $meta, 1, 1, [['click', '400,300']]);
+        $opened = Runner::open('table', $width, $height, $meta, $drive->fork());
         $this->session = $opened['session'];
         Replay::apply($this->session, $drive, [], null, static function (int $id, float $ms): void {
         });
@@ -147,5 +149,71 @@ final class GeometryTest extends SmokeTestCase
         $atFirst = $session->query('boxModel', ['node' => 67, 'frame' => 1]);
         check('问哪一帧就是哪一帧', $atFirst['frame'] === 1, (string) $atFirst['frame']);
         check('窗口随答案一起给出', \array_key_exists('window', $atFirst));
+    }
+
+    public function testBoxesIsAWholeFrameReadOfTheRecord(): void
+    {
+        $session = $this->session()['session'];
+        $a = $session->query('boxes', ['frame' => 1]);
+        $b = $session->query('boxes', ['frame' => 1]);
+
+        check('整帧几何有真行', \count($a['rows']) > 100, 'rows=' . \count($a['rows']));
+        check('问哪一帧就是哪一帧', $a['frame'] === 1, (string) $a['frame']);
+        check('两次读取逐字节相同', \json_encode($a) === \json_encode($b));
+
+        $ids = \array_column($a['rows'], 'node');
+        $sorted = $ids;
+        \sort($sorted, \SORT_NUMERIC);
+        check('行按 node id 升序（有确定的读取次序）', $ids === $sorted);
+        check('窗口自报容量', ($a['window']['capacity'] ?? 0) === 60, \json_encode($a['window']));
+        check('盒事实能过 JSON 边界（无线上的 INF）', \is_array(
+            \json_decode((string) \json_encode($a, \JSON_THROW_ON_ERROR), true, 512, \JSON_THROW_ON_ERROR),
+        ));
+        check('每行带父指针与类型', isset($a['rows'][0]['parent'], $a['rows'][0]['type']));
+    }
+
+    /**
+     * 几何事实的第一个真消费者：窄视口下表格把子约束放宽到视口之外，
+     * 简报要能自己说出口，而且说的那跳能被 `constraints()` 复核。
+     */
+    public function testBriefExplainsAConstraintReshapeFromGeometryFacts(): void
+    {
+        $session = $this->session(360.0, 640.0)['session'];
+        $findings = Brief::findings([
+            'frames' => $session->query('frames', ['limit' => 0]),
+            'geometry' => $session->query('boxes', ['frame' => 1]),
+        ]);
+
+        $widened = null;
+        foreach ($findings as $one) {
+            if ($one->rule === 'constraint-widened') {
+                $widened = $one;
+                break;
+            }
+        }
+        check('窄视口的放宽被说出来', $widened instanceof Finding, \json_encode(
+            \array_map(static fn(Finding $f): string => $f->rule, $findings),
+        ));
+        if ($widened === null) {
+            return;
+        }
+
+        check('发现带 node 地址', \str_contains($widened->address, 'node:'), $widened->address);
+        check('复算方式指回约束链查询', \str_contains($widened->recheck, 'constraints('), $widened->recheck);
+
+        $frame = 0;
+        $node = 0;
+        \sscanf($widened->address, 'frame:%d node:%d', $frame, $node);
+        $chain = $session->query('constraints', ['node' => $node, 'frame' => $frame, 'maxDepth' => 0])['chain'];
+        $backed = false;
+        foreach ($chain as $hop) {
+            $offered = $hop['parentInner']['maxW'] ?? null;
+            $received = $hop['received']['maxW'] ?? null;
+            if (\is_numeric($offered) && \is_numeric($received) && (float) $received > (float) $offered) {
+                $backed = true;
+                break;
+            }
+        }
+        check('发现能被约束链查询复核', $backed, 'node=' . $node . ' chain=' . \json_encode($chain));
     }
 }

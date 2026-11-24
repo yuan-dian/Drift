@@ -47,6 +47,20 @@ final class Brief
     public const int GROUP_SAME = 8;
 
     /**
+     * 父子约束上限相差多少才算一次改写。
+     *
+     * 8px 以下多半是浮点尾数或 1px 描边，报出来只是噪声；阈值本身要写进发现，
+     * 否则读者不知道"216px"到底算不算异常。
+     */
+    public const float RESHAPE_PX = 8.0;
+
+    /** 还要超过父内容盒的 10%，避免大盒上的小抖动被当结论。 */
+    public const float RESHAPE_PERCENT = 10.0;
+
+    /** 只看本身够大的盒：1px 图标被"从 760 收到 1"骗出来不是发现，是噪声。 */
+    public const float RESHAPE_MIN_SIZE = 100.0;
+
+    /**
      * 从事实里算出发现（确定性规则，按固定顺序）。
      *
      * @param array<string, mixed> $facts
@@ -77,6 +91,16 @@ final class Brief
         $repeat = self::repeatFindings($facts);
         foreach ($repeat as $one) {
             $found[] = $one;
+        }
+
+        foreach (self::reshapeFindings($facts) as $one) {
+            $found[] = $one;
+        }
+
+        // 几何没覆盖到目标帧时，"没有布局发现"不是结论，而是没看见。
+        $gap = self::geometryGapFinding($facts);
+        if ($gap !== null) {
+            $found[] = $gap;
         }
 
         if ($found === []) {
@@ -416,6 +440,158 @@ final class Brief
         return $out;
     }
 
+    // ------------------------------------------------------------ 几何
+
+    /**
+     * 父子约束改写：子盒收到的宽度上限与父内容盒给出的上限不同。
+     *
+     * 这是"这个表格为什么只有 240 宽"那类问题的机器版答案：不说"看起来不对"，
+     * 只说在哪两跳之间、从多少变成多少、由什么改的（宽度修饰或自定义布局），
+     * 并给出 `constraints(node, frame)` 这个可复算地址。
+     *
+     * 两个方向各最多报一条，并按键（父类型 → 子类型 → 改变量 → 原因）去重：
+     * 表格 12 行同形单元格会给出同一条事实 12 次，列 12 遍不是 12 条发现。
+     * 排序按绝对量降序、node id 升序；同量时给小 id，读者追问时地址稳定。
+     *
+     * @param array<string, mixed> $facts
+     * @return list<Finding>
+     */
+    private static function reshapeFindings(array $facts): array
+    {
+        $geometry = self::mapOf($facts, 'geometry');
+        $rows = self::listOf($geometry, 'rows');
+        if ($rows === []) {
+            return [];
+        }
+
+        $byNode = [];
+        foreach ($rows as $row) {
+            $byNode[(int) ($row['node'] ?? 0)] = $row;
+        }
+
+        $candidates = [];
+        foreach ($rows as $row) {
+            $node = (int) ($row['node'] ?? 0);
+            $parentId = (int) ($row['parent'] ?? 0);
+            if ($node <= 0 || $parentId <= 0 || !isset($byNode[$parentId])) {
+                continue;
+            }
+            $parent = $byNode[$parentId];
+            $offered = self::finiteMax(self::mapOf($parent, 'inner'), 'maxW');
+            $received = self::finiteMax(self::mapOf($row, 'applied'), 'maxW');
+            $actual = self::finiteMax(self::mapOf($row, 'size'), 'w');
+            if ($offered === null || $received === null || $actual === null
+                || $offered <= 0.0 || $actual < self::RESHAPE_MIN_SIZE) {
+                continue;
+            }
+            // `INF` 不参与比较：父允许任意宽时，"子比它窄"不是改写。
+            $delta = $received - $offered;
+            if (\abs($delta) < self::RESHAPE_PX
+                || \abs($delta) * 100.0 < self::RESHAPE_PERCENT * $offered) {
+                continue;
+            }
+            $width = self::finiteMax(self::mapOf($row, 'box'), 'w');
+            $candidates[] = [
+                'node' => $node,
+                'delta' => $delta,
+                'offered' => $offered,
+                'received' => $received,
+                'from' => (string) ($parent['type'] ?? '?'),
+                'to' => (string) ($row['type'] ?? '?'),
+                'cause' => $width !== null ? \sprintf('宽度修饰 %.0f', $width) : '自定义布局',
+            ];
+        }
+        \usort($candidates, static fn(array $a, array $b): int => (\abs($b['delta']) <=> \abs($a['delta']))
+            ?: ($a['node'] <=> $b['node']));
+
+        $frame = (int) ($geometry['frame'] ?? 0);
+        $out = [];
+        $directions = [];
+        foreach ($candidates as $candidate) {
+            $wide = $candidate['delta'] > 0;
+            $dir = $wide ? 'wide' : 'tight';
+            if (isset($directions[$dir])) {
+                continue;
+            }
+            $directions[$dir] = true;
+
+            $out[] = new Finding(
+                $wide ? 'constraint-widened' : 'constraint-tightened',
+                \sprintf(
+                    '%s → %s 宽被%s到 %.0f（父内容 %.0f，%+.0fpx，%s）',
+                    $candidate['from'],
+                    $candidate['to'],
+                    $wide ? '放宽' : '收紧',
+                    $candidate['received'],
+                    $candidate['offered'],
+                    $candidate['delta'],
+                    $candidate['cause'],
+                ),
+                self::addressOf($frame, (int) $candidate['node']),
+                \sprintf('%.0f → %.0f（%+.0fpx）', $candidate['offered'], $candidate['received'], $candidate['delta']),
+                \sprintf('≥ %.0fpx 且 ≥ 父内容宽 %.0f%%', self::RESHAPE_PX, self::RESHAPE_PERCENT),
+                \sprintf(
+                    'constraints(%d, %d).chain 的 %s → %s 跳；boxModel(%d, %d)',
+                    (int) $candidate['node'], $frame, $candidate['from'], $candidate['to'],
+                    (int) $candidate['node'], $frame,
+                ),
+            );
+            if (\count($out) >= 2) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 几何没覆盖目标帧时，必须说"没看见"。
+     *
+     * 几何窗口比帧窗口短（60 对 600），而"几何没变"本来就不记新行 —— 所以
+     * `window.to < frame` 是正常情况，不是缺口；只有一整帧都没有任何盒、或
+     * 请求的帧早于窗口起点，才算规则没有看到几何。
+     *
+     * @param array<string, mixed> $facts
+     */
+    private static function geometryGapFinding(array $facts): ?Finding
+    {
+        $geometry = self::mapOf($facts, 'geometry');
+        $rows = self::listOf($geometry, 'rows');
+        $frame = (int) ($geometry['frame'] ?? 0);
+        $window = self::mapOf($geometry, 'window');
+        $from = (int) ($window['from'] ?? 0);
+        $to = (int) ($window['to'] ?? 0);
+        if ($rows !== [] && ($from === 0 || $frame === 0 || $from <= $frame)) {
+            return null;
+        }
+
+        $address = $frame > 0
+            ? 'frame:' . $frame
+            : \sprintf('window:%d-%d', $from, $to);
+
+        return new Finding(
+            'geometry-inconclusive',
+            $frame > 0 && $from > $frame
+                ? \sprintf('几何窗口从 #%d 开始，#%d 不在其中，布局规则没有看到任何盒', $from, $frame)
+                : '没有几何事实，布局规则一条也没有看',
+            $address,
+            '0 个盒',
+            '至少 1 个盒',
+            'boxes(frame).window 看窗口范围；换一帧或加大几何窗口',
+        );
+    }
+
+    /** `'INF'` 是字符串，不能当有限数参与比较。 */
+    private static function finiteMax(array $constraints, string $key): ?float
+    {
+        $value = $constraints[$key] ?? null;
+        if (!\is_int($value) && !\is_float($value)) {
+            return null;
+        }
+
+        return \is_finite((float) $value) ? (float) $value : null;
+    }
+
     // ------------------------------------------------------------ 覆盖
 
     /**
@@ -613,6 +789,32 @@ final class Brief
     }
 
     /**
+     * 几何域的扫描范围，写进裁剪账。
+     *
+     * "窗口外"和"这一帧没变所以没记"不是同一件事：前者要明说，后者正常。
+     *
+     * @param array<string, mixed> $facts
+     */
+    private static function geometryScope(array $facts): string
+    {
+        $geometry = self::mapOf($facts, 'geometry');
+        $rows = self::listOf($geometry, 'rows');
+        if ($rows === []) {
+            return '几何未采集';
+        }
+
+        $frame = (int) ($geometry['frame'] ?? 0);
+        $window = self::mapOf($geometry, 'window');
+        $from = (int) ($window['from'] ?? 0);
+        $to = (int) ($window['to'] ?? 0);
+        if ($frame > 0 && $from > $frame) {
+            return \sprintf('几何窗口 #%d–#%d 不含 #%d', $from, $to, $frame);
+        }
+
+        return \sprintf('几何覆盖 #%d（%d 个盒 / %d 帧窗口）', $frame, \count($rows), (int) ($window['capacity'] ?? 0));
+    }
+
+    /**
      * 裁剪账：裁了什么、裁了多少、怎么取回。**这一行不能省**。
      *
      * @param array<string, mixed> $facts
@@ -644,6 +846,10 @@ final class Brief
                     $cov['requested'],
                 );
         }
+        // 几何也要自报扫描范围：60 帧的几何窗口比 600 帧的因果窗口短，
+        // 不写这一句，读者会把"没报布局问题"当成"全窗口都没有布局问题"。
+        $parts[] = self::geometryScope($facts);
+
         $capacity = (int) ($stats['capacity'] ?? 0);
         $count = (int) ($window['count'] ?? 0);
         if ($capacity > 0 && $count < $capacity) {
