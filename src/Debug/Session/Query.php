@@ -404,6 +404,136 @@ final class Query
     }
 
     /**
+     * 跨域对齐：同一节点、同一显式帧，一次取到因果 / 几何 / 网络三张脸。
+     *
+     * ## 帧只在一处选
+     *
+     * `frame` 必填。三域的"缺省帧"语义本来就不同（因果取最近重建帧、几何取
+     * 最后一帧、网络没有缺省），让各域自己缺省再拼起来，会给出"三域都在 #N"
+     * 的假象。调用方——包括 `brief` 的投影——先选帧，再传进来；本查询只读，
+     * 不做"帮你选一个"。
+     *
+     * ## 每域回显自己实际命中的帧
+     *
+     * 几何是按变化存的：目标帧没重新采样就往前找最近一条。若它返回 `frame=1`
+     * 而请求 `frame=2`，这里标 `stale=true` 并回显 `1`，绝不伪称 `2`。一个
+     * "看起来三域都对齐、实际几何是上一帧"的答案比明确说 stale 更危险。
+     *
+     * ## 三域各自的 miss 形状归一
+     *
+     * `found: false` + `reason` + `window`，不再有 `reason` / `miss` / 无 found
+     * 三种拼法。`reason` 是分类（unknown-node / frame-out-of-window /
+     * no-render-box / no-landed-request），不是错误全文。
+     *
+     * @return array<string, mixed>
+     */
+    public function align(int $node, int $frame): array
+    {
+        $known = $this->recorder->typeOf($node) !== '';
+        $base = [
+            'node' => $node,
+            'frame' => $frame,
+            'path' => $this->recorder->pathOf($node),
+        ];
+        $win = [
+            'frames' => $this->recorder->stats()['capacity'],
+            'geometry' => $this->recorder->geometryCoverage(),
+            'network' => $this->recorder->networkCoverage(),
+        ];
+        if (!$known) {
+            return $base + [
+                'found' => false,
+                'reason' => 'unknown-node',
+                'causal' => ['found' => false, 'reason' => 'unknown-node'],
+                'geometry' => $this->geometryMiss($node, $frame, $win['geometry']),
+                'network' => ['found' => false, 'reason' => 'unknown-node', 'window' => $win['network']],
+                'windows' => $win,
+            ];
+        }
+
+        // ---- 因果：显式帧，不走 why 的"最近重建帧"缺省。
+        $frameRecord = $this->recorder->frame($frame);
+        if ($frameRecord === null) {
+            $causal = ['found' => false, 'reason' => 'frame-out-of-window'];
+        } else {
+            $causes = [];
+            foreach ($frameRecord->causes as $edge) {
+                if ($edge->toId === $node) {
+                    $causes[] = $edge->toArray();
+                }
+            }
+            $causal = [
+                'found' => true,
+                'frame' => $frameRecord->id,
+                'rebuilt' => $frameRecord->rebuilt($node),
+                'causes' => $causes,
+            ];
+        }
+
+        // ---- 几何：记录自带实际帧号，stale 由它判定，不靠调用方猜。
+        // ★ 先判窗口再查：geometryAt 的"往前找最近"会把窗口外的帧号 clamp 到
+        //   窗口末端，若直接调用，frame=99（窗口只到 2）会返回 frame=1 的旧记录
+        //   并报 found=true —— 一个根本没采样过的帧看起来有几何。这是静默错误。
+        $geoWindow = $win['geometry'];
+        $geoInWindow = (int) ($geoWindow['from'] ?? 0) <= $frame
+            && $frame <= (int) ($geoWindow['to'] ?? 0);
+        $geo = $geoInWindow ? $this->recorder->geometryAt($frame, $node) : null;
+        if ($geo === null) {
+            $geometry = $geoInWindow
+                ? $this->geometryMiss($node, $frame, $geoWindow)
+                : [
+                    'found' => false,
+                    'node' => $node,
+                    'frame' => $frame,
+                    'reason' => 'frame-out-of-window',
+                    'window' => $geoWindow,
+                ];
+        } else {
+            $geometry = [
+                'found' => true,
+                'frame' => $geo->frame,
+                'stale' => $geo->frame !== $frame,
+                'size' => $geo->size,
+                'offset' => $geo->offset,
+                'applied' => $geo->applied,
+            ];
+        }
+
+        // ---- 网络：只认帧末回填的 landed[]；扫 500 条窗口反查，不建镜像索引。
+        $landed = [];
+        foreach ($this->recorder->requestsLandingOn($node) as $requestId) {
+            $request = $this->recorder->networkAt($requestId);
+            if ($request !== null && $request->settledAtFrame === $frame) {
+                $landed[] = [
+                    'request' => $request->requestId,
+                    'method' => $request->method,
+                    'url' => $request->url,
+                    'status' => $request->status,
+                    'ok' => $request->ok,
+                ];
+            }
+        }
+        $network = $landed === []
+            ? ['found' => false, 'reason' => 'no-landed-request', 'window' => $win['network']]
+            : ['found' => true, 'frame' => $frame, 'requests' => $landed, 'window' => $win['network']];
+
+        $causalFound = ($causal['found'] ?? false) === true;
+        $geometryFound = ($geometry['found'] ?? false) === true;
+        $networkFound = ($network['found'] ?? false) === true;
+
+        return $base + [
+            // `found` = 这个地址在证据里存在（任一域有值）；`complete` = 三域齐全。
+            // 分开说：读者常把 `found=true` 误读成"三域都有"，那就又是一次假对齐。
+            'found' => $causalFound || $geometryFound || $networkFound,
+            'complete' => $causalFound && $geometryFound && $networkFound,
+            'causal' => $causal,
+            'geometry' => $geometry,
+            'network' => $network,
+            'windows' => $win,
+        ];
+    }
+
+    /**
      * 跨帧聚合**根因**：同一调用点写同一 State 的次数。
      *
      * 只算 `kind=state`。`parent` / `unknown` 是传播与兜底，算进来会让排名失真。

@@ -701,6 +701,28 @@ final class Recorder
         return $element->debugId;
     }
 
+    /**
+     * 哪些请求的落地改过这个节点（按 requestId 升序）。
+     *
+     * 只读 `landed[]`，不建第二份 `node → request` 索引：网络窗口 500 条，扫一遍
+     * 比维护一份会与骨架漂移的镜像便宜，也更诚实——索引一旦漏更新，就会给出
+     * "没有请求落地"这种看起来正常、实际错误的答案。
+     *
+     * @return list<int>
+     */
+    public function requestsLandingOn(int $node): array
+    {
+        $ids = [];
+        foreach ($this->network as $id => $record) {
+            if (\in_array($node, $record->landed, true)) {
+                $ids[] = $id;
+            }
+        }
+        \sort($ids, \SORT_NUMERIC);
+
+        return $ids;
+    }
+
     /** 节点的 Widget 短类名（树按类型展开、按类型聚合都用它）。 */
     public function typeOf(int $nodeId): string
     {

@@ -64,6 +64,7 @@ final class DebugSession implements Session
         'constraints' => '单节点约束链：逐跳复算并与快照交叉验证，标出归不到基类默认的跳',
         'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
+        'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
@@ -257,6 +258,10 @@ final class DebugSession implements Session
                 self::needInt($name, $args, 'request'),
                 isset($args['part']) ? (string) $args['part'] : 'both',
                 self::intArg($name, $args, 'maxBytes', 8 * 1024),
+            ),
+            'align' => $this->queries->align(
+                self::needInt($name, $args, 'node'),
+                self::needInt($name, $args, 'frame'),
             ),
             'digest' => Digest::of($this->recorder),
             // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像
