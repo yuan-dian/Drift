@@ -3,9 +3,12 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Debug\Session\Digest;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
+use Drift\Debug\Session\SessionDriver;
+use Drift\Debug\Session\SessionQueries;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
 
@@ -29,8 +32,11 @@ use Drift\Input\InputEvent;
  * 不管表面：调用方必须先 `attach()`。headless 测试要读像素时用 `SurfaceProbe`
  * 这类夹具，`src/` 不能依赖 `tools/`，所以由调用方决定用什么表面。
  *
- * 不管传输：帧记录仍是内存对象，跨进程搬运是下一期的事。**驱动脚本**是另一回事 ——
- * 它只存标量、能存成 JSON，因为"再跑一遍"需要的只是输入与时钟，不需要把记录搬过去。
+ * 不管传输：帧记录仍是内存对象，搬出进程由
+ * {@see \Drift\Debug\Protocol\RemoteSession} 这个**镜像**负责 —— 它实现同一对接口
+ * （{@see SessionQueries} / {@see SessionDriver}），所以消费者的代码不需要知道
+ * 记录是本地的还是隔着一条管道。**驱动脚本**是另一回事 —— 它只存标量、能存成
+ * JSON，因为"再跑一遍"需要的只是输入与时钟，不需要把记录搬过去。
  *
  * 不管什么该被重放：驱动方给什么就记什么。异步结算这类**副作用**由调用方用
  * {@see self::defineEffect()} 注册名字，{@see self::effect()} 记一笔并执行 ——
@@ -38,7 +44,7 @@ use Drift\Input\InputEvent;
  *
  * @api
  */
-final class DebugSession
+final class DebugSession implements SessionQueries, SessionDriver
 {
     /**
      * 查询名 => 一句话说明。`query()` 的 `match` 分支必须与这里一一对应：
@@ -48,12 +54,14 @@ final class DebugSession
      */
     public const QUERIES = [
         'stats' => '录制概览：帧数 / 节点数 / 容量 / 最近帧',
-        'frames' => '最近 N 帧摘要，可按“有重建”过滤',
+        'frames' => '最近 N 帧摘要（可给 since 增量游标），可按“有重建”过滤',
         'explain' => '单帧展开：重建节点（带路径）与根因分布',
         'why' => '某节点在某帧为什么重建',
         'hotspots' => '跨帧聚合根因（kind=state）：调用点 + State 类',
         'nodes' => '跨帧聚合节点：重建次数、自身写入与父传播',
         'cascade' => '单帧因果森林：结构根、子树规模、state 写入点、按类型构成',
+        'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
+        'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
     ];
 
     private bool $closed = false;
@@ -205,6 +213,7 @@ final class DebugSession
             'frames' => $this->queries->frames(
                 self::intArg($name, $args, 'limit', 30),
                 self::boolArg($args, 'rebuiltOnly'),
+                self::optIntArg($name, $args, 'since'),
             ),
             'explain' => $this->queries->explain(self::needInt($name, $args, 'frame')),
             'why' => $this->queries->why(
@@ -224,6 +233,11 @@ final class DebugSession
                 self::intArg($name, $args, 'maxDepth', 5),
                 self::intArg($name, $args, 'maxChildren', 8),
             ),
+            'digest' => Digest::of($this->recorder),
+            // 脚本走查询而不是另开一条命令：它同样是"读会话状态"，而且远端镜像
+            // 因此不必为它加一个动词 —— 一次会话里"怎么驱动的"和"为什么这样"
+            // 从同一个管道取，顺序也就天然一致。
+            'script' => $this->script->toArray(),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
             ),
@@ -231,9 +245,9 @@ final class DebugSession
     }
 
     /** @return list<array<string, mixed>> */
-    public function frames(int $limit = 30, bool $rebuiltOnly = false): array
+    public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
-        return $this->queries->frames($limit, $rebuiltOnly);
+        return $this->queries->frames($limit, $rebuiltOnly, $since);
     }
 
     /** @return array<string, mixed> */
@@ -263,6 +277,11 @@ final class DebugSession
     public function recorder(): Recorder
     {
         return $this->recorder;
+    }
+
+    public function lastFrameId(): int
+    {
+        return $this->recorder->lastFrameId();
     }
 
     public function app(): Application
@@ -316,5 +335,25 @@ final class DebugSession
     private static function boolArg(array $args, string $key): bool
     {
         return (bool) ($args[$key] ?? false);
+    }
+
+    /**
+     * 可选整型：**缺省与 0 是两件事**。
+     *
+     * 游标 `since=0` 是"从头给"，而"没给 since"是"给最近 N 帧"。用 `intArg` 的默认值
+     * 把两者合并，会让"从头取"变成"取最近的"——差集正好是历史帧，而报告看起来完整。
+     *
+     * @param array<string, mixed> $args
+     */
+    private static function optIntArg(string $name, array $args, string $key): ?int
+    {
+        if (!isset($args[$key])) {
+            return null;
+        }
+        if (!\is_int($args[$key]) && !\is_string($args[$key])) {
+            throw new \InvalidArgumentException("查询 {$name} 的参数 {$key} 必须是整数");
+        }
+
+        return (int) $args[$key];
     }
 }

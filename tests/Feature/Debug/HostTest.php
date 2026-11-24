@@ -1,0 +1,281 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Dev\Tests\Feature\Debug;
+
+use Drift\App\DebugSession;
+use Drift\Debug\Protocol\Methods;
+use Drift\Debug\Protocol\ProtocolError;
+use Drift\Debug\Protocol\Wire;
+use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\Script;
+use Drift\Dev\Debug\Host;
+use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\Runner;
+use Drift\Dev\Tests\Support\FakeTransport;
+use Drift\Dev\Tests\Support\SmokeTestCase;
+
+/**
+ * 宿主进程的协议行为：方法分派、错误信封、状态机。
+ *
+ * ## 为什么用内存通道而不是真子进程
+ *
+ * 这里要判的是"哪条消息得到哪个答复"——与"消息怎么送到"无关。混在一起测时，
+ * 一次红分不清是协议错还是平台错（Windows 管道、编码、缓冲），排障成本远高于收益。
+ * 真管道的判据在 {@see TransportTest}：那边只判**值**是否逐值相同。
+ *
+ * ## 判据不止"回得对"，还有"错了也活着"
+ *
+ * 一条错消息（名字拼错、参数缺字段、副作用返回了对象）必须是**一条错误信封**，
+ * 而不是让宿主崩掉：崩掉之后客户端只看到"管道断了"，真正的原因已经丢了。
+ * 所以每条错误判据后面都跟一条正常请求，证明循环还在。
+ */
+final class HostTest extends SmokeTestCase
+{
+    private function script(): Script
+    {
+        return Plan::build('SlowFrameApplication', 320.0, 240.0, [], 1, 1, []);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $commands
+     * @param null|callable(Script): array{session: DebugSession, mountMs: float} $open
+     */
+    private function serve(array $commands, ?callable $open = null): FakeTransport
+    {
+        $lines = [];
+        foreach ($commands as $command) {
+            $lines[] = Wire::encode($command);
+        }
+
+        $transport = new FakeTransport($lines);
+        $host = new Host($transport);
+        $host->serve($open ?? static fn(Script $s): array => Runner::open(
+            $s->target,
+            $s->width,
+            $s->height,
+            $s->meta(),
+            $s,
+        ));
+
+        return $transport;
+    }
+
+    /** @param array<string, mixed> $params */
+    private static function call(int $id, string $method, array $params = []): array
+    {
+        return ['id' => $id, 'method' => $method, 'params' => $params];
+    }
+
+    /** 断言细节用：任何值都能显示出来（失败信息里看得见"实际是什么"）。 */
+    private static function show(mixed $value): string
+    {
+        return \json_encode($value, \JSON_UNESCAPED_UNICODE | \JSON_PRESERVE_ZERO_FRACTION) ?: \get_debug_type($value);
+    }
+
+    public function testOpenFrameQueryCloseIsOneSession(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::FRAME, ['t' => 0.0]),
+            self::call(3, Methods::QUERY, ['name' => 'stats']),
+            self::call(4, Methods::CLOSE),
+        ])->decoded();
+
+        check('四条命令得到四条响应', \count($replies) === 4, '实际 ' . \count($replies));
+        if (\count($replies) !== 4) {
+            return;
+        }
+
+        /** @var array<string, mixed> $opened */
+        $opened = $replies[0]['result'];
+        check('open 成功', $replies[0]['ok'] === true, self::show($replies[0]));
+        check('目标与视口原样回来', $opened['target'] === 'SlowFrameApplication', (string) $opened['target']);
+        check('视口是浮点对', $opened['viewport'] === [320.0, 240.0], self::show($opened['viewport']));
+        check('挂载耗时是正数', \is_float($opened['mountMs']) && $opened['mountMs'] > 0.0, (string) $opened['mountMs']);
+
+        /** @var array<string, mixed> $frame */
+        $frame = $replies[1]['result'];
+        // 帧号由宿主给：客户端自己数会与"容量裁剪 / 跳过 settle"错开。
+        check('帧号由宿主给', $frame['id'] === 1, self::show($frame['id']));
+        check('墙钟是浮点', \is_float($frame['wall']), \get_debug_type($frame['wall']));
+
+        check('stats 看到那一帧', ($replies[2]['result']['frames'] ?? 0) === 1, self::show($replies[2]['result']));
+        check('close 成功', $replies[3]['ok'] === true);
+    }
+
+    public function testUnknownMethodIsAnEnvelopeNotACrash(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, 'reboot'),
+            self::call(3, Methods::QUERY, ['name' => 'stats']),
+        ])->decoded();
+
+        check('三条命令都回了', \count($replies) === 3, '实际 ' . \count($replies));
+        if (\count($replies) !== 3) {
+            return;
+        }
+
+        check('不认识的方法被拒绝', $replies[1]['ok'] === false);
+        check(
+            '错误码是 unknown_method',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::UNKNOWN_METHOD,
+            self::show($replies[1]),
+        );
+        check('一条错消息不该带走整个会话', $replies[2]['ok'] === true);
+    }
+
+    public function testQueryBeforeOpenIsRejected(): void
+    {
+        $replies = $this->serve([self::call(1, Methods::QUERY, ['name' => 'stats'])])->decoded();
+
+        check('回了一条', \count($replies) === 1);
+        check(
+            '没开会话时查询被拒绝',
+            ($replies[0]['error']['code'] ?? '') === ProtocolError::NOT_OPEN,
+            self::show($replies[0] ?? null),
+        );
+    }
+
+    /** 一个宿主只服务一次运行：第二次 `open` 会覆盖记录，那两份结论都不可信。 */
+    public function testSecondOpenIsRejected(): void
+    {
+        $script = $this->script()->toArray();
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $script]),
+            self::call(2, Methods::OPEN, ['script' => $script]),
+        ])->decoded();
+
+        check('回了两次', \count($replies) === 2);
+        check('第一次打开成功', $replies[0]['ok'] === true);
+        check(
+            '第二次被拒绝',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::ALREADY_OPEN,
+            self::show($replies[1] ?? null),
+        );
+    }
+
+    public function testBadParamsAreReportedAndTheLoopContinues(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            // 缺 `t`
+            self::call(2, Methods::FRAME, []),
+            // 不认识的查询名
+            self::call(3, Methods::QUERY, ['name' => 'nope']),
+            self::call(4, Methods::QUERY, ['name' => 'digest']),
+        ])->decoded();
+
+        check('四条命令都回了', \count($replies) === 4, '实际 ' . \count($replies));
+        if (\count($replies) !== 4) {
+            return;
+        }
+
+        check(
+            '缺参数被当成 bad_request',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::BAD_REQUEST,
+            self::show($replies[1]),
+        );
+        check('查询名写错是失败', $replies[2]['ok'] === false);
+        check(
+            '错误信息指得出那个名字',
+            \str_contains((string) ($replies[2]['error']['message'] ?? ''), 'nope'),
+            (string) ($replies[2]['error']['message'] ?? ''),
+        );
+        check('之后照常能查', $replies[3]['ok'] === true);
+        check('digest 查询有内容', (bool) ($replies[3]['result']['digest'] ?? false));
+    }
+
+    public function testMalformedLineGetsAnErrorWithoutID(): void
+    {
+        $transport = new FakeTransport(['{"id":1,"method":']);
+        (new Host($transport))->serve(static fn(Script $s): array => Runner::open(
+            $s->target,
+            $s->width,
+            $s->height,
+            $s->meta(),
+            $s,
+        ));
+
+        $replies = $transport->decoded();
+        check('坏消息也回了一条（不能让客户端干等）', \count($replies) === 1);
+        if ($replies === []) {
+            return;
+        }
+        check('没有 id 就回 null', \array_key_exists('id', $replies[0]) && $replies[0]['id'] === null);
+        check(
+            '错误码是 bad_request',
+            ($replies[0]['error']['code'] ?? '') === ProtocolError::BAD_REQUEST,
+            self::show($replies[0]),
+        );
+    }
+
+    /** 副作用的返回值要原样过管道（类型也原样）：42 不能变成 "42"。 */
+    public function testEffectValueKeepsItsType(): void
+    {
+        $open = static function (Script $s): array {
+            $opened = Runner::open($s->target, $s->width, $s->height, $s->meta(), $s);
+            $opened['session']->defineEffect('double', static fn(array $a): int => ((int) ($a['n'] ?? 0)) * 2);
+
+            return $opened;
+        };
+
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::EFFECT, ['name' => 'double', 'args' => ['n' => 21]]),
+        ], $open)->decoded();
+
+        check('回了两次', \count($replies) === 2);
+        check('副作用成功', ($replies[1]['ok'] ?? false) === true, self::show($replies[1] ?? null));
+        check(
+            '返回值与类型都原样',
+            ($replies[1]['result']['value'] ?? null) === 42,
+            self::show($replies[1]['result'] ?? null),
+        );
+    }
+
+    /**
+     * 副作用返回对象 ⇒ 一条错误信封，**不是**半个 JSON。
+     *
+     * 这条挡的是最坏的一种坏法：编到一半失败会让分帧从此错位，客户端后面每条
+     * 响应都配错请求，而错误信息指向的是"协议坏了"，不是那个返回对象的回调。
+     */
+    public function testUnencodableEffectValueIsAnErrorEnvelopeAndTheLoopSurvives(): void
+    {
+        $open = static function (Script $s): array {
+            $opened = Runner::open($s->target, $s->width, $s->height, $s->meta(), $s);
+            $opened['session']->defineEffect('object', static fn(): object => new \stdClass());
+
+            return $opened;
+        };
+
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::EFFECT, ['name' => 'object']),
+            self::call(3, Methods::QUERY, ['name' => 'stats']),
+        ], $open)->decoded();
+
+        check('三条命令都回了', \count($replies) === 3, '实际 ' . \count($replies));
+        if (\count($replies) !== 3) {
+            return;
+        }
+
+        check('编不出来是失败', $replies[1]['ok'] === false);
+        check(
+            '失败原因是编码',
+            ($replies[1]['error']['code'] ?? '') === ProtocolError::CALL_FAILED
+                && \str_contains((string) ($replies[1]['error']['message'] ?? ''), 'JSON'),
+            self::show($replies[1]),
+        );
+        check('分帧没错位，下一条照常', $replies[2]['ok'] === true);
+    }
+
+    /** 对端直接断开（EOF）时，录制器必须卸掉 —— 否则同一个进程里下一次 `open` 会被拒。 */
+    public function testTranscriptEndUninstallsTheRecorder(): void
+    {
+        $this->serve([self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()])]);
+
+        check('宿主退出后不该留着录制器', !Recorder::installed());
+    }
+}

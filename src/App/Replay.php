@@ -5,6 +5,7 @@ namespace Drift\App;
 
 use Drift\Debug\Session\InputScript;
 use Drift\Debug\Session\Script;
+use Drift\Debug\Session\SessionDriver;
 use Drift\Debug\Session\Step;
 
 /**
@@ -26,6 +27,12 @@ use Drift\Debug\Session\Step;
  * 重放方照原样再备一份即可 —— 这份重复是**有意的**：它让"环境不一样"变成编译期
  * 就能看见的显式参数，而不是藏在脚本里的魔法。
  *
+ * ## 为什么吃接口而不是 `DebugSession`
+ *
+ * 同一个循环要能驱动"记录就在手边"和"记录在另一个进程"两种会话。写死具体类的话，
+ * 远端要么复制一遍这个循环（`--at`、步号报错、效果参数剥离都会分叉），要么放弃
+ * 逐帧控制改成一个粗粒度命令 —— 前者是两份真相，后者让 `--at` 变成远端不支持。
+ *
  * ## 停止条件
  *
  * `$untilFrame = N` ⇒ 恰好推进 N 帧，之后不再派发输入（第 N 帧之后的动作属于
@@ -46,7 +53,7 @@ final class Replay
      * @throws \RuntimeException 脚本不完整、含不可重放的输入、或步骤形状坏了
      */
     public static function apply(
-        DebugSession $session,
+        SessionDriver $session,
         Script $script,
         array $effects = [],
         ?int $untilFrame = null,
@@ -80,7 +87,7 @@ final class Replay
                 $ms = $session->pump((float) $step->t);
                 ++$frames;
                 if ($onFrame !== null) {
-                    $onFrame($session->recorder()->lastFrameId(), $ms);
+                    $onFrame($session->lastFrameId(), $ms);
                 }
                 continue;
             }

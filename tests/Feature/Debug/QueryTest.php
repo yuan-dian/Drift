@@ -210,6 +210,61 @@ final class QueryTest extends SmokeTestCase
     }
 
     /**
+     * 增量游标：`since=N` 只要帧号大于 N 的帧。
+     *
+     * ## 钉两件事，缺一条就变成"两种实现都绿"
+     *
+     * 1. **筛选**：`since=2` 拿到的必须从第 3 帧开始（不是"最近 N 帧"）。
+     * 2. **不合并**：`since=0` 是"从头给"，而"没给 since"是"给最近 N 帧"。
+     *    两者用同一个默认值合并，"从头取"会静默退化成"取最近的"，差集正好是
+     *    历史帧 —— 报告看起来完整，少的那些帧没人发现。
+     */
+    public function testSinceCursorIsNotTheSameAsRecentWindow(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            QueryState::$last?->increment();
+            $app->frame(16.0, $this->constraints());
+            $app->frame(32.0, $this->constraints());
+            $app->frame(48.0, $this->constraints());
+
+            $query = new Query($recorder);
+
+            $ids = static fn(array $rows): array => \array_map(static fn(array $r): int => (int) $r['id'], $rows);
+
+            check('从头给是全部四帧', $ids($query->frames(0, false, 0)) === [1, 2, 3, 4], \json_encode($ids($query->frames(0, false, 0))));
+            check(
+                '游标只给更新的帧',
+                $ids($query->frames(0, false, 2)) === [3, 4],
+                \json_encode($ids($query->frames(0, false, 2))),
+            );
+            check(
+                '游标在最新帧之后 ⇒ 空（不是退回"最近 N 帧"）',
+                $query->frames(0, false, 4) === [],
+                \json_encode($query->frames(0, false, 4)),
+            );
+            // 没有 since 时 limit 是"最近 N 帧"；两者在 limit 恰好等于剩余帧数时
+            // **看起来一样**，所以真正的区分点是上面"从头给"那一条：
+            // `since=0` 给全部，而不给 since 只给最近 N 帧。
+            check(
+                '无游标时是最近 N 帧',
+                $ids($query->frames(2)) === [3, 4],
+                \json_encode($ids($query->frames(2))),
+            );
+            check(
+                '游标与过滤叠加：只要重建过的未读帧',
+                $ids($query->frames(0, true, 1)) === [2],
+                \json_encode($ids($query->frames(0, true, 1))),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    /**
      * 排序判据：构造"路径序"与"子树序"给出**相反**答案的结构。
      *
      * `FanOutState` 下先挂 `Align`（名字靠前、子树小），再挂内层 `Column`

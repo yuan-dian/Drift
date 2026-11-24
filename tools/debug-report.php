@@ -14,6 +14,8 @@ declare(strict_types=1);
  *   php tools/debug-report.php --page=table --frames=1 --click=400,300 --key=Down
  *   php tools/debug-report.php --page=table --frames=1 --wheel=400,300,20 --hold=8
  *   php tools/debug-report.php TextAreaApplication --key=Tab --text=abc --key=Enter --json
+ *   php tools/debug-report.php --page=table --frames=1 --click=400,300 --save=case.json
+ *   php tools/debug-report.php --page=table --replay=case.json --remote     # 换个进程跑
  *
  * 动作语义：先跑 `--frames` 帧（默认 1，用于挂载），再按命令行顺序执行
  * `--key=` / `--text=` / `--click=` / `--wheel=` / `--resolve`，**每个动作之后递进
@@ -32,27 +34,24 @@ declare(strict_types=1);
  *   - 位置参数或 `--page=` = 示例台**路由 id**（`table` / `async-table` / …）
  *     ⇒ 走 `PageHostApplication`，依赖页由组合根同款的工厂表装配
  *
+ * `--remote`：这次会话交给一个**子进程**跑。同样的脚本、同样的查询，只是记录
+ * 在另一头 —— 报告由同一段代码组装。它不是"性能开关"，而是让"跨进程读到的值
+ * 是否与同进程一致"变成一条可执行的判据；也是将来"一次驱动、多次追问"（托管端
+ * 留着会话，客户端来一条问一条）的地基。
+ *
  * @internal 手工工具；不进 V2 判据清单
  */
 
 require __DIR__ . '/autoload.php';
 
-use Drift\App\Application;
-use Drift\App\DebugSession;
 use Drift\App\Replay;
+use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Digest;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Step;
-use Drift\Dev\Smoke\App\PageHostApplication;
-use Drift\Dev\Smoke\App\PendingRows;
-use Drift\Dev\Smoke\Frame\SurfaceProbe;
-use Drift\Geometry\Axis;
-use Drift\Geometry\BoxConstraints;
-use Drift\Geometry\Size;
-use Drift\Input\KeyChord;
-use Drift\Input\KeyEvent;
-use Drift\Input\PointerEvent;
-use Drift\Input\ScrollEvent;
+use Drift\Dev\Debug\Plan;
+use Drift\Dev\Debug\ProcessTransport;
+use Drift\Dev\Debug\Runner;
 
 $target = null;
 $page = null;
@@ -72,6 +71,7 @@ $at = null;
 $savePath = null;
 $replayPath = null;
 $verify = false;
+$remote = false;
 /** @var list<array{0: 'key'|'text'|'click'|'wheel'|'resolve', 1: string}> */
 $steps = [];
 
@@ -80,6 +80,8 @@ foreach (\array_slice($argv, 1) as $arg) {
         $json = true;
     } elseif ($arg === '--verify') {
         $verify = true;
+    } elseif ($arg === '--remote') {
+        $remote = true;
     } elseif (\str_starts_with($arg, '--frames=')) {
         $frames = \max(1, (int) \substr($arg, 9));
     } elseif (\str_starts_with($arg, '--width=')) {
@@ -164,7 +166,7 @@ if ($label === null) {
     \fwrite(\STDERR, "用法：drift debug <AppClass|路由id> [--page=<路由id>] [--frames=N] [--rows=N]\n");
     \fwrite(\STDERR, "              [--key=Tab] [--text=abc] [--click=x,y[,键]] [--wheel=x,y,格[,h]]\n");
     \fwrite(\STDERR, "              [--hold=N] [--resolve] [--why=<节点id>] [--frame=N] [--top=N] [--width=W] [--height=H] [--json]\n");
-    \fwrite(\STDERR, "              [--save=<脚本.json>] [--replay=<脚本.json> [--at=N] [--verify]]\n");
+    \fwrite(\STDERR, "              [--save=<脚本.json>] [--replay=<脚本.json> [--at=N] [--verify]] [--remote]\n");
     exit(2);
 }
 
@@ -215,13 +217,21 @@ if ($verify && $replay === null) {
     exit(2);
 }
 
-$constraints = BoxConstraints::tight(new Size((float) $width, (float) $height));
+// 规划路径上的 `--resolve` 同样要有取数替身。以前是跑到那一步才在 stderr 提一句，
+// 于是一份 600 帧的报告白跑完才告诉人"这一笔什么都没结算"。
+if ($replay === null && $rows <= 0) {
+    foreach ($steps as [$kind]) {
+        if ($kind === 'resolve') {
+            \fwrite(\STDERR, "--resolve 需要 --rows=N：没有取数替身就没有在途请求可结算\n");
+            exit(2);
+        }
+    }
+}
 
 $options = [
     'label' => (string) $label,
     'page' => $page !== null,
     'rows' => $rows,
-    'constraints' => $constraints,
     'width' => $width,
     'height' => $height,
     'script' => $replay,
@@ -232,6 +242,7 @@ $options = [
     'top' => $top,
     'why' => $why,
     'whyFrame' => $whyFrame,
+    'remote' => $remote,
 ];
 
 try {
@@ -273,103 +284,81 @@ exit(0);
 // -------------------------------------------------------------------- 驱动
 
 /**
- * 跑一次：建应用 → 挂表面 → 开会话 → 驱帧 → 收报告。
+ * 跑一次：建应用 → 开会话 → 照脚本驱动 → 收报告。
  *
  * 一次调用 = 一次完整运行。`--verify` 因此只是"调两遍再比"，
  * 不需要另写一条"为了比对而跑的路径"—— 那种路径迟早和正常路径分叉。
  *
+ * 本地与 `--remote` 走的是**同一段代码**：差别只在"谁来执行那串步骤"（本进程的
+ * 会话，还是子进程里的镜像）。所以判据可以写成"两边读回来的值逐值相同"。
+ *
  * @param array{
- *     label: string, page: bool, rows: int, constraints: BoxConstraints,
+ *     label: string, page: bool, rows: int,
  *     width: int, height: int, script: Script|null,
  *     steps: list<array{0: string, 1: string}>, frames: int, hold: int, at: int|null,
- *     top: int, why: int|null, whyFrame: int|null
+ *     top: int, why: int|null, whyFrame: int|null, remote: bool
  * } $o
  *
- * @return array{report: array<string, mixed>, script: Script, digest: array<string, mixed>, canonical: array<int, array<string, mixed>>}
+ * @return array{report: array<string, mixed>, script: Script, digest: array<string, mixed>}
  */
 function run_once(array $o): array
 {
-    $source = $o['rows'] > 0 ? new PendingRows($o['rows']) : null;
-
-    $app = target_app($o['label'], $o['page'], $source === null ? null : $source->fetch(...));
-    if (!$app instanceof Application) {
-        throw new \RuntimeException("{$o['label']} 不是 Application 子类");
+    $meta = $o['rows'] > 0 ? ['rows' => $o['rows']] : [];
+    // 目标是不是路由 id 也写进脚本：宿主进程只看脚本，没有 `--page` 这条命令行可依。
+    if ($o['page']) {
+        $meta['page'] = 1;
     }
 
-    // ★ 挂载**不在任何帧里**（`buildRoot()` + 首次 layout 都发生在 `attach()` 内），
-    //   而"打开这一页要多久"恰恰是页面级调试的第二个问题。单独量、单独报，别让它
-    //   混进首帧 —— 混进去会让"首帧成本"这一列骗人。
-    $mountStart = \hrtime(true);
-    $app->attach(new SurfaceProbe(), $o['constraints']);
-    $mountMs = (\hrtime(true) - $mountStart) / 1e6;
+    // 要驱动的那份：重放时是**原脚本**（不可变），否则由命令行规划出来。
+    $drive = $o['script'] ?? Plan::build(
+        $o['label'],
+        (float) $o['width'],
+        (float) $o['height'],
+        $meta,
+        $o['frames'],
+        $o['hold'],
+        $o['steps'],
+    );
 
-    $meta = $o['rows'] > 0 ? ['rows' => $o['rows']] : [];
-    // 重放时给会话一个**分叉**（同目标同视口、步骤为空）：录制落在分叉上，原脚本
-    // 保持不可变。两次运行共用同一份脚本，谁也别偷偷改它。
-    $skeleton = $o['script'] === null
-        ? new Script($o['label'], (float) $o['width'], (float) $o['height'], $meta)
-        : $o['script']->fork();
+    // ★ 同一份脚本跑两遍，靠的是"脚本不被改动"。录制落在**分叉**上（同目标同视口、
+    //   步骤为空），原脚本保持不可变；"录下来的"与"要驱动的"是否一致，就是 `--verify`
+    //   的第一级判据。
+    $skeleton = $drive->fork();
 
-    $session = DebugSession::open($app, $o['constraints'], script: $skeleton);
+    /** @var list<array{0: int, 1: float}> $frameTimes 按推进顺序：帧号 + 整帧墙钟 */
+    $frameTimes = [];
+    $onFrame = static function (int $id, float $ms) use (&$frameTimes): void {
+        $frameTimes[] = [$id, $ms];
+    };
+
+    $session = null;
 
     try {
-        if ($source !== null) {
-            $session->defineEffect('resolve', static function () use ($source): bool {
-                return $source->resolveNext();
-            });
-        }
-
-        // ★ 墙钟按**推进顺序**收集，最后与帧号顺序对齐，不写 `$wall[lastFrameId()] = pump()`：
-        //   那种写法里下标**先于**右侧求值（实测差一帧 —— 第 1 行显示的是第 2 帧的耗时），
-        //   而且帧被容量裁剪时会错得更远。顺序是唯一可靠的对应关系。
-        /** @var list<float> $times 按推进顺序 */
-        $times = [];
-        $pump = static function (float $t) use ($session, &$times): void {
-            $times[] = $session->pump($t);
-        };
-
-        if ($o['script'] !== null) {
-            Replay::apply($session, $o['script'], [], $o['at'], static function (int $id, float $ms) use (&$times): void {
-                $times[] = $ms;
-            });
+        // ★ 驱动只有**一条**路径（脚本 + {@see Replay}），本地与 `--remote` 的差别只在
+        //   "谁执行那串步骤"。以前本地是手写 pump 循环：`--at` 截断、动作后的 `--hold`、
+        //   时间戳递进各写一遍，远端得再写一遍 —— 两处只要有一处不同，同一份脚本
+        //   给出的报告就是两个故事，而两份报告看起来都正常。
+        if ($o['remote']) {
+            $session = new RemoteSession(ProcessTransport::spawn([
+                \PHP_BINARY,
+                \dirname(__DIR__) . '/tools/debug-host.php',
+            ]));
+            $mountMs = $session->open($skeleton);
         } else {
-            $t = 0.0;
-            $pump($t);
-            $count = 1;
-            for ($i = 1; $i < $o['frames']; ++$i) {
-                if ($o['at'] !== null && $count >= $o['at']) {
-                    break;
-                }
-                $t += 16.0;
-                $pump($t);
-                ++$count;
-            }
-
-            foreach ($o['steps'] as [$kind, $spec]) {
-                if ($o['at'] !== null && $count >= $o['at']) {
-                    break;
-                }
-                $t += 16.0;
-                act($session, $kind, $spec, $t, $source);
-                // ★ 动作之后推 `--hold` 帧而不是固定 1 帧：滚轮 / 回弹 / 淡出都是**动画**，
-                //   一帧只够"开始"，位移与重绘在后面几帧。固定 1 帧会让"滚了但什么都没变"。
-                for ($i = 0; $i < $o['hold']; ++$i) {
-                    if ($o['at'] !== null && $count >= $o['at']) {
-                        break;
-                    }
-                    $t += $i === 0 ? 0.0 : 16.0;
-                    $pump($t);
-                    ++$count;
-                }
-            }
+            $opened = Runner::open($o['label'], (float) $o['width'], (float) $o['height'], $meta, $skeleton);
+            $session = $opened['session'];
+            $mountMs = $opened['mountMs'];
         }
 
-        $limit = $o['script'] !== null
-            ? \max(1, $o['at'] ?? $o['script']->count(Step::FRAME))
-            : \max(1, $o['frames'] + \count($o['steps']) * $o['hold']);
-        $recorded = $session->query('frames', ['limit' => $limit]);
-        $ids = \array_keys($session->recorder()->frames());
-        $wall = \count($ids) === \count($times) ? \array_combine($ids, $times) : [];
+        Replay::apply($session, $drive, [], $o['at'], $onFrame);
+
+        // 帧表：`limit` 就是**这一轮实际推了几帧**。原来按"--frames + 动作 × hold"推算，
+        // 那是"打算推几帧"；`--at` 截断时两者不是一回事，报告会把没发生的帧也列进去。
+        $recorded = $session->query('frames', ['limit' => \max(1, \count($frameTimes))]);
+        $wall = [];
+        foreach ($frameTimes as [$id, $ms]) {
+            $wall[$id] = $ms;
+        }
         foreach ($recorded as $i => $frame) {
             $recorded[$i]['wall'] = $wall[(int) $frame['id']] ?? (float) $frame['cost'];
         }
@@ -381,10 +370,21 @@ function run_once(array $o): array
                 continue;
             }
             $detail = $session->query('explain', ['frame' => (int) $frame['id']]);
+            $ids = [];
+            foreach ($detail['rebuilt'] as $row) {
+                $ids[] = (int) $row['id'];
+            }
             $attribution[] = [
                 'id' => (int) $detail['id'],
                 't' => (float) $detail['t'],
-                'rebuilt' => \count($detail['rebuilt']),
+                'rebuilt' => \count($ids),
+                // ★ 存 id 而不只存个数：`--verify` 要说出"第 N 帧两边差在哪几个节点"，
+                //   只有总数时只能说"有差"，把定位又退回给读者。
+                'ids' => $ids,
+                // 段名与跳过标记也在记录指纹里（摘要不比耗时，但比"跑了哪几段"），
+                // 所以它们必须能出现在差异报告里，否则"指纹不同而看不出不同"。
+                'stages' => $detail['stages'],
+                'skip' => [$detail['settleSkipped'], $detail['paintSkipped']],
                 'byKind' => $detail['byKind'],
                 'roots' => $detail['roots'],
             ];
@@ -404,6 +404,9 @@ function run_once(array $o): array
             'replayed' => $o['script'] !== null,
             'viewport' => [$o['width'], $o['height']],
             'mountMs' => $mountMs,
+            // 跑这次会话的进程：同进程跑时为 null。报告要能说清"这份因果是谁跑出来的"，
+            // 也是 `--remote` 真的交出去了的唯一可观测量。
+            'hostPid' => $session instanceof RemoteSession ? $session->hostPid() : null,
             'stats' => $session->query('stats'),
             'frames' => $recorded,
             'attribution' => $attribution,
@@ -418,19 +421,17 @@ function run_once(array $o): array
             'cascade' => $cascade,
         ];
 
-        $canonical = [];
-        foreach ($session->recorder()->frames() as $id => $frame) {
-            $canonical[(int) $id] = Digest::ofFrame($frame);
-        }
+        /** @var array<string, mixed> $scriptRaw */
+        $scriptRaw = $session->query('script');
 
         return [
             'report' => $report,
-            'script' => $session->script(),
-            'digest' => Digest::of($session->recorder()),
-            'canonical' => $canonical,
+            // 脚本与摘要都走**查询**：本地与远端因此完全同形，不必给远端多加动词。
+            'script' => Script::fromArray($scriptRaw),
+            'digest' => $session->query('digest'),
         ];
     } finally {
-        $session->close();
+        $session?->close();
     }
 }
 
@@ -524,175 +525,62 @@ function report_verify(array $a, array $b, string $path, bool $json): bool
     ));
 
     if ($firstDiff !== null) {
-        foreach ([['A', $a], ['B', $b]] as [$tag, $run]) {
-            $canon = $run['canonical'][$firstDiff] ?? null;
-            $text = $canon === null ? '（这一帧不存在）' : (string) \json_encode($canon, \JSON_UNESCAPED_UNICODE);
-            if (\strlen($text) > 600) {
-                $text = \substr($text, 0, 600) . '…';
+        /** @var array<string, mixed>|null $rowA */
+        $rowA = attribution_of($a, $firstDiff);
+        /** @var array<string, mixed>|null $rowB */
+        $rowB = attribution_of($b, $firstDiff);
+        $idsA = \is_array($rowA) ? $rowA['ids'] : [];
+        $idsB = \is_array($rowB) ? $rowB['ids'] : [];
+
+        foreach ([['A', $rowA, $idsA], ['B', $rowB, $idsB]] as [$tag, $row, $ids]) {
+            if ($row === null) {
+                \fwrite(\STDOUT, "    {$tag} #{$firstDiff}  这一帧没有重建（或不存在）\n");
+                continue;
             }
-            \fwrite(\STDOUT, "    {$tag} #{$firstDiff}  {$text}\n");
+            \fwrite(\STDOUT, \sprintf(
+                "    %s #%d  重建 %d 个，段 %s，跳过 %s\n",
+                $tag,
+                $firstDiff,
+                \count($ids),
+                \implode('+', \array_map('strval', (array) $row['stages'])),
+                \implode('/', \array_map(static fn(bool $s): string => $s ? '1' : '0', (array) $row['skip'])),
+            ));
+            if ($ids !== []) {
+                \fwrite(\STDOUT, '      节点：' . \implode(',', \array_slice($ids, 0, 24)) . (\count($ids) > 24 ? '…' : '') . "\n");
+            }
         }
-        \fwrite(\STDOUT, "  ⇒ 驱动相同而因果不同：这是引擎的不确定性（随机数 / 墙钟 / 对象 id 序），不是脚本的问题\n");
+
+        $onlyA = \array_values(\array_diff($idsA, $idsB));
+        $onlyB = \array_values(\array_diff($idsB, $idsA));
+        if ($onlyA !== [] || $onlyB !== []) {
+            \fwrite(\STDOUT, '    只在 A：' . ($onlyA === [] ? '—' : \implode(',', \array_slice($onlyA, 0, 24))) . "\n");
+            \fwrite(\STDOUT, '    只在 B：' . ($onlyB === [] ? '—' : \implode(',', \array_slice($onlyB, 0, 24))) . "\n");
+        }
+
+        \fwrite(\STDOUT, $scriptSame
+            ? "  ⇒ 驱动相同而因果不同：这是引擎的不确定性（随机数 / 墙钟 / 对象 id 序），不是脚本的问题\n"
+            : "  ⇒ 驱动本身就不同：先查脚本读写出错，谈因果没意义\n");
     }
 
     return $ok;
 }
 
-// ---------------------------------------------------------------- 解析与驱动
-
 /**
- * 目标 → 应用实例。
+ * 从报告里取某一帧的归因行（不存在时 `null`）。
  *
- * 先按 Application 类名解析，再退到示例台路由 id：`table` 这种单词不可能是类名，
- * 而 `ShowcaseApplication` 这种类名也不可能是路由 id —— 两个候选集的交集是空的，
- * 所以"先类名后路由"不会把用户的意图判歪。
+ * @param array<string, mixed> $run
+ *
+ * @return array<string, mixed>|null
  */
-function target_app(string $name, bool $forceRoute, ?\Closure $fetchRows = null): Application
+function attribution_of(array $run, int $frame): ?array
 {
-    if (!$forceRoute) {
-        $class = resolve_app($name);
-        if ($class !== null) {
-            try {
-                return new $class();
-            } catch (\ArgumentCountError $e) {
-                throw new \RuntimeException(
-                    "{$class} 的构造函数需要参数：本命令只跑无参应用（装配归组合根）。\n"
-                    . '要跑示例台的页面请用 --page=<路由 id>：' . \implode(' / ', PageHostApplication::routes()),
-                );
-            }
-        }
-    }
-
-    try {
-        return PageHostApplication::forRoute($name, $fetchRows);
-    } catch (\InvalidArgumentException $e) {
-        throw new \RuntimeException(
-            "找不到目标：{$name}\n"
-            . "  作为应用类：试过 Drift\\Dev\\Smoke\\App\\ 与 Drift\\Dev\\Smoke\\\n"
-            . '  作为页面路由：' . $e->getMessage(),
-        );
-    }
-}
-
-/** @return class-string<Application>|null */
-function resolve_app(string $name): ?string
-{
-    $candidates = \str_contains($name, '\\')
-        ? [$name]
-        : ['Drift\\Dev\\Smoke\\App\\' . $name, 'Drift\\Dev\\Smoke\\' . $name];
-
-    foreach ($candidates as $candidate) {
-        if (\class_exists($candidate) && \is_subclass_of($candidate, Application::class)) {
-            return $candidate;
+    foreach ($run['report']['attribution'] as $row) {
+        if (is_array($row) && (int) ($row['id'] ?? 0) === $frame) {
+            return $row;
         }
     }
 
     return null;
-}
-
-/** 走真实派发链（加速键 → IME → 焦点 → 手势），不直接改 State。 */
-function act(DebugSession $session, string $kind, string $spec, float $t, ?PendingRows $source): void
-{
-    switch ($kind) {
-        case 'text':
-            $session->send(KeyEvent::character($spec), $t);
-
-            return;
-        case 'key':
-            $session->send(KeyEvent::down(key_chord($spec)), $t);
-
-            return;
-        case 'resolve':
-            // 结算在**帧外**发生：这正是真实异步的形状（后端在两次帧之间回贴），
-            // 写入由下一帧的 settle 消费 ⇒ 报告里能看到是"哪一帧"接住的。
-            // ★ 走 `effect()` 而不是直接调夹具：这一笔必须进脚本，否则异步页的
-            //   重放会退化成"一整段静止画面"，而报告本身看不出少了什么。
-            if ($source === null) {
-                \fwrite(\STDERR, "没有在途的取数请求：先给 --rows=N 再 --resolve\n");
-
-                return;
-            }
-            if ($session->effect('resolve') !== true) {
-                \fwrite(\STDERR, "没有在途的取数请求：先给 --rows=N 再 --resolve\n");
-            }
-
-            return;
-        case 'click':
-            // 按下 → 抬起一次成型：焦点/选中在前者，激活在后者，中间不推帧
-            // （真实用户点击也不可能在两者之间插一帧）。
-            [$x, $y, $button] = parse_click($spec);
-            $session->send(PointerEvent::down($x, $y, $button), $t);
-            $session->send(PointerEvent::up($x, $y, $button), $t);
-
-            return;
-        case 'wheel':
-            [$x, $y, $delta, $axis] = parse_wheel($spec);
-            $session->send(ScrollEvent::make($x, $y, $delta, $axis), $t);
-
-            return;
-    }
-}
-
-/** `x,y[,键]` → 三个值。键：0 左 / 1 中 / 2 右。 */
-function parse_click(string $spec): array
-{
-    $parts = \explode(',', $spec);
-    if (\count($parts) < 2) {
-        \fwrite(\STDERR, "点击坐标要写成 --click=x,y[,键]：{$spec}\n");
-        exit(2);
-    }
-
-    return [(float) $parts[0], (float) $parts[1], isset($parts[2]) ? (int) $parts[2] : 0];
-}
-
-/** `x,y,格[,h]` → 四个值。**单位是格**（`ScrollEvent` 的口径），正 = 往正方向看。 */
-function parse_wheel(string $spec): array
-{
-    $parts = \explode(',', $spec);
-    if (\count($parts) < 3) {
-        \fwrite(\STDERR, "滚轮要写成 --wheel=x,y,格[,h]：{$spec}\n");
-        exit(2);
-    }
-    $axis = isset($parts[3]) && \str_starts_with(\strtolower($parts[3]), 'h')
-        ? Axis::Horizontal
-        : Axis::Vertical;
-
-    return [(float) $parts[0], (float) $parts[1], (float) $parts[2], $axis];
-}
-
-/** `Ctrl+A` / `Shift+Tab` / `Enter` / `a` → 键码；单字符走文本输入。 */
-function key_chord(string $spec): KeyChord
-{
-    $ctrl = false;
-    $alt = false;
-    $shift = false;
-
-    while (($pos = \strpos($spec, '+')) !== false) {
-        $modifier = \strtolower(\substr($spec, 0, $pos));
-        $spec = \substr($spec, $pos + 1);
-        match ($modifier) {
-            'ctrl' => $ctrl = true,
-            'alt' => $alt = true,
-            'shift' => $shift = true,
-            default => null,
-        };
-    }
-
-    $named = [
-        'tab' => 'Tab', 'enter' => 'Enter', 'esc' => 'Escape', 'escape' => 'Escape',
-        'space' => ' ', 'backspace' => 'Backspace', 'delete' => 'Delete', 'del' => 'Delete',
-        'left' => 'Left', 'right' => 'Right', 'up' => 'Up', 'down' => 'Down',
-        'home' => 'Home', 'end' => 'End', 'pageup' => 'PageUp', 'pagedown' => 'PageDown',
-    ];
-    $key = $named[\strtolower($spec)] ?? $spec;
-    if ($key === '') {
-        $key = ' ';
-    }
-    if (\mb_strlen($key, 'UTF-8') === 1) {
-        $key = \mb_strtoupper($key, 'UTF-8'); // 单字符键码统一大写，与 KeyEvent::character 同源
-    }
-
-    return KeyChord::make($key, $ctrl, $alt, $shift);
 }
 
 // -------------------------------------------------------------------- 渲染
@@ -715,8 +603,9 @@ function render_text(array $report): void
     $last = $walls === [] ? 0.0 : $walls[\count($walls) - 1];
 
     \fwrite(\STDOUT, \sprintf(
-        "应用  %s\n视口  %dx%d     帧数 %d     登记节点 %d     挂载 %.2fms\n",
+        "应用  %s%s\n视口  %dx%d     帧数 %d     登记节点 %d     挂载 %.2fms\n",
         (string) $report['app'],
+        $report['hostPid'] === null ? '' : \sprintf('（宿主进程 %d）', (int) $report['hostPid']),
         (int) $report['viewport'][0],
         (int) $report['viewport'][1],
         (int) $stats['frames'],

@@ -37,30 +37,58 @@ final class Query
     /**
      * 最近 N 帧的摘要，按帧号升序。
      *
+     * `since` 是**增量游标**：只要帧号大于它的帧。游标由调用方持有（记最后一条的
+     * `id`），服务端不记"你看到哪了" —— 无状态的读可以重试、可以并行、可以
+     * 两个消费者各拿一份互不干扰。这也正是"订阅"给不了的东西：订阅一旦漏一条，
+     * 之后每一条都是错的，而游标只是"再问一次"。
+     *
      * @return list<array<string, mixed>>
      */
-    public function frames(int $limit = 30, bool $rebuiltOnly = false): array
+    public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
+        if ($since !== null) {
+            $out = [];
+            foreach ($this->recorder->frames() as $id => $frame) {
+                if ($id <= $since) {
+                    continue;
+                }
+                if ($rebuiltOnly && $frame->rebuilt === []) {
+                    continue;
+                }
+                $out[] = $this->frameSummary($frame);
+            }
+
+            // 游标语义下 `limit` 是"最多给这么多"，从**最老的未读**开始：
+            // 丢弃最新的会让读者以为"就这些"，而最老的丢不掉才是真相。
+            return $limit > 0 ? \array_slice($out, 0, $limit) : $out;
+        }
+
         $window = $this->window($limit);
         $out = [];
         foreach ($window as $frame) {
             if ($rebuiltOnly && $frame->rebuilt === []) {
                 continue;
             }
-            $out[] = [
-                'id' => $frame->id,
-                't' => $frame->t,
-                'cost' => $frame->costMs,
-                'rebuilt' => \count($frame->rebuilt),
-                'causes' => \count($frame->causes),
-                'stageMs' => FrameRecord::toMs($frame->stageNs),
-                'unattributedMs' => $frame->unattributedMs(),
-                'settleSkipped' => $frame->settleSkipped,
-                'paintSkipped' => $frame->paintSkipped,
-            ];
+            $out[] = $this->frameSummary($frame);
         }
 
         return $out;
+    }
+
+    /** @return array<string, mixed> */
+    private function frameSummary(FrameRecord $frame): array
+    {
+        return [
+            'id' => $frame->id,
+            't' => $frame->t,
+            'cost' => $frame->costMs,
+            'rebuilt' => \count($frame->rebuilt),
+            'causes' => \count($frame->causes),
+            'stageMs' => FrameRecord::toMs($frame->stageNs),
+            'unattributedMs' => $frame->unattributedMs(),
+            'settleSkipped' => $frame->settleSkipped,
+            'paintSkipped' => $frame->paintSkipped,
+        ];
     }
 
     /**

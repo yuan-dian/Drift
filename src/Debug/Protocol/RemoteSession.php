@@ -1,0 +1,212 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Debug\Protocol;
+
+use Drift\Debug\Session\InputScript;
+use Drift\Debug\Session\Script;
+use Drift\Debug\Session\SessionDriver;
+use Drift\Debug\Session\SessionQueries;
+use Drift\Input\InputEvent;
+
+/**
+ * 另一个进程里的会话，接到本地来用。
+ *
+ * ## 它是 `DebugSession` 的镜像，不是另一种东西
+ *
+ * 方法、参数、返回值的形状与 {@see \Drift\App\DebugSession} 逐一对齐（同一对接口
+ * {@see SessionQueries} / {@see SessionDriver}）。这不是巧合，是要求：消费者——重放循环、
+ * 报告组装、将来的面板——只写一份，换执行器不需要改一行。判据也由此而来：
+ * **同样的动作，本地跑与远端跑，读回来的值必须逐值相同**。
+ *
+ * ## 一次驱动，多次追问
+ *
+ * 这才是引入传输的真实理由。没有它时，每个问题都要重跑一遍页面（挂载 + 几百帧），
+ * 而两次运行的时间戳、异步交付顺序本来就不保证相同 —— "为什么这一帧慢"和
+ * "为什么这棵树重建了"取自两次不同的运行，合起来就是拼凑的证据。留在宿主里，
+ * 十几次查询都对着**同一次运行**。
+ *
+ * ## 不做什么
+ *
+ * 不重连、不缓存、不批量。管道断了就是断了：`read()` 返回 `null` 时抛
+ * {@see ProtocolError}，调用方要么重开宿主，要么放弃 —— 静默重发会让"发了两遍"
+ * 变成一条**推了两帧**的会话，而报告看不出来。
+ *
+ * @api
+ */
+final class RemoteSession implements SessionQueries, SessionDriver
+{
+    private int $seq = 0;
+
+    private int $lastFrameId = 0;
+
+    /** 宿主进程号；`open` 之后才有。 */
+    private ?int $hostPid = null;
+
+    private bool $opened = false;
+
+    private bool $closed = false;
+
+    public function __construct(private readonly Transport $transport)
+    {
+    }
+
+    /**
+     * 让宿主建应用、挂表面、开会话。
+     *
+     * 脚本在这里就交上去（目标 + 视口 + 环境），因为"怎么造这一页"完全由它决定；
+     * 随后的 `frame` / `input` / `effect` 只是照着脚本推进，不必每条再带一遍目标。
+     *
+     * @return float 挂载墙钟毫秒（与本地 `attach()` 同口径）
+     */
+    public function open(Script $script): float
+    {
+        if ($this->opened) {
+            throw new \LogicException('这个远端会话已经打开过：一个宿主进程只服务一次运行');
+        }
+        $this->opened = true;
+
+        $result = $this->callObject(Methods::OPEN, ['script' => $script->toArray()]);
+        $mount = $result['mountMs'] ?? null;
+        if (!\is_int($mount) && !\is_float($mount)) {
+            throw new ProtocolError(ProtocolError::BAD_RESPONSE, 'open 的响应缺少 mountMs');
+        }
+        $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
+
+        return (float) $mount;
+    }
+
+    /** 跑这次会话的宿主进程号；没打开时为 `null`。 */
+    public function hostPid(): ?int
+    {
+        return $this->hostPid;
+    }
+
+    /** @return float 整帧墙钟毫秒（由宿主量，与 `FrameClock` 同口径） */
+    public function pump(float $timestampMs): float
+    {
+        $result = $this->callObject(Methods::FRAME, ['t' => $timestampMs]);
+        $id = $result['id'] ?? null;
+        $wall = $result['wall'] ?? null;
+        if (!\is_int($id) || (!\is_int($wall) && !\is_float($wall))) {
+            throw new ProtocolError(ProtocolError::BAD_RESPONSE, 'frame 的响应缺少 id / wall');
+        }
+        // 帧号由**宿主**给，客户端只记：自己数会与"容量裁剪""跳过 settle"这些事实错开。
+        $this->lastFrameId = $id;
+
+        return (float) $wall;
+    }
+
+    public function send(InputEvent $event, ?float $timestampMs = null): void
+    {
+        // 与脚本同一个编码：一条输入在管道上和一份脚本里必须是同一种形状，
+        // 否则"录下来的"和"发出去的"会分两套，而差异只在跨进程时才显形。
+        $this->call(Methods::INPUT, ['step' => InputScript::pack($event, $timestampMs)->toArray()]);
+    }
+
+    /**
+     * @param array<string, scalar|null> $args
+     *
+     * @return mixed 宿主侧回调的返回值；只能是标量 / 数组 / null
+     */
+    public function effect(string $name, array $args = []): mixed
+    {
+        $result = $this->callObject(Methods::EFFECT, ['name' => $name, 'args' => $args]);
+
+        return $result['value'] ?? null;
+    }
+
+    public function query(string $name, array $args = []): array
+    {
+        $result = $this->call(Methods::QUERY, ['name' => $name, 'args' => $args]);
+        if (!\is_array($result)) {
+            throw new ProtocolError(ProtocolError::BAD_RESPONSE, "查询 {$name} 的响应不是数组");
+        }
+
+        return $result;
+    }
+
+    public function lastFrameId(): int
+    {
+        return $this->lastFrameId;
+    }
+
+    /**
+     * 关会话并关管道（宿主会在 `close` 之后退出）。
+     *
+     * 关闭阶段的异常**不上抛**：到这一步调用方已经没有补救动作，把"对端先死了"
+     * 抛给报告组装只会让一次成功的运行以异常收尾。管道仍然会被关掉。
+     */
+    public function close(): void
+    {
+        if ($this->closed) {
+            return;
+        }
+        $this->closed = true;
+
+        try {
+            if ($this->opened) {
+                $this->call(Methods::CLOSE);
+            }
+        } catch (\Throwable) {
+            // 对端已经没了：要做的只有关管道。
+        } finally {
+            $this->transport->close();
+        }
+    }
+
+    // ------------------------------------------------------------------ 收发
+
+    /**
+     * 发一条、等一条，返回原始 `result`。
+     *
+     * @param array<array-key, mixed> $params
+     */
+    private function call(string $method, array $params = []): mixed
+    {
+        if ($this->closed) {
+            throw new \LogicException('远端会话已关闭');
+        }
+
+        $id = ++$this->seq;
+        $this->transport->write(Wire::encode(['id' => $id, 'method' => $method, 'params' => $params]));
+
+        $line = $this->transport->read();
+        if ($line === null) {
+            throw new ProtocolError(ProtocolError::CLOSED, "等 {$method} 的响应时对端关掉了管道");
+        }
+
+        $message = Wire::decode($line);
+        if (($message['id'] ?? null) !== $id) {
+            // 一条响应配错请求就说明通道上的顺序已经不可信，继续读下去只会串味。
+            throw new ProtocolError(
+                ProtocolError::BAD_RESPONSE,
+                "响应的 id 不是 {$id}：" . Wire::encode($message),
+            );
+        }
+        if (($message['ok'] ?? false) !== true) {
+            $error = $message['error'] ?? [];
+            throw new ProtocolError(
+                \is_array($error) && \is_string($error['code'] ?? null) ? $error['code'] : ProtocolError::CALL_FAILED,
+                \is_array($error) && \is_string($error['message'] ?? null) ? $error['message'] : '对端返回了失败但没有说明原因',
+            );
+        }
+
+        return $message['result'] ?? null;
+    }
+
+    /**
+     * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
+     */
+    private function callObject(string $method, array $params = []): array
+    {
+        $result = $this->call($method, $params);
+        if (!\is_array($result)) {
+            throw new ProtocolError(ProtocolError::BAD_RESPONSE, "{$method} 的响应不是对象");
+        }
+
+        return $result;
+    }
+}
