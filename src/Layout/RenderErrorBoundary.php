@@ -57,6 +57,18 @@ final class RenderErrorBoundary extends RenderProxyBox
         }
     }
 
+    /**
+     * 透明代理浮层面板矩形：落位算法要从根盒拿投影留白（`OverlayLayout::placeEntry()`）。
+     *
+     * ★ 不转发会让所有菜单 / Tooltip 的落点整体偏一个 elevation —— 面板画得出来、
+     *   位置错，而报告里没有任何异常（A46）。坏了才退回 null，让兜底标记用整盒尺寸。
+     */
+    #[\Override]
+    public function panelRect(): ?Rect
+    {
+        return $this->paintBroken ? null : $this->child?->panelRect();
+    }
+
     #[\Override]
     protected function paintContent(Canvas $canvas): void
     {

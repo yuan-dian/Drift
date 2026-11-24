@@ -68,7 +68,8 @@ final class MenuTest extends SmokeTestCase
             $app->anchor !== null && $app->anchor->widget() instanceof Menu,
         );
 
-        $panelBox = $app->overlays()->top()?->element?->effectiveBox();
+        // 根是默认错误边界（A46），面板在其子树里；形体断言要看真正的面板盒。
+        $panelBox = $app->overlays()->top()?->element?->childAt(0)?->effectiveBox();
         check('浮层 · 面板盒是 RenderPopupPanel（与根树同构：一个 Widget 一个 Element）', $panelBox instanceof RenderPopupPanel);
 
         // —— 渲染：主树先画、浮层后画（顺序即层叠）

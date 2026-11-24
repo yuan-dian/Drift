@@ -85,7 +85,8 @@ final class ModalTest extends SmokeTestCase
             $app->isModalOpen() && $app->overlays()->top()?->element !== null && !$app->isMenuOpen(),
         );
 
-        $box = $app->overlays()->top()?->element?->effectiveBox();
+        // 根是默认错误边界（A46），遮罩宿主在其子树里。
+        $box = $app->overlays()->top()?->element?->childAt(0)?->effectiveBox();
         check('模态 · 浮层盒是 RenderModalHost（遮罩 + 盖满住同一个盒）', $box instanceof RenderModalHost);
         check(
             '模态 · 紧约束盖满客户区（不是自尺寸 —— 盖不满就"后面还能点"）',

@@ -90,6 +90,22 @@ final class ErrorBoundaryElement extends StatelessElement
         }
     }
 
+    /**
+     * 把"请重建"传给孩子（A46）。
+     *
+     * ★ 浮层锚点的内容签名变化时，`OverlayLayout` 对**根 Element** 调
+     *   `markNeedsBuild()`。边界自己是无态 Element，`parent::` 什么都不做 ⇒
+     *   下拉面板看着还开着，筛选内容再也不更新（哑浮层，不报错）。
+     */
+    #[\Override]
+    public function markNeedsBuild(): void
+    {
+        parent::markNeedsBuild();
+        if ($this->caught === null) {
+            $this->childAt(0)?->markNeedsBuild();
+        }
+    }
+
     /** 本边界是否已捕获过异常（测试 / devtools 断言用） */
     public function hasCaught(): bool
     {

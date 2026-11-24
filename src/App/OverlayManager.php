@@ -5,6 +5,7 @@ namespace Drift\App;
 
 use Drift\Widget\BuildContext;
 use Drift\Widget\Element;
+use Drift\Widget\ErrorBoundary;
 use Drift\Widget\Modal;
 use Drift\Widget\Snackbar;
 use Drift\Widget\SnackbarPanel;
@@ -422,7 +423,9 @@ final class OverlayManager
      */
     private function pushOverlay(OverlayEntry $e): void
     {
-        $element = $e->panel->createElement();
+        // 浮层是独立根，路由页的边界够不着（A46）。唯一入栈漏斗在这里包一层，
+        // 一个条目仍只有一个 root Element：`$e->element` 指边界，面板在子树里。
+        $element = ErrorBoundary::make($e->panel)->createElement();
         $element->mount(null, $this->menuContext());
 
         $e->element = $element;
