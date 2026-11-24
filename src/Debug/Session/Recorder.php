@@ -244,6 +244,95 @@ final class Recorder
         return $this->generation;
     }
 
+    /**
+     * 从一份离线证据建**游离实例**：不装进 {@see self::$current}。
+     *
+     * 为什么不装：`$current` 是"正在录的那一份"。装进去，后续帧会写进这份外来证据，
+     * 而 `Query` 手里的对象与文件内容就开始悄悄分叉 —— 两边都"正常"，结论不同。
+     * 导入的证据只被读。
+     *
+     * 容量取 `max(声明值, 实际帧数)`：全量包可能比导出时的窗口更大。照声明值建实例
+     * 会让 `window.capacity` 说 600 而实际有 1200 帧 —— 自报说谎，读者无法判断
+     * "窗口满了"与"这份包就是全的"。
+     *
+     * 派生量一律**重算不存**：`geometryDigest` 是"这个节点记过的最后一次签名"，
+     * 存进包里就是第二份真相；`seq` / `networkSeq` 取最大值，避免将来误追加时重号。
+     */
+    public static function hydrate(EvidenceBag $bag): self
+    {
+        $capacity = \max(1, $bag->capacity, \count($bag->frames));
+        $recorder = new self($capacity, $bag->script, $bag->redactBodies);
+
+        $recorder->nodes = $bag->nodes;
+        $recorder->frames = [];
+        foreach ($bag->frames as $frame) {
+            $recorder->frames[$frame->id] = $frame;
+        }
+        $recorder->frameId = $recorder->lastFrameId();
+        $recorder->geometry = $bag->geometry;
+        $recorder->network = $bag->network;
+        $recorder->bodies = $bag->bodies;
+        $recorder->props = $bag->props;
+        $recorder->boxless = $bag->boxless;
+
+        $seq = 0;
+        foreach ($bag->nodes as $id => $_) {
+            $seq = \max($seq, (int) $id);
+        }
+        $recorder->seq = $seq;
+
+        $recorder->geometryDigest = [];
+        foreach ($bag->geometry as $rows) {
+            foreach ($rows as $node => $record) {
+                $recorder->geometryDigest[(int) $node] = $record->signature();
+            }
+        }
+
+        $networkSeq = 0;
+        foreach ($bag->network as $requestId => $_) {
+            $networkSeq = \max($networkSeq, (int) $requestId);
+        }
+        $recorder->networkSeq = $networkSeq;
+
+        return $recorder;
+    }
+
+    /** @return list<int> 没有自己盒的节点（复合控件），导出证据包要逐条带上。 */
+    public function boxlessNodes(): array
+    {
+        $ids = \array_map('\intval', \array_keys($this->boxless));
+        \sort($ids);
+
+        return $ids;
+    }
+
+    /** @return list<int> 有几何记录的帧号（升序） */
+    public function geometryFrames(): array
+    {
+        $ids = \array_map('\intval', \array_keys($this->geometry));
+        \sort($ids);
+
+        return $ids;
+    }
+
+    /** @return list<int> 读过属性的节点号（升序） */
+    public function propNodes(): array
+    {
+        $ids = \array_map('\intval', \array_keys($this->props));
+        \sort($ids);
+
+        return $ids;
+    }
+
+    /** @return list<int> 有报文的 requestId（升序） */
+    public function bodyRequests(): array
+    {
+        $ids = \array_map('\intval', \array_keys($this->bodies));
+        \sort($ids);
+
+        return $ids;
+    }
+
     // -------------------------------------------------------------- 热路径挂点
 
     /**
@@ -543,6 +632,20 @@ final class Recorder
         }
 
         return $out;
+    }
+
+    /**
+     * 该帧**新采**的几何（不含前序帧累积）。
+     *
+     * 与 {@see self::geometryRows()} 的区别是致命的：那个是"到该帧为止每个节点最近
+     * 一次"（查询要的语义），这个是"这一帧真的记了哪些"。导出证据包必须用后者——
+     * 用前者会把每一帧的前序记录重复写一遍，文件大一倍，而条数账会立刻对不上。
+     *
+     * @return array<int, GeometryRecord>
+     */
+    public function geometrySamples(int $frame): array
+    {
+        return $this->geometry[$frame] ?? [];
     }
 
     // ------------------------------------------------------------------ 网络

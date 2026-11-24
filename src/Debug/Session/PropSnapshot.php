@@ -61,4 +61,38 @@ final readonly class PropSnapshot
             'costMs' => $this->costMs,
         ];
     }
+
+    /**
+     * 证据包里的形状：字段全是标量 / 带 tag 数组，与 {@see self::toArray()} 相同。
+     *
+     * 分开保留是为了与其它记录同形——调用处不必记"这个类能不能直接 encode"。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return $this->toArray();
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        /** @var list<array{name: string, owner: string, value: array<string, mixed>}> $fields */
+        $fields = \array_values(\array_filter((array) ($raw['fields'] ?? []), '\is_array'));
+
+        return new self(
+            (int) ($raw['node'] ?? 0),
+            (int) ($raw['frame'] ?? 0),
+            (string) ($raw['widget'] ?? ''),
+            (string) ($raw['element'] ?? ''),
+            isset($raw['state']) ? (string) $raw['state'] : null,
+            $fields,
+            (int) ($raw['omitted'] ?? 0),
+            (int) ($raw['cut'] ?? 0),
+            (int) ($raw['cycles'] ?? 0),
+            (int) ($raw['redacted'] ?? 0),
+            (bool) ($raw['redact'] ?? true),
+            (float) ($raw['costMs'] ?? 0.0),
+        );
+    }
 }

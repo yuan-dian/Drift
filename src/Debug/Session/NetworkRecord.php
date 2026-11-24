@@ -93,4 +93,53 @@ final readonly class NetworkRecord
             'progress' => $this->progress,
         ];
     }
+
+    /**
+     * 证据包里的形状：与 {@see self::toArray()} 只差一个 `pendingFrames`。
+     *
+     * 那是派生量（`settledAtFrame - startedAtFrame`），存进包里就成了第二份真相：
+     * 改一个字段忘了改另一个，包就自相矛盾。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return [
+            'request' => $this->requestId,
+            'method' => $this->method,
+            'url' => $this->url,
+            'host' => $this->host,
+            'path' => $this->path,
+            'startedAtFrame' => $this->startedAtFrame,
+            'settledAtFrame' => $this->settledAtFrame,
+            'status' => $this->status,
+            'bytes' => $this->bytes,
+            'elapsedMs' => $this->elapsedMs,
+            'initiator' => $this->initiator,
+            'ok' => $this->ok,
+            'landed' => $this->landed,
+            'progress' => $this->progress,
+        ];
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        return new self(
+            (int) ($raw['request'] ?? 0),
+            (string) ($raw['method'] ?? ''),
+            (string) ($raw['url'] ?? ''),
+            (string) ($raw['host'] ?? ''),
+            (string) ($raw['path'] ?? ''),
+            (int) ($raw['startedAtFrame'] ?? 0),
+            (int) ($raw['settledAtFrame'] ?? 0),
+            (int) ($raw['status'] ?? 0),
+            (int) ($raw['bytes'] ?? 0),
+            (float) ($raw['elapsedMs'] ?? 0.0),
+            (string) ($raw['initiator'] ?? ''),
+            (bool) ($raw['ok'] ?? false),
+            \array_map('\intval', \array_values((array) ($raw['landed'] ?? []))),
+            (string) ($raw['progress'] ?? ''),
+        );
+    }
 }

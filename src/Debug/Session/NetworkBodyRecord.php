@@ -139,6 +139,58 @@ final readonly class NetworkBodyRecord
     }
 
     /**
+     * 证据包里的形状：**不截断**，与 {@see self::toArray()} 不同。
+     *
+     * `toArray()` 走 `select('both', MAX_BYTES)`，超出 64KB 会再截一刀——存档说
+     * "完整"、导出的却是片段。包里存的是已经在采集处截过的那份原文，读取方要
+     * 按自己的预算再 `select()`，而不是被导出器悄悄截一次。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return [
+            'request' => $this->requestId,
+            'requestBody' => $this->requestBody,
+            'requestMeta' => $this->request,
+            'responseBody' => $this->responseBody,
+            'responseMeta' => $this->response,
+        ];
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        /** @var array{bytes: int, truncated: bool, redacted: int, format: string} $req */
+        $req = self::meta((array) ($raw['requestMeta'] ?? []));
+        /** @var array{bytes: int, truncated: bool, redacted: int, format: string} $res */
+        $res = self::meta((array) ($raw['responseMeta'] ?? []));
+
+        return new self(
+            (int) ($raw['request'] ?? 0),
+            (string) ($raw['requestBody'] ?? ''),
+            $req,
+            (string) ($raw['responseBody'] ?? ''),
+            $res,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array{bytes: int, truncated: bool, redacted: int, redact: bool, format: string}
+     */
+    private static function meta(array $raw): array
+    {
+        return [
+            'bytes' => (int) ($raw['bytes'] ?? 0),
+            'truncated' => (bool) ($raw['truncated'] ?? false),
+            'redacted' => (int) ($raw['redacted'] ?? 0),
+            'redact' => (bool) ($raw['redact'] ?? true),
+            'format' => (string) ($raw['format'] ?? 'text'),
+        ];
+    }
+
+    /**
      * 查询投影：选一侧或两侧，并在查询侧再截一次。
      *
      * @return array<string, mixed>

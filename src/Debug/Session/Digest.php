@@ -74,6 +74,50 @@ final class Digest
     }
 
     /**
+     * 外部条件指纹：**只覆盖"外部给了什么"，不覆盖"多久回来"**。
+     *
+     * 覆盖：请求的 method、脱敏后的 URL 模板、`status`、出现顺序。
+     * 不覆盖：帧号（`startedAtFrame` / `settledAtFrame`）、`elapsedMs`、`bytes`、
+     * `landed` 节点 —— 那些是这台机器这一次的运气，或者已经属于因果事实。
+     *
+     * ## 为什么不含输入事件
+     *
+     * 输入在 {@see Script::digest()} 里，已经进了驱动指纹。重复计入的后果不是
+     * "多算一遍"，而是**诊断价值归零**：两份证据驱动不同时，`drive` 与 `external`
+     * 同时红，于是分不清"是我驱动得不一样"还是"外部条件不一样"，而两者的修复
+     * 动作相反（改脚本 vs 改 mock / 等外部）。
+     *
+     * ## 为什么 URL 要模板化
+     *
+     * 签名参数（`?sig=…&ts=…`）每跑一次都不同，直接进指纹会让它**恒红**——
+     * 与 A38 把 URL 从因果边里赶出去是同一个理由。数字路径段同理（`/items/123`
+     * 与 `/items/124` 是同一类请求）。
+     */
+    public static function ofExternal(Recorder $recorder): string
+    {
+        $items = [];
+        foreach ($recorder->networkRows() as $row) {
+            $items[] = [$row->method, self::urlTemplate($row->url), $row->status];
+        }
+
+        return self::hash($items);
+    }
+
+    /** 去掉 query / fragment，数字路径段收成 `:n`。 */
+    private static function urlTemplate(string $url): string
+    {
+        $base = \substr($url, 0, \strcspn($url, '?#'));
+        $segments = \explode('/', $base);
+        foreach ($segments as $i => $segment) {
+            if ($segment !== '' && \ctype_digit($segment)) {
+                $segments[$i] = ':n';
+            }
+        }
+
+        return \implode('/', $segments);
+    }
+
+    /**
      * 稳定的哈希：键序固定（构造顺序即语义顺序），JSON 不转义、不带浮点。
      *
      * @param array<string, mixed>|list<mixed>|int|string $value

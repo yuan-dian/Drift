@@ -19,6 +19,8 @@ declare(strict_types=1);
  *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2 --request=1
  *   php tools/debug-network.php ... --request=1 --part=response --maxBytes=0 --json
  *   php tools/debug-network.php ... --remote
+ *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2 --out=case.evidence
+ *   php tools/debug-network.php --from=case.evidence --request=1
  *
  * 参数：
  *   --request=N       按 requestId 取报文；不给则列请求骨架
@@ -32,6 +34,8 @@ declare(strict_types=1);
  *   --at=N            只重放到第 N 帧
  *   --view-width=N / --height=N  视口尺寸（默认 800×600）
  *   --remote          用宿主进程跑（验证跨进程读到同一份证据）
+ *   --out=<文件>      把这次会话导出成证据包（NDJSON，首行 manifest）
+ *   --from=<文件>     不跑会话，直接读证据包复算（与驱动参数互斥）
  *   --json            结构化输出
  *
  * @internal 未进 VerifyPlan：报文隐私口径还在定，进 CI 会把脱敏规则钉死
@@ -41,6 +45,9 @@ require __DIR__ . '/autoload.php';
 
 use Drift\App\Replay;
 use Drift\Debug\Protocol\RemoteSession;
+use Drift\Debug\Session\Evidence;
+use Drift\Debug\Session\QueryRouter;
+use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\SessionQueries;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\ProcessTransport;
@@ -50,6 +57,7 @@ use Drift\Dev\Debug\View\Network;
 $target = null;
 $page = null;
 $frames = 1;
+$framesGiven = false;
 $width = 800;
 $height = 600;
 $rows = 0;
@@ -58,6 +66,8 @@ $at = null;
 $remote = false;
 $json = false;
 $request = null;
+$from = null;
+$out = null;
 $part = 'both';
 $limit = 50;
 $maxBytes = 8192;
@@ -81,6 +91,7 @@ foreach (\array_slice($argv, 1) as $arg) {
         $maxBytes = \max(0, (int) \substr($arg, 11));
     } elseif (\str_starts_with($arg, '--frames=')) {
         $frames = \max(1, (int) \substr($arg, 9));
+        $framesGiven = true;
     } elseif (\str_starts_with($arg, '--view-width=')) {
         $width = \max(1, (int) \substr($arg, 13));
     } elseif (\str_starts_with($arg, '--height=')) {
@@ -93,6 +104,10 @@ foreach (\array_slice($argv, 1) as $arg) {
         $at = \max(1, (int) \substr($arg, 5));
     } elseif (\str_starts_with($arg, '--page=')) {
         $page = \substr($arg, 7);
+    } elseif (\str_starts_with($arg, '--from=')) {
+        $from = \substr($arg, 7);
+    } elseif (\str_starts_with($arg, '--out=')) {
+        $out = \substr($arg, 6);
     } elseif (\str_starts_with($arg, '--key=')) {
         $steps[] = ['key', \substr($arg, 6)];
     } elseif (\str_starts_with($arg, '--text=')) {
@@ -109,35 +124,72 @@ foreach (\array_slice($argv, 1) as $arg) {
     }
 }
 
-$label = $page ?? $target;
+$label = $from !== null ? \basename($from) : ($page ?? $target);
 if ($label === null) {
     \fwrite(\STDERR, "用法：debug-network <AppClass|路由id> [--page=<路由id>] [--frames=N] [--request=N] [--json]\n");
+    \fwrite(\STDERR, "      debug-network --from=<证据包> [--request=N] [--json]\n");
     exit(2);
 }
 
 $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both';
-$meta = $rows > 0 ? ['rows' => $rows] : [];
-if ($page !== null) {
-    $meta['page'] = 1;
-}
 
-$drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
-
+/** @var SessionQueries|null $session */
 $session = null;
+$closable = null;
 try {
-    if ($remote) {
-        $session = new RemoteSession(ProcessTransport::spawn([
-            \PHP_BINARY,
-            \dirname(__DIR__) . '/tools/debug-host.php',
-        ]));
-        $session->open($drive->fork());
+    if ($from !== null) {
+        // 包里已有完整的驱动与请求记录，再给驱动参数就是两套说法。
+        if ($page !== null || $target !== null || $steps !== [] || $framesGiven || $at !== null) {
+            throw new \InvalidArgumentException(
+                '--from 与 --page / 目标 / --frames / --at / 驱动参数互斥：包里已经有完整的驱动记录',
+            );
+        }
+        if ($out !== null) {
+            // 同 debug-brief：离线读出的录制器是游离实例，写出去的是另一份东西。
+            throw new \InvalidArgumentException(
+                '--from 与 --out 不能同用：离线复算不产生新记录，要另存请重跑一次会话',
+            );
+        }
+
+        $offline = Recorder::hydrate(Evidence::read($from));
+        $session = QueryRouter::offline($offline);
+        $label = $offline->script()?->target ?? \basename($from);
     } else {
-        $opened = Runner::open((string) $label, (float) $width, (float) $height, $meta, $drive->fork());
-        $session = $opened['session'];
+        if ($out !== null && $remote) {
+            throw new \InvalidArgumentException('--out 不能与 --remote 同用：导出要本地那份记录');
+        }
+
+        $meta = $rows > 0 ? ['rows' => $rows] : [];
+        if ($page !== null) {
+            $meta['page'] = 1;
+        }
+
+        $drive = Plan::build((string) $label, (float) $width, (float) $height, $meta, $frames, $hold, $steps);
+
+        if ($remote) {
+            $session = new RemoteSession(ProcessTransport::spawn([
+                \PHP_BINARY,
+                \dirname(__DIR__) . '/tools/debug-host.php',
+            ]));
+            $session->open($drive->fork());
+        } else {
+            $opened = Runner::open((string) $label, (float) $width, (float) $height, $meta, $drive->fork());
+            $session = $opened['session'];
+        }
+        $closable = $session;
+
+        Replay::apply($session, $drive, [], $at, static function (int $id, float $ms): void {
+        });
     }
 
-    Replay::apply($session, $drive, [], $at, static function (int $id, float $ms): void {
-    });
+    // 导出放在查询之前、Replay 之后：帧已跑完，几何与请求记录都齐了。
+    if ($out !== null) {
+        $recorder = Recorder::current();
+        if ($recorder === null) {
+            throw new \RuntimeException('--out 要本地那份记录，当前没有录制器');
+        }
+        Evidence::write($recorder, $out);
+    }
 
     if ($request !== null) {
         $answer = $session->query('networkBody', [
@@ -172,7 +224,5 @@ try {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);
 } finally {
-    if ($session !== null) {
-        $session->close();
-    }
+    $closable?->close();
 }

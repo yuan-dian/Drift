@@ -122,4 +122,106 @@ final readonly class GeometryRecord
             'flex' => $this->flex,
         ];
     }
+
+    /**
+     * 证据包里的形状：**无损**，字段名与构造器一致。
+     *
+     * 与 {@see self::toArray()} 的差别是有意的：那边把 `inset` 叫 `margin`、把
+     * `border` / `borderWidth` 拆成 `{present, width}`（投影层的读法），这边原样。
+     * 若拿 `toArray()` 序列化，解码端就要记一张改名表，而改名表会漂。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return [
+            'frame' => $this->frame,
+            'node' => $this->node,
+            'parent' => $this->parent,
+            'applied' => $this->applied,
+            'inner' => $this->inner,
+            'size' => $this->size,
+            'offset' => $this->offset,
+            'pad' => $this->pad,
+            'inset' => $this->inset,
+            'box' => $this->box,
+            'aspect' => $this->aspect,
+            'align' => $this->align,
+            'border' => $this->border,
+            'borderWidth' => $this->borderWidth,
+            'flex' => $this->flex,
+        ];
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        $box = $raw['box'] ?? null;
+        $align = $raw['align'] ?? null;
+
+        return new self(
+            (int) ($raw['frame'] ?? 0),
+            (int) ($raw['node'] ?? 0),
+            (int) ($raw['parent'] ?? 0),
+            self::bound((array) ($raw['applied'] ?? [])),
+            self::bound((array) ($raw['inner'] ?? [])),
+            self::pair((array) ($raw['size'] ?? []), 'w', 'h'),
+            self::pair((array) ($raw['offset'] ?? []), 'x', 'y'),
+            self::quad((array) ($raw['pad'] ?? []), 'l', 't', 'r', 'b'),
+            self::quad((array) ($raw['inset'] ?? []), 'l', 't', 'r', 'b'),
+            \is_array($box) ? [
+                'w' => isset($box['w']) ? (float) $box['w'] : null,
+                'h' => isset($box['h']) ? (float) $box['h'] : null,
+            ] : null,
+            isset($raw['aspect']) ? (float) $raw['aspect'] : null,
+            \is_array($align) ? self::pair($align, 'x', 'y') : null,
+            (bool) ($raw['border'] ?? false),
+            (float) ($raw['borderWidth'] ?? 0.0),
+            ['grow' => (int) ($raw['flex']['grow'] ?? 0), 'shrink' => (int) ($raw['flex']['shrink'] ?? 0)],
+        );
+    }
+
+    /**
+     * 一维约束四元组：`INF` 保持字符串。
+     *
+     * 不能一律 `(float)`：`INF` 会被转成 0，于是"父允许任意尺寸"变成"父要求 0 宽"，
+     * 而两者推导出的布局结论相反。
+     *
+     * @param array<string, mixed> $raw
+     * @return array{minW: float|string, maxW: float|string, minH: float|string, maxH: float|string}
+     */
+    private static function bound(array $raw): array
+    {
+        $out = [];
+        foreach (['minW', 'maxW', 'minH', 'maxH'] as $key) {
+            $value = $raw[$key] ?? 0.0;
+            $out[$key] = $value === 'INF' ? 'INF' : (float) $value;
+        }
+
+        /** @var array{minW: float|string, maxW: float|string, minH: float|string, maxH: float|string} $out */
+        return $out;
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array<string, float>
+     */
+    private static function pair(array $raw, string $a, string $b): array
+    {
+        return [$a => (float) ($raw[$a] ?? 0.0), $b => (float) ($raw[$b] ?? 0.0)];
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array<string, float>
+     */
+    private static function quad(array $raw, string $a, string $b, string $c, string $d): array
+    {
+        return [
+            $a => (float) ($raw[$a] ?? 0.0),
+            $b => (float) ($raw[$b] ?? 0.0),
+            $c => (float) ($raw[$c] ?? 0.0),
+            $d => (float) ($raw[$d] ?? 0.0),
+        ];
+    }
 }

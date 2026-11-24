@@ -38,4 +38,29 @@ final readonly class Edge
             'detail' => $this->detail,
         ];
     }
+
+    /**
+     * 证据包里的形状：与 {@see self::toArray()} 目前相同。
+     *
+     * 分开两个方法不是重复，是**允许它们将来不同**：投影可以加派生字段、可以改名，
+     * 而证据包必须逐值往返。现在相同不代表以后相同。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return $this->toArray();
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        return new self(
+            (string) ($raw['kind'] ?? 'unknown'),
+            isset($raw['from']) ? (int) $raw['from'] : null,
+            (int) ($raw['to'] ?? 0),
+            (string) ($raw['site'] ?? ''),
+            (string) ($raw['detail'] ?? ''),
+        );
+    }
 }

@@ -145,4 +145,54 @@ final readonly class FrameRecord
             'causes' => \array_map(static fn(Edge $e): array => $e->toArray(), $this->causes),
         ];
     }
+
+    /**
+     * 证据包里的形状：**无损**，与 {@see self::toArray()} 刻意不同。
+     *
+     * `toArray()` 给的是投影（`stageMs` 四位小数 + 派生的 `unattributedMs`），
+     * 拿它序列化会在往返里丢掉纳秒精度——导入后再导出数值就漂了，而"逐值相同"
+     * 是证据包的全部意义。这里只写**构造器收到的那些值**。
+     *
+     * @return array<string, mixed>
+     */
+    public function encode(): array
+    {
+        return [
+            'id' => $this->id,
+            't' => $this->t,
+            'cost' => $this->costMs,
+            'stages' => $this->stages,
+            'stageNs' => $this->stageNs,
+            'settleSkipped' => $this->settleSkipped,
+            'paintSkipped' => $this->paintSkipped,
+            'incomplete' => $this->incomplete,
+            'rebuilt' => $this->rebuilt,
+            'causes' => \array_map(static fn(Edge $e): array => $e->encode(), $this->causes),
+        ];
+    }
+
+    /** @param array<string, mixed> $raw */
+    public static function decode(array $raw): self
+    {
+        /** @var list<array<string, mixed>> $causes */
+        $causes = \array_values(\array_filter((array) ($raw['causes'] ?? []), '\is_array'));
+
+        $stageNs = [];
+        foreach ((array) ($raw['stageNs'] ?? []) as $stage => $nanos) {
+            $stageNs[(string) $stage] = (int) $nanos;
+        }
+
+        return new self(
+            (int) ($raw['id'] ?? 0),
+            (float) ($raw['t'] ?? 0.0),
+            (float) ($raw['cost'] ?? 0.0),
+            \array_map(static fn(array $edge): Edge => Edge::decode($edge), $causes),
+            \array_map('\intval', \array_values((array) ($raw['rebuilt'] ?? []))),
+            \array_map('\strval', \array_values((array) ($raw['stages'] ?? []))),
+            $stageNs,
+            (bool) ($raw['settleSkipped'] ?? false),
+            (bool) ($raw['paintSkipped'] ?? false),
+            \array_map('\strval', \array_values((array) ($raw['incomplete'] ?? []))),
+        );
+    }
 }
