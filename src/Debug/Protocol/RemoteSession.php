@@ -204,6 +204,23 @@ final class RemoteSession implements Session
         return $result['value'] ?? null;
     }
 
+    /**
+     * 高亮一个节点（`0` = 清除）。与本地同一件事、同一个时刻口径。
+     *
+     * ★ 不在这里更新"当前高亮"的本地缓存：那是宿主里的事实，`query('highlight')`
+     *   才有资格回答。客户端自己记一份，就会出现"宿主已经把高亮清掉了、客户端还
+     *   以为在"这类两份真相 —— 而跨进程时这种偏差比本地更容易发生。
+     */
+    public function highlight(int $node, ?float $timestampMs = null): void
+    {
+        $params = ['node' => $node];
+        if ($timestampMs !== null) {
+            $params['t'] = $timestampMs;
+        }
+
+        $this->callObject(Methods::HIGHLIGHT, $params);
+    }
+
     public function query(string $name, array $args = []): array
     {
         $result = $this->call(Methods::QUERY, ['name' => $name, 'args' => $args]);

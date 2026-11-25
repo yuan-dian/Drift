@@ -446,9 +446,11 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 |---|---|---|
 | 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `tools/Debug/Reopen.php`、`tools/Debug/View/LoopReport.php` |
 | 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `tools/Debug/Cli/OptionSet.php`、`tools/Debug/Cli/Parsed.php` |
-| 出口（B7） | 13 个出口只在 Registry 声明；分发与两级 help 都从它派生 | `tools/Debug/Cli/Registry.php`、`bin/drift` |
+| 出口（B7） | 14 个出口只在 Registry 声明；分发与两级 help 都从它派生 | `tools/Debug/Cli/Registry.php`、`bin/drift` |
 | 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`tools/Debug/Source.php` |
 | 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `tools/Debug/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
+
+| 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`src/Debug/Protocol/Methods.php`、`tools/debug-highlight.php` |
 
 ### 未做（按执行顺序）
 
@@ -456,7 +458,6 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 |---|---|---|---|
 | **S3d** | 绘制归因：每帧哪些节点重画、哪些层缓存未命中 | "为什么这一帧要重画这么多"能和因果、几何一样被回答 | 重画集合 ⊆ 结构树且与 `markPaintChanged()` 的调用点对得上；缓存命中率跨帧可复算；不需要反射（AOT 可用） |
 | **S5 余项** | 搜索：按发现 / 节点 / 帧反查，不改证据面 | 搜索结果与原投影逐值一致 | 只走查询面，不给消费者直达事实的口子；命中项可回到既有地址复核 |
-| **S6 余项** | 高亮：消费者 → 采集的反向流 | 观测不污染被观测对象 | 高亮前后 `Digest::ofFrame()` 逐值相同；只在 dev 形态做 |
 | **S2** | 常驻黑匣子（含多窗口隔离） | 常驻记录的代价可接受 | AOT 产物能出慢帧报告；默认开启时帧耗时增幅 < 2%；崩溃文件可检出截断；第二窗口被拒绝或有独立窗口 |
 
 ### 顺序的三条理由

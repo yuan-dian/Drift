@@ -25,6 +25,9 @@ final class FakePanelSession implements Session
     /** @var list<float> */
     public array $times = [];
 
+    /** @var list<int> 收到的 `highlight()` 请求（按顺序） */
+    public array $highlights = [];
+
     /**
      * @param list<array<string, mixed>> $frames
      * @param array<int, array<string, mixed>> $cascades 帧号 => cascade
@@ -133,6 +136,17 @@ final class FakePanelSession implements Session
     public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed
     {
         return null;
+    }
+
+    /**
+     * 面板不消费高亮（它是"读记录"的消费者），而接口要求实现。
+     *
+     * 这里**记下**请求而不是空实现：真有人拿这个夹具测"驱动面接对了没"，
+     * 空实现会让那种判据恒绿 —— 绿得毫无意义。
+     */
+    public function highlight(int $node, ?float $timestampMs = null): void
+    {
+        $this->highlights[] = $node;
     }
 
     public function finish(?int $at = null): array

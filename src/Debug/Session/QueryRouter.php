@@ -51,6 +51,7 @@ final class QueryRouter implements SessionQueries
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射，活树按需快照进独立 200 条窗口）',
         'pick' => '按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点',
+        'highlight' => '高亮状态：现在高亮谁 / 何时请求 / 最后一次真的上屏在哪帧',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
         'state' => '会话身份与状态：令牌 / 末帧 / running|paused|finished|offline',
@@ -129,6 +130,7 @@ final class QueryRouter implements SessionQueries
             'y' => ['float'],
             'roots' => ['inject', 'treeRootOrigins'],
         ]],
+        'highlight' => ['highlight', []],
     ];
 
     /** 规格表里的参数项没有第二元素 = 必填。用哨兵而不是 `null`：`?int` 的缺省正是 `null`。 */

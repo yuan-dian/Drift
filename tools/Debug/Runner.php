@@ -29,7 +29,7 @@ final class Runner
     /**
      * @param array<string, scalar|null> $meta 脚本环境（`rows` 取数替身、`page` 是否路由 id）
      *
-     * @return array{session: DebugSession, mountMs: float}
+     * @return array{session: DebugSession, mountMs: float, surface: SurfaceProbe}
      */
     public static function open(
         string $label,
@@ -47,8 +47,15 @@ final class Runner
         // ★ 挂载**不在任何帧里**（`buildRoot()` + 首次 layout 都发生在 `attach()` 内），
         //   而"打开这一页要多久"恰恰是页面级调试的第二个问题。单独量、单独报，别让它
         //   混进首帧 —— 混进去会让"首帧成本"这一列骗人。
+        $surface = new SurfaceProbe();
+        // ★ 必须显式 resize：`attach()` **不管像素口径**（真机上那一步由平台壳按客户区
+        //   做，见 `Win32Platform` 的 WM_SIZE）。夹具默认 0×0 ⇒ `raster()` 会造一张
+        //   `max(1,0)` 的画布，于是**每一次像素读取都是同一张 1×1**：读像素的断言
+        //   全部恒绿，`pixelAt()` 还会越界警告。这里漏过一次，靠"高亮前后像素为什么
+        //   一样"才逮到。
+        $surface->resize((int) \round($width), (int) \round($height), 1.0);
         $start = \hrtime(true);
-        $app->attach(new SurfaceProbe(), $constraints);
+        $app->attach($surface, $constraints);
         $mountMs = (\hrtime(true) - $start) / 1e6;
 
         $options = ($options ?? RecordOptions::default())->withScript($skeleton);
@@ -58,6 +65,8 @@ final class Runner
             $session->defineEffect('resolve', static fn(): bool => $source->resolveNext());
         }
 
-        return ['session' => $session, 'mountMs' => $mountMs];
+        // 表面一并交出去：读像素是"叠加层真的上屏了没"的唯一硬证据，
+        // 而它只能由**挂表面的人**拿到 —— 会话不管表面（见 `DebugSession` 类注释）。
+        return ['session' => $session, 'mountMs' => $mountMs, 'surface' => $surface];
     }
 }

@@ -108,6 +108,28 @@ final class Recorder implements PaintObserver
     private int $lastRecycleFrame = 0;
 
     /**
+     * 当前高亮的节点号（`0` = 没有）。
+     *
+     * ★ 它**不是**帧记录的一部分：高亮不改结构，进 `FrameRecord` 就等于把它算进
+     *   因果指纹，而"高亮前后因果逐值相同"正是要证明的东西。
+     */
+    private int $highlightNode = 0;
+
+    /** 这个高亮是在第几帧被请求的；`0` = 本次录制还没请求过。 */
+    private int $highlightFrame = 0;
+
+    /**
+     * 最近一次**真的画上屏**的叠加：`['frame' => 帧号, 'node' => 节点号]`；没画过为 `null`。
+     *
+     * ★ 与 {@see self::$highlightNode} 分开记，是为了区分两件事：
+     *   "请求了高亮"与"高亮真的到了屏幕上"。中间隔着绘制（元素已卸载、盒没尺寸、
+     *   帧被跳过都会让它只停在第一件上）—— 而那种失败是静默的。
+     *
+     * @var array{frame: int, node: int}|null
+     */
+    private ?array $overlayDrawn = null;
+
+    /**
      * 几何窗口比帧窗口短得多：600 帧 × 2000 节点全存撑不住，而"这一帧为什么这个尺寸"
      * 几乎总是问最近几十帧。只留最近 GEOMETRY_FRAMES 帧有变化的节点，超出自报。
      *
@@ -511,6 +533,14 @@ final class Recorder implements PaintObserver
         // 归因标记只在结算的同步段内有效：跨帧残留会把下一帧无关的 setState
         // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
         $this->activeRequest = 0;
+
+        // 叠加层：**画成功才算**。壳在 afterPaint 里真的描了边才把这一笔报上来；
+        // 帧被跳过、paint 抛异常、元素已卸载 ⇒ 这里收不到 ⇒ `overlayDrawn` 停在
+        // 上一次成功的那一帧，读者据此能分出"请求了"与"上屏了"。
+        if (($facts['overlayDrawn'] ?? false) === true && $this->highlightNode > 0) {
+            $this->overlayDrawn = ['frame' => $this->frameId, 'node' => $this->highlightNode];
+        }
+
         $this->trim();
         if ($this->frameId - $this->lastRecycleFrame >= self::NODE_RECYCLE_EVERY) {
             $this->recycleNodes();
@@ -664,6 +694,62 @@ final class Recorder implements PaintObserver
     public function noteEffect(string $name, array $args, ?float $t): void
     {
         $this->options->script()?->add(Step::effect($name, $args, $t));
+    }
+
+    /**
+     * 高亮请求：记下当前目标、请求发生的帧号，并写进脚本。
+     *
+     * ★ 与 {@see self::noteEffect()} 同一个理由进脚本：注解只存在记录层的话，
+     *   "同一份脚本跑两遍"会让一次高亮了一次没高亮的两次运行拿到同一个驱动指纹。
+     *
+     * ★ 帧号取 `$this->frameId`（**两次帧之间**看到的是上一帧的号）。高亮真正上屏
+     *   在下一帧，所以 `overlayDrawn().frame >= highlightFrame()` 恒成立；反过来
+     *   （画得比请求还早）只能说明记账错了。
+     *
+     * @throws \InvalidArgumentException 节点号为负
+     */
+    public function noteHighlight(int $node, ?float $t): void
+    {
+        if ($node < 0) {
+            throw new \InvalidArgumentException("高亮的节点号不能为负：{$node}（0 表示清除）");
+        }
+
+        $this->highlightNode = $node;
+        $this->highlightFrame = $this->frameId;
+        $this->options->script()?->add(Step::highlight($node, $t));
+    }
+
+    /** 当前高亮的节点号；`0` = 没有。 */
+    public function highlightedNode(): int
+    {
+        return $this->highlightNode;
+    }
+
+    /** 当前这个高亮是在第几帧被请求的；`0` = 本次录制还没请求过。 */
+    public function highlightFrame(): int
+    {
+        return $this->highlightFrame;
+    }
+
+    /**
+     * 最近一次真的上屏的叠加（见 {@see self::$overlayDrawn}）；一次都没有为 `null`。
+     *
+     * @return array{frame: int, node: int}|null
+     */
+    public function overlayDrawn(): ?array
+    {
+        return $this->overlayDrawn;
+    }
+
+    /**
+     * 原始帧号：`beginFrame()` 每帧自增，与 `frames` 窗口是否裁剪无关。
+     *
+     * ★ 不能用 {@see self::lastFrameId()} 代替：后者读 `array_key_last($frames)`，
+     *   一帧都还没落盘时返回 0 —— 拿它当"现在第几帧"会让帧号自相矛盾。
+     */
+    public function frameId(): int
+    {
+        return $this->frameId;
     }
 
     // ------------------------------------------------------------------ 查询
@@ -1389,6 +1475,11 @@ final class Recorder implements PaintObserver
         $this->evicted = [];
         $this->lastRecycleFrame = 0;
         $this->boxless = [];
+        // 高亮同理：旧会话的高亮目标在新会话里是个**别的节点**（号从头发），
+        // 留着会让"这页一开就高亮着某个陌生节点"，而叠加层照画不误。
+        $this->highlightNode = 0;
+        $this->highlightFrame = 0;
+        $this->overlayDrawn = null;
         $this->seq = 0;
         $this->tag = ++self::$sessionSeq;
     }

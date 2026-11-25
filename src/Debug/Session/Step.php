@@ -51,10 +51,26 @@ final readonly class Step
     /** 驱动方注册的具名副作用（异步结算、换页……），`name` + 扁平参数 */
     public const string EFFECT = 'effect';
 
+    /**
+     * 高亮节点（`node`，`0` = 清除）。
+     *
+     * ★ 它**不是输入**：不改树、不改布局、不进 `Facts`，只让下一次绘制多画一层描边。
+     *   但它必须在这里 —— 见 {@see self::highlight()} 的"为什么进脚本"。
+     */
+    public const string HIGHLIGHT = 'highlight';
+
     /** 能记但**不能重放**的输入（未知事件类）；重放时明确失败，不静默跳过 */
     public const string OPAQUE = 'opaque';
 
-    public const array KINDS = [self::FRAME, self::KEY, self::POINTER, self::SCROLL, self::EFFECT, self::OPAQUE];
+    public const array KINDS = [
+        self::FRAME,
+        self::KEY,
+        self::POINTER,
+        self::SCROLL,
+        self::EFFECT,
+        self::HIGHLIGHT,
+        self::OPAQUE,
+    ];
 
     /** @var array<string, scalar|null> 归一化后的数据（只读） */
     public readonly array $data;
@@ -128,6 +144,32 @@ final readonly class Step
         return new self(self::OPAQUE, $t, ['class' => $class]);
     }
 
+    /**
+     * 高亮一个节点；`$node = 0` 是清除。
+     *
+     * ## 为什么注解要进脚本，而不是只存在录制器里
+     *
+     * `Script::digest()` 只覆盖 steps。注解若只记在记录层，"同一份脚本跑两遍"
+     * 会让"一次高亮了一次没高亮"的两次运行拿到**同一个驱动指纹** —— 差异被
+     * 指纹掩盖，而指纹的全部价值就是不让差异被掩盖。
+     *
+     * 进了脚本之后，`--save` / `--replay` / `--remote` 全部自然覆盖：重放的人
+     * 不必知道"高亮该怎么重放"，它只是一步。
+     *
+     * ## 为什么 `0` 是清除而不是用 `null`
+     *
+     * 数据键只能是标量。`null` 也是标量，但"没给这个键"与"给了 null"要分开读，
+     * 而节点号本身从 1 起（{@see Recorder::$seq}）—— 用 0 当哨兵不会和任何真号撞。
+     */
+    public static function highlight(int $node, ?float $t): self
+    {
+        if ($node < 0) {
+            throw new \InvalidArgumentException("高亮的节点号不能为负：{$node}（0 表示清除）");
+        }
+
+        return new self(self::HIGHLIGHT, $t, ['node' => $node]);
+    }
+
     /** @return array{kind: string, t: float|null, data: array<string, scalar|null>} */
     public function toArray(): array
     {
@@ -171,6 +213,9 @@ final readonly class Step
             self::POINTER => \sprintf('指针 %s(%s,%s)', (string) ($this->data['phase'] ?? ''), (string) ($this->data['x'] ?? ''), (string) ($this->data['y'] ?? '')),
             self::SCROLL => \sprintf('滚轮(%s,%s)×%s', (string) ($this->data['x'] ?? ''), (string) ($this->data['y'] ?? ''), (string) ($this->data['delta'] ?? '')),
             self::EFFECT => '效果 ' . (string) ($this->data['name'] ?? ''),
+            self::HIGHLIGHT => (int) ($this->data['node'] ?? 0) > 0
+                ? '高亮 #' . (string) $this->data['node']
+                : '清除高亮',
             default => '不可重放 ' . (string) ($this->data['class'] ?? ''),
         };
     }

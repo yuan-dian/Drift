@@ -270,6 +270,7 @@ final class Host
                 Methods::FRAME => $this->frame($session, $params),
                 Methods::INPUT => $this->input($session, $params),
                 Methods::EFFECT => $this->effect($session, $params),
+                Methods::HIGHLIGHT => $this->highlight($session, $params),
                 Methods::QUERY => $this->query($session, $params),
                 // Methods::ALL 已在上面挡过，这里不可达；写成显式异常，
                 // 让"加了方法名却忘了实现"在第一次调用时就撞红。
@@ -489,6 +490,41 @@ final class Host
 
         /** @var array<string, scalar|null> $args */
         return ['value' => $session->effect($name, $args, $t === null ? null : (float) $t)];
+    }
+
+    /**
+     * 高亮一个节点（`node = 0` 清除）。
+     *
+     * 回执里的 `drawnFrame` 取宿主侧记录的"最近一次真的上屏的帧号"。刚请求、
+     * 还没跑过一帧时它是上一帧或 `null` —— 这是**如实**的：客户端据此知道
+     * "要再推一帧才看得见"，而不必猜"是不是高亮没生效"。
+     *
+     * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
+     */
+    private function highlight(DebugSession $session, array $params): array
+    {
+        $node = $params['node'] ?? null;
+        if (!\is_int($node) || $node < 0) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'highlight 需要非负整数 node（0 表示清除）');
+        }
+
+        $t = $params['t'] ?? null;
+        if ($t !== null && !\is_int($t) && !\is_float($t)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'highlight 的 t 必须是数字');
+        }
+
+        // 解析失败（号写错 / 已卸载）⇒ `DebugSession` 抛，`failFor()` 翻成 `call_failed`，
+        // 与本地调用抛的异常是同一件事。
+        $session->highlight($node, $t === null ? null : (float) $t);
+
+        $drawn = $session->recorder()->overlayDrawn();
+
+        return [
+            'node' => $session->recorder()->highlightedNode(),
+            'drawnFrame' => $drawn === null ? null : $drawn['frame'],
+        ];
     }
 
     /**

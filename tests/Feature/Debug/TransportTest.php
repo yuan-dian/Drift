@@ -183,6 +183,98 @@ final class TransportTest extends SmokeTestCase
     }
 
     /**
+     * 高亮在管道另一头也是同形：号、上屏帧、是否在屏上，逐值相同。
+     *
+     * ## 为什么这条要单独测
+     *
+     * 高亮是**唯一的反向流**（客户端说、宿主做、宿主再看结果）：它的回执不带值，
+     * 值在宿主那边的记录里。所以"发了没生效"与"生效了但读不到"是两种不同故障，
+     * 只有拿同一句话分别走就地与管道、再把两边读到的状态逐值比对，才能说清是哪一种。
+     *
+     * 另外两条是顺带钉住的：
+     * - 节点号跨进程一致（`pick` 给的号在两边相同）—— 号是每会话重发的，
+     *   一旦分配顺序受进程影响，"highlight #22" 就会在另一边描到别的节点；
+     * - 高亮步骤真的进了脚本，且两边的脚本摘要相同。
+     */
+    public function testHighlightIsTheSameOverThePipe(): void
+    {
+        $script = $this->script();
+
+        /** @return array<string, mixed> */
+        $probe = function (SessionQueries $session, bool $remote) use ($script): array {
+            Replay::apply($session, $script);
+
+            $picked = $session->query('pick', ['x' => 400.0, 'y' => 300.0]);
+            $node = (int) ($picked['hit']['node'] ?? 0);
+            if ($node <= 0) {
+                return ['node' => 0];
+            }
+
+            $lastT = (float) $session->query('frames', ['limit' => 1])['frames'][0]['t'];
+            $before = $session->query('highlight');
+            $session->highlight($node);
+            $pending = $session->query('highlight');
+            $session->pump($lastT + 16.0);
+
+            return [
+                'node' => $node,
+                'before' => $before,
+                'pending' => $pending,
+                'after' => $session->query('highlight'),
+                'script' => $session->query('script'),
+                'remote' => $remote,
+            ];
+        };
+
+        $opened = Runner::open($script->target, $script->width, $script->height, $script->meta(), $script->fork());
+        $localSession = $opened['session'];
+        $remoteSession = new RemoteSession(ProcessTransport::spawn([
+            \PHP_BINARY,
+            \dirname(__DIR__, 3) . '/tools/debug-host.php',
+        ]));
+
+        try {
+            $remoteSession->open($script->fork());
+            $local = $probe($localSession, false);
+            $remote = $probe($remoteSession, true);
+        } finally {
+            $localSession->close();
+            $remoteSession->close();
+        }
+
+        check('两边都点到了同一个节点', ($local['node'] ?? 0) > 0 && $local['node'] === $remote['node'], \json_encode([$local['node'] ?? null, $remote['node'] ?? null]));
+        check(
+            '请求后、上屏前：两边都报"还没在屏上"',
+            ($local['pending']['onScreen'] ?? true) === false && ($remote['pending']['onScreen'] ?? true) === false,
+            \json_encode(['local' => $local['pending']['onScreen'] ?? null, 'remote' => $remote['pending']['onScreen'] ?? null])
+        );
+
+        // 只比"必须逐值相同"的字段：`frame` 同口径，但 `remote` 标记两边本来不同。
+        foreach (['local' => $local, 'remote' => $remote] as $side => $row) {
+            unset($row['remote']);
+            $clean[$side] = $row;
+        }
+        check(
+            '高亮状态（号 / 类型 / 路径 / 上屏帧 / 在屏上）逐值相同',
+            $clean['local'] === $clean['remote'],
+            \json_encode($clean['local'], \JSON_UNESCAPED_UNICODE) . ' vs ' . \json_encode($clean['remote'], \JSON_UNESCAPED_UNICODE)
+        );
+        check(
+            '高亮真的上了屏（两边都不是"请求了没画"）',
+            ($local['after']['onScreen'] ?? false) === true && ($remote['after']['onScreen'] ?? false) === true,
+            \json_encode([$local['after']['drawnFrame'] ?? null, $remote['after']['drawnFrame'] ?? null])
+        );
+
+        $hlLocal = [];
+        foreach ($local['script']['steps'] ?? [] as $step) {
+            if (($step['kind'] ?? '') === 'highlight') {
+                $hlLocal[] = $step['data']['node'] ?? null;
+            }
+        }
+        check('脚本里带着高亮这一步（不是旁路注解）', $hlLocal === [$local['node']], \json_encode($hlLocal));
+    }
+
+    /**
      * 游标不是"最近 N 帧"的同义词。
      *
      * `since` 语义下 `limit` 是"从最老的未读开始最多给几条"；把两者混成一个参数，

@@ -12,6 +12,7 @@ use Drift\Debug\Session\Session;
 use Drift\Debug\Session\SessionState;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
+use Drift\Widget\Element;
 
 /**
  * 调试会话：装录制器、推进帧、分派查询、卸载。
@@ -230,6 +231,48 @@ final class DebugSession implements Session
         return $run($args);
     }
 
+    /**
+     * 高亮一个节点（`0` = 清除）。**不改结构**：只让下一次绘制多画一层描边。
+     *
+     * ## 为什么解析不到就抛，而不是记一笔了事
+     *
+     * 脚本是给人读、给机器重放的。记下一个"高亮了不存在的节点"，重放时会**同样**
+     * 解析不到 —— 那时失败发生在重放里，看起来像"重放坏了"，而真正的错误是当初
+     * 那个号。所以在请求处就拒绝，报错指向写错的号。
+     *
+     * ## 为什么清除不解析
+     *
+     * `0` 是"什么都不高亮"，它不需要存在于树里。让清除也走解析，等于要求调用方
+     * 先确认树上有个节点才允许取消高亮。
+     */
+    public function highlight(int $node, ?float $timestampMs = null): void
+    {
+        if ($node < 0) {
+            throw new \InvalidArgumentException("高亮的节点号不能为负：{$node}（0 表示清除）");
+        }
+
+        $element = null;
+        if ($node > 0) {
+            $element = Element::findInRoots(
+                $this->app->treeRoots(),
+                $node,
+                fn(Element $e): bool => $this->recorder->owns($e),
+            );
+            if ($element === null) {
+                // 与 `props` 同一套词汇：写错号 / 号发过但节点已卸载 / 已被回收窗口挤掉。
+                $reason = match ($this->recorder->nodeStatus($node)) {
+                    'evicted' => '节点已被回收（超出存活窗口）',
+                    'active' => '节点在登记表里但活树里已经没有它（已卸载）',
+                    default => '这个号从没发过',
+                };
+                throw new \RuntimeException("高亮失败：节点 #{$node} 查不到 —— {$reason}");
+            }
+        }
+
+        $this->recorder->noteHighlight($node, $timestampMs ?? $this->lastT);
+        $this->app->setDebugHighlight($element);
+    }
+
     /** 本次会话的脚本（帧边界 + 输入 + 副作用）。 */
     public function script(): Script
     {
@@ -343,6 +386,10 @@ final class DebugSession implements Session
             return;
         }
         $this->closed = true;
+
+        // 叠加层随会话一起撤：会话结束了还留着描边，等于把一个已结束的会话
+        // 的最后状态当成"现在正看着它"。
+        $this->app->setDebugHighlight(null);
 
         if (Recorder::current() === $this->recorder) {
             Recorder::uninstall();

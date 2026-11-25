@@ -623,6 +623,70 @@ abstract class Element
         }
     }
 
+    /**
+     * 按调试节点号在**本子树**里找元素（先序，自身优先，命中即返回）。
+     *
+     * ★ 递归，不是只看一层。曾经只有"根 + 直接子节点"一层（`Query::findElement` 的
+     *   老写法），于是任何深度 ≥ 2 的节点都查不到 —— 而失败理由是
+     *   `node-unmounted`，那句话是**错的**：节点明明挂着，是查找没往下走。
+     *   表象是"读到一半的 props 突然没了"，看着像反射坏了。
+     *
+     * ★ `$owns` 判"这个号是不是本会话发的"（{@see \Drift\Debug\Session\Recorder::owns()}）：
+     *   两个会话可能把同一个号发给不同元素，只比数字会把证据串味。
+     *
+     * @param (callable(Element): bool)|null $owns null = 只比数字（调用方已确认只有一个会话）
+     */
+    public function findByDebugId(int $id, ?callable $owns = null): ?Element
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        if ($this->debugId === $id && ($owns === null || $owns($this))) {
+            return $this;
+        }
+
+        foreach ($this->children as $child) {
+            $hit = $child->findByDebugId($id, $owns);
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * 在**多棵树**里按调试节点号找元素（主树在前、浮层在后，命中即返回）。
+     *
+     * ★ 为什么"逐根走一遍"也要收在这里：树的查找有两个消费者 —— 查询面
+     *   （{@see \Drift\Debug\Session\Query}）和驱动面（高亮要把号解析成活元素）。
+     *   驱动面拿不到 `Query`（那是另一个方向的依赖），于是那 6 行循环会写成两份，
+     *   而两份循环漂开之后的表现是"查询能查到、高亮查不到"这种最难查的半坏。
+     *
+     * @param list<mixed> $roots 树根（非 `Element` 的项跳过：调用方给的列表可能混着别的）
+     * @param (callable(Element): bool)|null $owns 同 {@see self::findByDebugId()}
+     */
+    public static function findInRoots(array $roots, int $id, ?callable $owns = null): ?Element
+    {
+        if ($id <= 0) {
+            return null;
+        }
+
+        foreach ($roots as $root) {
+            if (!$root instanceof self) {
+                continue;
+            }
+
+            $hit = $root->findByDebugId($id, $owns);
+            if ($hit !== null) {
+                return $hit;
+            }
+        }
+
+        return null;
+    }
+
     public function childCount(): int
     {
         return count($this->children);

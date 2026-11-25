@@ -33,21 +33,45 @@ final class Digest
     /**
      * 单帧的规范形状 —— 与 `explain` 查询同源，但**只留可复现的部分**。
      *
+     * 由 {@see self::causal()} 加上"这一段跑没跑"两块：`stages`（壳段序列）与
+     * `skip`（settle / paint 是否被整段跳过）。顺序固定，改顺序会让所有历史指纹变红。
+     *
      * @return array<string, mixed>
      */
     public static function ofFrame(FrameRecord $frame): array
+    {
+        return self::causal($frame) + [
+            'stages' => $frame->stages,
+            'skip' => [$frame->settleSkipped, $frame->paintSkipped],
+        ];
+    }
+
+    /**
+     * 只覆盖**结构因果**的单帧形状：谁重建了、因为谁。
+     *
+     * ## 为什么不直接用 `ofFrame()`
+     *
+     * 那一份还含 `skip`，而 `skip` 会**因为叠加层**而变化：调试高亮要求"这一帧必须
+     * 画"，于是本来会被整段跳过的绘制跑了起来 —— `paintSkipped` 从 true 变 false。
+     * 那不是结构变了，恰恰是高亮起了作用。
+     *
+     * 拿 `ofFrame()` 判"高亮没改结构"会因此恒红，而红的理由是错的。反过来，只证明
+     * 结构不变也不够：`rebuilt` 相同、像素也相同，说明叠加层压根没画。**两条一起**：
+     * 结构指纹不变 + 有像素必变。
+     *
+     * `stages` 也不进来：它是"这一帧跑了哪些**壳段**"，与结构无关；而且 Paint 段不
+     * 由壳记（它记在 `SurfaceProfile` 的计时里），放进来只会让将来的段调整误伤这条判据。
+     *
+     * @return array<string, mixed>
+     */
+    public static function causal(FrameRecord $frame): array
     {
         $causes = [];
         foreach ($frame->causes as $edge) {
             $causes[] = [$edge->kind, $edge->fromId, $edge->toId, $edge->site, $edge->detail];
         }
 
-        return [
-            'rebuilt' => $frame->rebuilt,
-            'causes' => $causes,
-            'stages' => $frame->stages,
-            'skip' => [$frame->settleSkipped, $frame->paintSkipped],
-        ];
+        return ['rebuilt' => $frame->rebuilt, 'causes' => $causes];
     }
 
     /**
@@ -55,9 +79,30 @@ final class Digest
      */
     public static function of(Recorder $recorder): array
     {
+        return self::ofMode($recorder, false);
+    }
+
+    /**
+     * 整份记录的**结构**指纹：逐帧用 {@see self::causal()}，其余与 {@see self::of()} 同。
+     *
+     * 用来回答"两次运行的页面结构是否相同"，而不管绘制被跳过几次 —— 后者是调度
+     * 结果（会被叠加层、节流、首帧预热改变），不是页面结构。
+     *
+     * @return array{frames: array<int, string>, nodes: string, digest: string}
+     */
+    public static function ofCausal(Recorder $recorder): array
+    {
+        return self::ofMode($recorder, true);
+    }
+
+    /**
+     * @return array{frames: array<int, string>, nodes: string, digest: string}
+     */
+    private static function ofMode(Recorder $recorder, bool $causal): array
+    {
         $frames = [];
         foreach ($recorder->frames() as $id => $frame) {
-            $frames[(int) $id] = self::hash(self::ofFrame($frame));
+            $frames[(int) $id] = self::hash($causal ? self::causal($frame) : self::ofFrame($frame));
         }
 
         $nodes = [];

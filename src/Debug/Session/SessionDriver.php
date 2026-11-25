@@ -52,6 +52,27 @@ interface SessionDriver
      */
     public function effect(string $name, array $args = [], ?float $timestampMs = null): mixed;
 
+    /**
+     * 高亮一个节点（`0` = 清除）。**不改结构**：只让下一次绘制多画一层描边。
+     *
+     * ## 为什么这是"驱动"而不是"查询"
+     *
+     * 它改的不是记录，是**下一次绘制的样子**。`query('highlight')` 读的是"现在
+     * 高亮了谁"；"让它高亮"是一次推进 —— 与 `pump()` / `send()` / `effect()` 同类。
+     * 把它放进查询面，等于允许"问一个问题顺手改了画面"。
+     *
+     * ## 为什么时刻口径与 `effect()` 一致
+     *
+     * 两者都发生在**帧外**：请求落在第 K 帧与第 K+1 帧之间，高亮真正上屏在 K+1。
+     * 由驱动方给时刻（重放时给脚本里的那个），脚本才可能"存盘再读"之后逐值相同。
+     *
+     * @param int $node 节点号（`Recorder` 发的号）；`0` 清除
+     * @param float|null $timestampMs 这次请求算在哪一刻；`null` = 用最近一帧的时刻
+     *
+     * @throws \InvalidArgumentException 节点号为负
+     */
+    public function highlight(int $node, ?float $timestampMs = null): void;
+
     /** 最近一次推进产生的帧号；一帧都没推时为 0。 */
     public function lastFrameId(): int;
 }

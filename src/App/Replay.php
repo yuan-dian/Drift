@@ -120,6 +120,8 @@ final class Replay
             match ($step->kind) {
                 // 时刻照脚本给：副作用发生在帧外，取哪一端决定脚本能不能被逐值复现。
                 Step::EFFECT => $session->effect(self::effectName($step), self::effectArgs($step), (float) $step->t),
+                // 高亮与副作用同口径：都在帧外，都由驱动方给时刻。
+                Step::HIGHLIGHT => $session->highlight(self::highlightNode($step), $step->t),
                 default => $session->send(InputScript::unpack($step), $step->t),
             };
         } catch (\Throwable $e) {
@@ -142,6 +144,17 @@ final class Replay
         }
 
         return $name;
+    }
+
+    /** 高亮步骤的节点号（`0` = 清除，是合法值，所以缺键才是错）。 */
+    private static function highlightNode(Step $step): int
+    {
+        $node = $step->data['node'] ?? null;
+        if (!\is_int($node) || $node < 0) {
+            throw new \InvalidArgumentException('高亮步骤缺少合法的 node（0 表示清除）');
+        }
+
+        return $node;
     }
 
     /** @return array<string, scalar|null> */

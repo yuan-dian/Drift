@@ -338,6 +338,21 @@ abstract class Application
         $this->shell->repaintForResize($constraints);
     }
 
+    /**
+     * 让调试叠加层描边这个元素（`null` = 清除）。
+     *
+     * ★ 为什么参数是 `?Element` 而不是节点号：号是调试层的词汇（`Recorder` 发、
+     *   每会话重发、只在发它的会话里有效）。应用层不必懂它，调试会话把号解析成
+     *   活元素再交过来 —— 解析只此一份（{@see Element::findInRoots()}）。
+     * ★ 它**不改结构**：只影响下一帧多画一层描边。见 `AppShell::setDebugHighlight()`。
+     *
+     * @internal 调试会话专用（`debug highlight` 出口 / 协议 `highlight` 方法）
+     */
+    public function setDebugHighlight(?Element $element): void
+    {
+        $this->shell->setDebugHighlight($element);
+    }
+
     /** 排一个一次性延时回调。 */
     public function after(int $milliseconds, \Closure $callback): int
     {

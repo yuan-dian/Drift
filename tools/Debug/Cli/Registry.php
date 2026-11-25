@@ -33,6 +33,7 @@ final class Registry
             ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
             ['pick', 'debug-pick.php', '按视口坐标点选，给命中链与每层路径', true],
             ['props', 'debug-props.php', '按节点读 Widget / State 配置', true],
+            ['highlight', 'debug-highlight.php', '让一个节点在屏上被描边，并回答"真的上屏了没"', true],
             ['host', 'debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）', false],
             ['serve', 'debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看', true],
             ['ctl', 'debug-ctl.php', '控制面：让自走的宿主停一下 / 走一步 / 接着跑', false],

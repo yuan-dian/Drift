@@ -828,11 +828,15 @@ abstract class RenderBox extends RenderObject
     }
 
     /**
-     * 焦点轮廓：外扩 1px 的 2px 描边，圆角跟随盒（`+1` 才是同心外扩）。
+     * 沿「本体形状」画一圈外扩 1px 的描边，圆角跟随盒（`+1` 才是同心外扩）。
      * 画法只此一份；形状交给 `focusShape()` / `focusRadius()` 回答。
-     * 由应用级叠加调用 —— 环必须压在所有内容之上，不能下沉进 `paint()`。
+     *
+     * ★ 名字里没有"焦点"：颜色由调用方给（{@see Paint}），画法本身与"为什么画"
+     *   无关。两个消费者都是应用级叠加 —— 焦点环（`Accent`）与调试高亮（`Warning`）。
+     *   两者共用同一个形状回答，是因为"哪个盒是它的本体"对两种叠加是同一个问题。
+     * ★ 必须由应用级叠加调用：描边要压在所有内容之上，不能下沉进 `paint()`。
      */
-    final public function paintFocusOutline(Canvas $canvas, Paint $paint): void
+    final public function paintOutline(Canvas $canvas, Paint $paint): void
     {
         $shape = $this->focusShape();
         if ($shape === null) {
@@ -854,7 +858,11 @@ abstract class RenderBox extends RenderObject
         );
     }
 
-    /** 焦点轮廓的形状（盒局部坐标）。默认整盒；自绘控件覆写成自己的本体。 */
+    /**
+     * 叠加描边的形状（盒局部坐标）。默认整盒；自绘控件覆写成自己的本体。
+     *
+     * 焦点环与调试高亮共用：这里回答的是"这个盒的可视本体在哪"，而不是"为什么描它"。
+     */
     protected function focusShape(): ?Rect
     {
         $size = $this->size();
@@ -865,7 +873,7 @@ abstract class RenderBox extends RenderObject
         return new Rect(0.0, 0.0, $size->width, $size->height);
     }
 
-    /** 焦点轮廓的圆角。默认跟 `outlineRadius()`；自绘控件覆写成本体圆角。 */
+    /** 叠加描边的圆角。默认跟 `outlineRadius()`；自绘控件覆写成本体圆角。 */
     protected function focusRadius(): float
     {
         return $this->outlineRadius();

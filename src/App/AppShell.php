@@ -75,6 +75,18 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     /** 上一次真的画上屏的环目标（`null` = 上次没画） */
     private ?Element $paintedFocus = null;
 
+    /**
+     * 调试叠加层要描边的元素（`null` = 没有）。由调试会话经
+     * {@see \Drift\App\Application::setDebugHighlight()} 设置。
+     *
+     * ★ 存 `Element` 而不是节点号：号是调试层的词汇（`Recorder` 发、每会话重发），
+     *   壳读不懂它，也不该为它去依赖 `Debug\Session` 的查找。
+     */
+    private ?Element $debugHighlight = null;
+
+    /** 上一次真的画上屏的叠加目标（与 `$paintedFocus` 同一个口径，同一类记账） */
+    private ?Element $paintedHighlight = null;
+
     /** UI 线程 id（`GetCurrentThreadId`，`attach()` 时记；`getmypid()` 区分不了线程）。 */
     private int $uiThreadId = 0;
 
@@ -664,20 +676,28 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         }
 
         // 本帧要不要画：`Frame` 只看树，看不见应用级叠加 —— 焦点环目标变了没画、
-        // 浮层锚点换了但面板还落后。取跑帧前的目标：paint 只会画跑帧前那个环。
+        // 高亮目标变了没画、浮层锚点换了但面板还落后。取跑帧前的目标：paint 只会
+        // 画跑帧前那个环 / 那个高亮。
+        //
+        // ★ 高亮必须并进这一条判据。只把它交给 `afterPaint` 而不管 `paintRequested`，
+        //   表现是"设了高亮但屏幕上什么都没有"：`Frame` 发现树没变就整帧跳过，
+        //   闭包根本不跑。这类静默只有把失效信号一起并进来才堵得住。
         $ringBefore = $this->focusRingTarget();
+        $highlightBefore = $this->debugHighlight;
         $paintRequested = $ringBefore !== $this->paintedFocus
+            || $highlightBefore !== $this->paintedHighlight
             || $this->overlayLayout->panelsLagBehind();
 
         // 窗口帧：约束来自客户区，"内容比窗口大"是合法状态 ⇒ C5/C6 降级为裁剪 + diagnostic，
         // 不中止进程。直接调 `Frame::run()` 的测试仍按严格口径，写错布局照样红。
-        $painted = LayoutTolerance::withinWindow(fn(): bool => $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas): void {
-            $this->paintFocusRing($canvas);
+        $painted = LayoutTolerance::withinWindow(fn(): bool => $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas) use ($highlightBefore): void {
+            $this->paintOverlay($canvas, $highlightBefore);
         }, $paintRequested));
 
-        // 环真的上屏才记账；跳过或 paint 抛异常 ⇒ 不记账 ⇒ 下一帧继续请求。
+        // 真的上屏才记账；跳过或 paint 抛异常 ⇒ 不记账 ⇒ 下一帧继续请求。
         if ($painted) {
             $this->paintedFocus = $ringBefore;
+            $this->paintedHighlight = $highlightBefore;
         }
 
         // ⑤ 迟到挂载补 tick：④ 在 settle 之前跑，而页面挂在 settle 段 ⇒ 新挂上的 State 当帧
@@ -776,6 +796,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         }
 
         if ($this->focusRingTarget() !== $this->paintedFocus
+            || $this->debugHighlight !== $this->paintedHighlight
             || $this->overlayLayout->panelsLagBehind()
         ) {
             $this->pipeline->scheduleFrame();
@@ -834,15 +855,24 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
         LayoutTolerance::withinWindow(function () use ($constraints, $frame, $root): void {
             $this->overlayLayout->placeOverlays($constraints);
-            $frame->run(
+            $highlight = $this->debugHighlight;
+            $painted = $frame->run(
                 $root,
                 $constraints,
                 $this->lastTimestampMs,
                 $this->overlayHost->overlays()->all(),
-                function (Canvas $canvas): void {
-                    $this->paintFocusRing($canvas);
+                function (Canvas $canvas) use ($highlight): void {
+                    // `$record = false`：拖动重排这一帧**不进录制**（没有 begin/endFrame），
+                    // 往 `devFacts` 里写一笔只会被下一帧覆盖 —— 靠"别人会重置"成立的
+                    // 正确性是隐式的，这里显式关掉。
+                    $this->paintOverlay($canvas, $highlight, false);
                 },
             );
+            // 重排这条路也要记账：不记的话，下一帧的 `paintRequested` 仍认为高亮没上屏，
+            // 白画一次（并让 `overlayDrawn` 说"没上屏"而实际已经在了）。
+            if ($painted) {
+                $this->paintedHighlight = $highlight;
+            }
         });
     }
 
@@ -1698,10 +1728,70 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
             return;
         }
 
-        $box->paintFocusOutline(
+        $box->paintOutline(
             $canvas,
             Paint::stroke($this->theme()->color(ColorToken::Accent), 2.0),
         );
+    }
+
+    /**
+     * 设置调试叠加层的目标（`null` = 清除）。
+     *
+     * ★ 只改"下一帧画什么"：不标脏、不重建、不重排。高亮不是状态变更，它不该让
+     *   settle 跑一遍 —— 想让它上屏靠的是 `frame()` 里的 `paintRequested`，
+     *   不是 `setState()`。
+     * ★ 同值早退 + 排一帧：高亮恰恰发生在"页面已经稳定、没人会再标脏"的时候，
+     *   不主动请求就永远画不出来。
+     *
+     * @internal 由 `Application::setDebugHighlight()` 转发（调试会话专用）
+     */
+    public function setDebugHighlight(?Element $element): void
+    {
+        if ($this->debugHighlight === $element) {
+            return;
+        }
+
+        $this->debugHighlight = $element;
+        $this->pipeline->scheduleFrame();
+    }
+
+    /**
+     * 应用级叠加层：树与浮层都画完之后、`endFrame()` 之前。
+     *
+     * 顺序是**高亮在下、焦点环在上**：高亮回答"你选的是这一块"（调试态，持久），
+     * 焦点环回答"键盘现在在这里"（交互态，随时消失）。两者压在同一块上时，
+     * 更短暂、更该立刻看见的那个在上面。
+     *
+     * ★ 高亮**不改结构**：不标脏、不重建、不重排，只是在已经画好的画布上多一圈
+     *   描边。所以它进不了 `Digest::ofFrame()`（`rebuilt` / `causes` / `stages` /
+     *   `skip` 都不该变），"高亮真的上了屏"只能由像素或下面这笔记账来证明。
+     *
+     * @param bool $record 这一帧是不是录制中的正常帧（决定要不要把"叠加已上屏"报给录制器）
+     */
+    private function paintOverlay(Canvas $canvas, ?Element $highlight, bool $record = true): void
+    {
+        $drew = false;
+
+        if ($highlight !== null) {
+            $box = $highlight->effectiveBox();
+            // 已卸载 / 没有尺寸 ⇒ 这一帧画不出来。**不报**给录制器：让
+            // `overlayDrawn()` 停在上一次成功那一帧，读者才分得清"请求了"与"上屏了"。
+            if ($box !== null && $box->hasSize()) {
+                $box->paintOutline(
+                    $canvas,
+                    Paint::stroke($this->theme()->color(ColorToken::Warning), 2.0),
+                );
+                $drew = true;
+            }
+        }
+
+        $this->paintFocusRing($canvas);
+
+        if ($drew && $record && $this->devFacts !== null) {
+            // 只报"画了"，不报"画的谁"：录制器知道当前高亮的是哪个号
+            // （`noteHighlight()` 记的），而壳不该为了一笔记账去懂节点号。
+            $this->devFacts['overlayDrawn'] = true;
+        }
     }
 
     /**

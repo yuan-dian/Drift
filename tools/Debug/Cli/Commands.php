@@ -88,6 +88,11 @@ final class Commands
                 Opt::int('maxDepth', 3, 0, null, '属性树深度'),
                 Opt::int('maxFields', 120, 1, null, '每层字段数'),
             ],
+            'highlight' => [
+                // 必填由出口自己判：`0` 是合法值（清除），缺省值没法同时表达"没给"。
+                // `--remote` / `--json` 不在这里 —— 它们是驱动词表里的通用词。
+                Opt::int('node', 0, 0, null, '节点 id（0 = 清除）'),
+            ],
             'report' => [
                 Opt::flag('verify', '验证模式'),
                 Opt::int('top', 10, 1, null, 'top N'),

@@ -13,15 +13,16 @@ namespace Drift\Debug\Protocol;
  * | 会话 | `open` / `close` | 客户端说，宿主做 |
  * | 驱动 | `frame` / `input` / `effect` | 同上 |
  * | 读 | `query` | 同上 |
- * | 干预 | `pause` / `resume` | 同上，但**只对自走宿主有意义** |
+ * | 干预 | `pause` / `resume` / `highlight` | 同上，但 `pause`/`resume` **只对自走宿主有意义** |
  * | 收尾 | `finish` | 客户端说，宿主标结束；**只对从属宿主有意义** |
  *
  * 纪律还在，只是换了写法：凡是能由 `query` 表达的，都不另开动词 —— 每多一个动词，
  * 对端就多一份"哪个先哪个后"的状态要维护，而状态会漂。`script` / `digest` 因此是
  * **查询名**，不是方法名。
  *
- * 干预这一组是唯一的反向流：它改的不是记录，是**推进的节奏**。加方法时往里填，
- * 不是破例 —— 但也别把"顺手能做的事"都塞进来（断点、高亮各是一整套设计）。
+ * 干预这一组是唯一的反向流：它改的不是记录，是**推进的节奏**（`highlight` 改的是
+ * 下一帧画什么样，同样是"改推进"而不是"改记录"）。加方法时往里填，
+ * 不是破例 —— 但也别把"顺手能做的事"都塞进来（断点是一整套设计）。
  *
  * @api
  */
@@ -46,6 +47,16 @@ final class Methods
     public const string PAUSE = 'pause';
 
     /**
+     * 高亮一个节点。参数 `node`（正整数；`0` = 清除）+ 可选 `t`。
+     *
+     * ★ 这是**干预**组的第二个动词，不是查询：它改的是"下一次绘制的样子"，
+     *   而"现在高亮了谁"是 `query('highlight')`。两者分开，跨进程时也一样。
+     * ★ 回执给 `{node, drawnFrame}`：宿主侧的记录能直接回答"上屏了没"，
+     *   客户端不必再补一次查询（两次查询之间可能已经又跑了几帧）。
+     */
+    public const string HIGHLIGHT = 'highlight';
+
+    /**
      * 让自走的宿主继续。参数 `frames`（可选正整数）：给了就只走这么多帧，
      * 走完回 `paused` + `reason=step`。`1` 就是单步 —— 推进的是脚本自己的下一帧，
      * 客户端不必（也不该）提供时间戳。
@@ -68,6 +79,7 @@ final class Methods
         self::EFFECT,
         self::QUERY,
         self::PAUSE,
+        self::HIGHLIGHT,
         self::RESUME,
         self::FINISH,
         self::CLOSE,

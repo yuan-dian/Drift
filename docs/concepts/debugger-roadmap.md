@@ -137,12 +137,12 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 **设计**：
 
 - **live attach（dev-only）**：在帧循环里做非阻塞轮询，或把读记录放到独立线程；AOT 发布态仍不做（没有空闲帧循环，暂停会改事实）。
-- **select / highlight**：`pick` 已经是查询面；新增反向流 `highlight(node)` / `clearHighlight()`，在绘制后叠加，不写结构、不改布局。判据是 `Digest::ofFrame()` 前后逐值相同。
+- **select / highlight**：`pick` 已经是查询面；反向流 `highlight(node)`（`0` = 清除）**已落地**（2026-11-26，A50/A51/A52）—— 它在绘制后叠加，不写结构、不改布局。三处要点：① 注解是**脚本里的一步**（`Step::HIGHLIGHT`），否则"同一份脚本跑两遍"会让"一次高亮了一次没高亮的"拿到同一个驱动指纹；② 叠加层**自带失效判据**（`paintRequested` + `continueFrame` + `setDebugHighlight()` 排帧），否则 `Frame` 会整帧跳过而不显示；③ 判据是**双向**的 —— `Digest::causal()`（只含 `rebuilt` / `causes`）逐帧不变 **且** 像素必变，另加"环画在这个节点的边框上、盒心不是描边色"与"稳态不再重画"。原始表述"`Digest::ofFrame()` 前后逐值相同"会恒红：它含 `skip`，而高亮正是要求这一帧必须画。**仍未做的**：`pick` 接到活窗口点击（要 live attach）、面板 / Web 侧的悬停即高亮（连续流要节流合并，见 A50 的失效条件）。
 - **多窗口**：录制器按应用/窗口命名空间隔离；`Discovery` 的数组条目真正生效；同一进程第二个窗口要么独立会话，要么显式拒绝并说明原因，不允许“开了就错”。
 
 这三件事都触碰 A33 的旧表述（六个方法、不做 live attach）。实施前先重开 A33，把“dev 形态做 / 发布态不做”和“九个方法按角色分组”写清楚。
 
-**判据**：attach 到运行中的窗口后能 pause / step / query；highlight 不改变 digest；两个窗口的节点 id、帧号、会话令牌不串。
+**判据**：attach 到运行中的窗口后能 pause / step / query；highlight 不改变**结构因果**指纹（`Digest::causal()`）且像素必变；两个窗口的节点 id、帧号、会话令牌不串。
 
 ### 6. 规则注册表、严重度与基线回归
 
@@ -218,7 +218,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P1** | 录制开销量具 | 已落地：2000 节点固定场景；off / frames / geometry / full 四档；frames-only 帧预算 < 2%；`--check` 咬预算 | P1 | M |
 | **P2** | S3d 绘制归因 | 已落地：`PaintRecord` + `paint(frame)` / `repaints()` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树、命中不算"画过"；独立 60 帧窗口；证据包带 `paint` 域；简报 / Web / `/api/paint` 有入口；AOT 可用（无反射） | P1 | L |
 | **P3** | live attach（dev） | 运行中真窗口可 attach、pause、step、query；AOT 仍拒绝并说明原因 | P0、P1 | L |
-| **P3** | select / highlight | `pick` 接到活窗口点击；高亮绘制后叠加；highlight 前后 digest 相同 | P3 | M |
+| **P3** | select / highlight | `pick` 接到活窗口点击；高亮绘制后叠加；highlight 前后**结构因果**指纹相同且像素必变 | P3 | M |
 | **P3** | 多窗口隔离 | 会话按应用/窗口命名空间；`Discovery` 多条目生效；第二窗口独立或明确拒绝 | P3 | L |
 | **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
 | **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |

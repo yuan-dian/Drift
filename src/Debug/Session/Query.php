@@ -109,32 +109,18 @@ final class Query
         ] + $snapshot->toArray() + ['window' => $this->recorder->propsCoverage()];
     }
 
-    /** @param list<Element> $roots */
+    /**
+     * 在多棵树里按节点号找活元素。
+     *
+     * 查找本身住 {@see Element::findInRoots()}：叠加层（高亮）也要同一个查找，
+     * 而它拿不到 `Query`。两份递归迟早漂，且漂出来的表现是"某个深度以外永远
+     * 查不到"——正是这次修掉的那类静默。
+     *
+     * @param list<Element> $roots
+     */
     private function findElement(array $roots, int $node): ?Element
     {
-        foreach ($roots as $root) {
-            if (!$root instanceof Element) {
-                continue;
-            }
-            if ($this->recorder->owns($root) && $root->debugId === $node) {
-                return $root;
-            }
-
-            $found = null;
-            $root->visitChildren(function (Element $child) use (&$found, $node): void {
-                if ($found !== null) {
-                    return;
-                }
-                if ($this->recorder->owns($child) && $child->debugId === $node) {
-                    $found = $child;
-                }
-            });
-            if ($found !== null) {
-                return $found;
-            }
-        }
-
-        return null;
+        return Element::findInRoots($roots, $node, fn(Element $e): bool => $this->recorder->owns($e));
     }
 
     /**
@@ -273,6 +259,51 @@ final class Query
         $pos = \strrpos($class, '\\');
 
         return $pos === false ? $class : \substr($class, $pos + 1);
+    }
+
+    /**
+     * 高亮状态：**现在高亮谁、什么时候请求的、最后一次真的上屏在哪一帧**。
+     *
+     * ## 为什么 `onScreen` 要单独算
+     *
+     * "请求了高亮"与"高亮到了屏幕上"是两件事，中间隔着一次绘制。元素已卸载、
+     * 盒没有尺寸、帧被整段跳过，都会让请求停在第一件上 —— 而屏幕上什么都没有，
+     * 静默。三个字段一起给，读者能自己判断失败在哪一环：
+     *
+     * | `node` | `drawnFrame` | 含义 |
+     * |---|---|---|
+     * | `0` | 任意 | 没有高亮（`drawnFrame` 是历史上最后一次画的，只作参考） |
+     * | `>0` | `null` | 请求了，但一帧都还没画过 |
+     * | `>0` | `< askedFrame` | 请求了，但还没画到它（`onScreen=false`） |
+     * | `>0` | `>= askedFrame` 且 `drawnNode` 相同 | 就在屏幕上（`onScreen=true`） |
+     *
+     * ★ 号对得上还不够：清掉再一次高亮同一个号时，`drawnFrame` 会停在**上一次**
+     *   那个号上屏的帧。比 `askedFrame` 就是为了把这种"旧画"与"新请求"分开。
+     *
+     * ★ `frame` 是当前帧号（`beginFrame()` 数出来的），不是末个落盘帧：查询发生在
+     *   两帧之间时两者相同，而 `frames` 窗口一帧都没落盘时后者是 0。
+     *
+     * @return array<string, mixed>
+     */
+    public function highlight(): array
+    {
+        $node = $this->recorder->highlightedNode();
+        $askedFrame = $this->recorder->highlightFrame();
+        $drawn = $this->recorder->overlayDrawn();
+
+        return [
+            'node' => $node,
+            'type' => $node > 0 ? $this->recorder->typeOf($node) : null,
+            'path' => $node > 0 ? $this->recorder->pathOf($node) : null,
+            'askedFrame' => $askedFrame,
+            'drawnNode' => $drawn === null ? null : $drawn['node'],
+            'drawnFrame' => $drawn === null ? null : $drawn['frame'],
+            'onScreen' => $node > 0
+                && $drawn !== null
+                && $drawn['node'] === $node
+                && $drawn['frame'] >= $askedFrame,
+            'frame' => $this->recorder->frameId(),
+        ];
     }
 
     /**
