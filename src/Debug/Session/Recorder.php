@@ -1658,6 +1658,25 @@ final class Recorder implements PaintObserver
 
     private function trim(): void
     {
+        // 空帧先淘汰。桥给空闲窗口挂了一个 ≤25ms 的唤醒上限（否则观察者的话永远送不
+        // 进来），于是静止的应用每秒白跑几十帧：settle 与 paint 都整段跳过，却照样占
+        // 一个帧号、一个名额。按到达顺序裁，600 帧的窗口七秒就见底 —— 用户翻开历史
+        // 看到几百条"什么都没发生"，而刚才那几次真实的点击早被挤出去了。
+        //
+        // ★ 最新一帧永远留下：读者把窗口尾当成"现在"，尾被裁掉会读成应用卡住了。
+        //   只在超容量时才扫，正常节奏下窗口不满，这一轮不产生额外遍历。
+        if (\count($this->frames) > $this->options->capacity()) {
+            $newest = \array_key_last($this->frames);
+            foreach ($this->frames as $id => $frame) {
+                if (\count($this->frames) <= $this->options->capacity()) {
+                    break;
+                }
+                if ($id !== $newest && $frame->settleSkipped && $frame->paintSkipped) {
+                    unset($this->frames[$id]);
+                }
+            }
+        }
+        // 全是实帧（或空帧已被裁光）⇒ 回到"最老的先走"。窗口上限由这一段保证。
         while (\count($this->frames) > $this->options->capacity()) {
             $oldest = \array_key_first($this->frames);
             if ($oldest === null) {

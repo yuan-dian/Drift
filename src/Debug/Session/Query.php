@@ -363,11 +363,16 @@ final class Query
     public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
         $all = $this->recorder->frames();
+        $from = $all === [] ? 0 : (int) \array_key_first($all);
+        $to = $all === [] ? 0 : (int) \array_key_last($all);
         $window = [
-            'from' => $all === [] ? 0 : (int) \array_key_first($all),
-            'to' => $all === [] ? 0 : (int) \array_key_last($all),
+            'from' => $from,
+            'to' => $to,
             'capacity' => (int) ($this->recorder->stats()['capacity'] ?? 0),
             'frames' => \count($all),
+            // 帧号跨度比保留条数多出来的那段 = 静止期整段跳过的帧，被窗口让位淘汰了。
+            // 不给这个数，`#12–#12573` 配 `600` 会被读成"窗口有一万两千帧"。
+            'folded' => \max(0, $to - $from + 1 - \count($all)),
         ];
 
         $out = [];

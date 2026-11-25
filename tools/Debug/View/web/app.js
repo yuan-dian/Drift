@@ -238,8 +238,11 @@ async function loadBrief() {
 
   document.getElementById('label').textContent = brief.label || '?';
   const w = brief.window || {};
+  // 静止帧先于实帧淘汰（缓冲只留"有事的帧"），跨度于是可以远大于条数。不点明
+  // 这件事，`#12–#12573 / 600 帧` 看起来像自相矛盾。
+  const folded = (w.folded ?? 0) > 0 ? ` · 静止帧折叠 ${w.folded}` : '';
   document.getElementById('window').textContent =
-    `#${w.from ?? 0}–#${w.to ?? 0} / ${w.count ?? 0} 帧 / 容量 ${w.capacity ?? 0}`;
+    `#${w.from ?? 0}–#${w.to ?? 0} / ${w.count ?? 0} 帧 / 容量 ${w.capacity ?? 0}${folded}`;
   document.getElementById('digest').textContent = brief.digest ? brief.digest.slice(0, 12) : '—';
 
   const t = brief.thresholds || {};

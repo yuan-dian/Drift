@@ -249,7 +249,7 @@ final class QueryTest extends SmokeTestCase
             );
             check(
                 '窗口自报：from / to / 容量',
-                $query->frames(0, false, 0)['window'] === ['from' => 1, 'to' => 4, 'capacity' => 600, 'frames' => 4],
+                $query->frames(0, false, 0)['window'] === ['from' => 1, 'to' => 4, 'capacity' => 600, 'frames' => 4, 'folded' => 0],
                 \json_encode($query->frames(0, false, 0)['window']),
             );
             check(
@@ -269,6 +269,43 @@ final class QueryTest extends SmokeTestCase
                 '游标与过滤叠加：只要重建过的未读帧',
                 $ids($query->frames(0, true, 1)['frames']) === [2],
                 \json_encode($ids($query->frames(0, true, 1)['frames'])),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    /**
+     * 窗口自己要说清"跨度 ≠ 条数"。
+     *
+     * 空帧先于实帧淘汰（`Recorder::trim()`）：静止的应用不再把 600 帧窗口滚光，代价是
+     * `from–to` 的跨度可以远大于保留条数。少了 `folded`，`#12–#12573 / 600 帧` 自相矛盾。
+     */
+    public function testWindowReportsFoldedIdleFrames(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install(4);
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            QueryState::$last?->increment();
+            $app->frame(16.0, $this->constraints());
+            for ($i = 3; $i <= 20; ++$i) {
+                $app->frame($i * 16.0, $this->constraints());
+            }
+
+            $window = (new Query($recorder))->frames(0)['window'];
+            // #1 是空帧（attach 已跑过首帧，这里只是"又跑了一轮"），#2 才有重建。
+            // 空帧先淘汰 ⇒ 留 #2 + 最近三个空帧。
+            check(
+                '有重建的那一帧没被后面的空转挤掉',
+                $window['frames'] === 4 && $window['from'] === 2 && $window['to'] === 20,
+                \json_encode($window),
+            );
+            check(
+                '折叠数 = 跨度 − 条数',
+                $window['folded'] === 20 - 2 + 1 - 4,
+                \json_encode($window),
             );
         } finally {
             Recorder::uninstall();

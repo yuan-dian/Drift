@@ -41,6 +41,7 @@ final class Facts
         // 表达不了"漏了 N 帧"，而简报的每个数字都要能说清自己覆盖了哪一段。
         $framePage = $session->query('frames', ['limit' => 0]);
         $frames = self::listOf($framePage, 'frames');
+        $frameWindow = self::mapOf($framePage, 'window');
         // `frames: 0` 与 `limit: 0` 是两件事：前者是**聚合窗口**（默认只看最近 300 帧），
         // 后者是**返回条数**（默认 10 条）。只关掉后者，聚合仍然只数最近 300 帧 ——
         // 而表头写的是整个窗口，"出现 3 帧"就会与 `frames` 的帧数对不上。
@@ -73,6 +74,8 @@ final class Facts
                 'to' => $ids === [] ? 0 : $ids[\count($ids) - 1],
                 'count' => \count($ids),
                 'capacity' => (int) ($stats['capacity'] ?? 0),
+                // 静止帧折叠数由查询层算（它知道整个窗口）；旧会话不带这个字段 ⇒ 0。
+                'folded' => (int) ($frameWindow['folded'] ?? 0),
             ],
         ];
 

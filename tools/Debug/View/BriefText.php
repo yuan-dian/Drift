@@ -258,7 +258,22 @@ final class BriefText
             (int) ($window['from'] ?? 0),
             (int) ($window['to'] ?? 0),
             $capacity,
-        );
+        ) . self::foldedNote($window);
+    }
+
+    /**
+     * 帧窗口里被折叠掉的静止帧数。
+     *
+     * 空帧先于实帧淘汰（见 `Recorder::trim()`），`from–to` 的跨度于是可以远大于保留
+     * 条数：`#12–#12573/600` 单看像"窗口有一万两千帧"。这个数把那段差说清楚。
+     *
+     * @param array<string, mixed> $window
+     */
+    private static function foldedNote(array $window): string
+    {
+        $folded = (int) ($window['folded'] ?? 0);
+
+        return $folded > 0 ? \sprintf('（静止帧折叠 %d）', $folded) : '';
     }
 
     /**

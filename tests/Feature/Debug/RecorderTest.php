@@ -7,6 +7,7 @@ use Drift\App\Application;
 use Drift\Debug\Session\Edge;
 use Drift\Debug\Session\FrameRecord;
 use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -125,6 +126,58 @@ final class RecorderTest extends SmokeTestCase
                 '超出容量只保留最近两帧',
                 \count($ids) === 2 && \end($ids) === $recorder->lastFrameId(),
                 'ids=' . \json_encode($ids) . ' last=' . $recorder->lastFrameId(),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
+    /**
+     * 空转的帧不该把有事的帧挤出去。
+     *
+     * 桥把空闲窗口的等待上限压到 ≤25 ms（否则挂在 socket 上的观察者一条消息都送不
+     * 进来），于是静止的应用每秒白跑几十帧。按到达顺序裁，600 帧的窗口七秒就滚完，
+     * 翻开历史看到的是几百条"什么都没发生"，而刚才那几次真实的点击早已被挤出去。
+     */
+    public function testIdleFramesDoNotEvictFramesThatChangedSomething(): void
+    {
+        $recorder = Recorder::install(RecordOptions::framesOnly(20));
+
+        try {
+            $app = $this->boot();
+            $app->frame(0.0, $this->constraints());
+
+            $firstReal = null;
+            for ($i = 1; $i <= 200; $i++) {
+                $dirty = $i % 25 === 0;
+                if ($dirty) {
+                    CounterState::$last?->increment();
+                }
+                $app->frame($i * 16.0, $this->constraints());
+                if ($dirty) {
+                    $firstReal ??= $recorder->lastFrameId();
+                }
+            }
+
+            $window = $recorder->frames();
+            check('窗口不超过容量', \count($window) <= 20, 'count=' . \count($window));
+            check(
+                '窗口尾仍是最新帧（读者把它当"现在"）',
+                \array_key_last($window) === $recorder->lastFrameId(),
+                'tail=' . \var_export(\array_key_last($window), true) . ' last=' . $recorder->lastFrameId(),
+            );
+
+            $rebuilt = 0;
+            foreach ($window as $frame) {
+                if ($frame->rebuilt !== []) {
+                    $rebuilt++;
+                }
+            }
+            check('8 次真实变化一次没丢', $rebuilt === 8, 'rebuilt=' . $rebuilt . ' ids=' . \json_encode(\array_keys($window)));
+            check(
+                '最早那次变化没被后面的空转挤掉',
+                $firstReal !== null && \array_key_exists($firstReal, $window),
+                'first=' . \var_export($firstReal, true) . ' ids=' . \json_encode(\array_keys($window)),
             );
         } finally {
             Recorder::uninstall();

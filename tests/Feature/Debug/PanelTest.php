@@ -215,23 +215,36 @@ final class PanelTest extends SmokeTestCase
     }
     public function testEvictedFrameIsAnnouncedInsteadOfSilentlyJumping(): void
     {
-        // 容量 4：挂载 1 帧 + 3 次写入 = 4 帧装满。再看 3 帧，第 2 帧就被裁掉了。
-        $panel = $this->boot(5);
+        // 容量 4 而 boot 产出 5 个真实帧（#1 已被裁）。停在 #3 之后再来 5 次真实变化，
+        // #3 被挤出窗口 —— 面板必须说出来，不能静默跳走。
+        //
+        // ★ 不用 `n` 连推来制造溢出：`n` 推出来的多半是静止帧，而静止帧现在先于实帧
+        //   淘汰（`Recorder::trim()`），推不出"正在看的那一帧被挤掉"。
+        $panel = $this->boot(4);
         $panel->boot(3);
+        check('先停在 #3', $panel->frame() === 3, 'frame=' . $panel->frame());
 
+        for ($i = 0; $i < 5; ++$i) {
+            SteadyState::$last?->grow();
+            $this->session?->pump(100.0 + $i * 16.0);
+        }
+        // `n` 才会重拉帧列表（`advance()` 里 refreshFrames）；单纯移动光标用的是上一次的
+        // 快照，看不出来"这一帧已经没了"。
         $panel->press('n');
-        $panel->press('n');
-        $panel->press('n');
-        $panel->lines();
 
         check(
-            '第 2 帧已经滚出缓冲',
-            $panel->frame() !== 2,
+            '看的那一帧已经滚出缓冲',
+            $panel->frame() !== 3,
             'frame=' . $panel->frame(),
         );
         check(
             '状态栏说清是缓冲裁掉的',
             \str_contains($panel->status(), '滚出缓冲'),
+            $panel->status(),
+        );
+        check(
+            '播报点名了滚掉的那一帧',
+            \str_contains($panel->status(), '#3'),
             $panel->status(),
         );
     }
