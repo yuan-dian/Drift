@@ -178,9 +178,11 @@ ignore:
   - ../../src/Debug/Session/Query.php
   - ../../src/Debug/Session/QueryRouter.php
   - ../../src/Debug/Session/Evidence.php
-  # L2 内省：属性与 eval 共用的反射 dump。只在 dev 侧被 Query / Evaluator 调，
-  # 发布态没有活树可读，编进产物只是白扛（A55）。
+  # L2 内省：属性 / eval 共用的反射 dump、内存台账、源码定位。只在 dev 侧被
+  # Query / Evaluator 调，发布态没有活树与调用栈可读，编进产物只是白扛（A55）。
   - ../../src/Debug/Session/ObjectDump.php
+  - ../../src/Debug/Session/MemoryProbe.php
+  - ../../src/Debug/Session/SourceLocator.php
   - ../../src/Debug/Session/Digest.php
   - ../../src/Debug/Session/SessionDriver.php
   - ../../src/Debug/Session/SessionQueries.php

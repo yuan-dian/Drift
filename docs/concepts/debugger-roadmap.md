@@ -27,7 +27,7 @@
 | 证据包 | 已落地：NDJSON + manifest + 版本 + 逐域 counts + 导入校验 | Chrome trace、Perfetto | **领先**：语义化、可复算 |
 | 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
 | 属性（Widget / State） | 已落地：降为 L2 即时内省（`ObjectDump` 反射原语），与 `eval $node` 共用；**不进证据包、不写快照窗口**（A55）。原 `PropReader`/`PropSnapshot` 与证据 `props` 段已删 | Flutter Inspector、React DevTools | 同为 dev 专用，但我们不把内省当证据、成本不按进包付 |
-| 网络 | 切片：骨架 + 发起者 + 落地帧（证据）；报文是 dev 内省，计划改 `stream_wrapper` 旁路 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
+| 网络 | 切片：骨架 + 发起者 + 落地帧（证据）；报文原文走 `bodies` 开关 + `networkBody` 独立出口（脱敏 + 截断，不进默认包） | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
@@ -37,7 +37,8 @@
 | 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
 | 交互式提问（任意表达式） | 已落地：`debug eval` 对活宿主求值，默认关（`serve --allow-eval`）、只绑 loopback、不是证据（A55）；离线包拒绝，求值前后比指纹报 `evidenceChanged` | Chrome Console、Flutter Inspector eval | 补上 dev 壳最大的体验缺口；缺多会话上下文切换 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
-| 内存 / 泄漏 | 未做（**计划改口径**）：dev 侧用 `gc_status` + `memory_get_usage` + `WeakMap` 约三十行；AOT 侧不采 | Chrome Memory、Flutter Memory、Tracy | 不需要完整域，只需要一个 dev 封装 |
+| 内存 / 泄漏 | 已落地：`debug probe --what=memory` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账给每个类型的对象存活跨度（跨查询累积，不阻止 GC）；AOT 侧不采、不进包、不进指纹（A55） | Chrome Memory、Flutter Memory、Tracy | 不做堆转储与字节数（PHP 无此 API），只给能站得住的存活跨度 |
+| 源码位置 | 已落地：`debug probe --what=source` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把 `site` 翻成"哪个方法、定义第几行"；只看已加载类、当场反射、不是证据（A55） | Chrome Sources、LLDB `image lookup` | 补上从因果 site 跳到方法定义的最后一跳 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
 | 崩溃 / 生产黑匣子 | 未做 | Sentry breadcrumb、Chrome trace | S2 的核心价值 |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
@@ -204,7 +205,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 这三个域都重要，但不与 S3d / S2 同期做；先按“预算 + 独立窗口 + 独立查询”的形状评估：
 
-- **内存**（口径已改，A55）：不做证据域，做 **dev 内省** —— `gc_status()` + `memory_get_usage()` + `WeakMap` 按节点分组，约三十行；不做堆转储（PHP/AOT 限制）。只有在“跨帧泄漏趋势要进 CI”这个真实需求出现时，才考虑升成 L1 域。
+- **内存**（已落地，A55）：不做证据域，做 **dev 内省** —— `MemoryProbe` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账记对象首次见到的帧、给存活跨度。台账弱持有，观察本身不成为泄漏源；不报"单对象字节数"（PHP 无此 API，报了就是编的），不报"已消失对象数"（GC 时机不由我们定，报了就是说谎）。`debug probe --what=memory`（P8）。只有在"跨帧泄漏趋势要进 CI"这个真实需求出现时，才考虑升成 L1 域。
 - **异步**：Future / worker job 的时间线、队列深度、结算延迟、取消；网络只是其中一个子域。
 - **无障碍**：语义树 + UIA 属性；已有 UIA 实现，缺的是查询面与投影。
 
@@ -231,7 +232,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
 | **P5** | 基线回归 | 已落地：`--baseline` / `--save-baseline` / `--assert` / `--tolerance`；确定性分级（耗时类不计断言）；坏文件五种各自报错；有回归退 3 | P5 | M |
 | **P5** | 证据搜索 | 已落地：`find(pattern, domain, limit, caseSensitive)` + `debug find` 出口 + `/api/find`；产物是地址且可被追问；三数对账；截断 / 空窗口 / 已回收分开自报；不做正则 | P2 | S |
-| **P6** | 内存域 | 节点 / State / 订阅 / 图片缓存计数；泄漏趋势；独立窗口与查询 | P4 | L |
+| **P6** | 内存域 | 已由 P8 的 dev 内省交付（`debug probe --what=memory`）：进程标量 + 活树对象存活跨度。**不升成 L1 证据域** —— 字节数 PHP 拿不到、跨帧趋势离了当下复算不了（A55）。若将来真要进 CI 的泄漏趋势，另立可复算格式 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
@@ -239,7 +240,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 16 项写面白名单”（属性降级后 PropSnapshot 移除），多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
 | **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
 | **P8** | 属性域降到 L2 | 已落地：`ObjectDump` 用 ReflectionProperty 逐层读所有声明层的 private（含基类 `mods`、State 私有字段），与 `eval $node` 共用一份编码；`Query::props()` 只读当场活树、**不写快照窗口**；删 `PropReader`/`PropSnapshot` 与证据 `props` 段（`DEFAULT_DOMAINS`/`ALL_DOMAINS`/读写/counts 全清），白名单 17→16 项。**不升版本**：逐 kind 显式拒绝已是证据格式的演进机制，绝大多数从没采过 props 的老包仍可读，升 v2 会无谓拒绝它们；也没有补 `RecordOptions::props` 开关——不进包就无从采集。判据：含 `mods`、不含 `sealed`、循环回 `ref`、NAN 安全、脱敏、属性永不进包；7 组变异全咬红 | A55 | M |
-| **P8** | dev 转交三件 | 内存（`gc_status` + `memory_get_usage` + `WeakMap`）、报文旁路（`stream_wrapper_register`，`AsyncHttp` 不改）、调用链（`debug_backtrace` + `ReflectionMethod::getFileName`） | A55 | M |
+| **P8** | dev 转交三件 | 已落地（收敛成**一个**出口 `debug probe`，不是三个）：`--what=memory` 用 `gc_status()` + `memory_get_usage()` + `WeakMap` 台账给存活跨度（跨查询累积、弱持有、不进包）；`--what=source --source=file:line` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把因果 site 翻成方法定义位置，三种 miss 分开说。**报文旁路这一件撤销**：设计稿原写 `stream_wrapper_register` + `AsyncHttp` 不改，但 `AsyncHttp` 实际走 curl（`CurlMultiTransport` / `Http.php`），curl 不经过 PHP stream 层，wrapper 抓不到任何真实请求 —— 那是假实现。报文原文由既有 `bodies` 开关 + `networkBody` 出口覆盖，不重复造抓不到东西的通路。两件都是 L2 内省：不进包、不进指纹；7 条判据 + 7 组变异全咬红 | A55 | M |
 
 ### 建议顺序的理由
 

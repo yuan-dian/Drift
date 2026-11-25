@@ -49,6 +49,8 @@
 
 `debug eval` 是对**活宿主**求任意 PHP 表达式的兜底出口——固定出口答不了的一次性问题用它。先起一个开了开关的宿主（`drift debug serve --page=table --frames=1 --allow-eval`），再在另一个终端 `drift debug eval '$app->root()->id()'`；作用域注入 `$app` / `$session` / `$node`（`--node=N` 时）。默认关、只绑 loopback、结果不是证据；表达式若改了应用状态，回执会报 `evidenceChanged=true`。详见[调试器路线](../concepts/debugger-roadmap.md)与裁决 A55 / A56。
 
+`debug probe` 是两个高频内省问题的结构化快捷方式：`--what=memory` 用 `gc_status()` / `memory_get_usage()` 报进程标量，并用 `WeakMap` 台账给出每个类型的对象从哪一帧起还活着（跨多次查询累积，`maxAge` 越大越可疑）；`--what=source --source=file:line` 用 `ReflectionMethod::getFileName()` 把 `debug report` 给出的调用点翻译成"哪个类的哪个方法、定义在第几行"。两者都是 A55 的 L2 内省——当场读、不进证据包、不进指纹；内存是进程级（含同进程其他窗口），源码只看已加载类。报文原文走证据面的独立出口（`bodies` 开关），不在这里旁路。
+
 <!-- drift-cli-reference:start -->
 下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
 
@@ -65,6 +67,7 @@
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |
 | `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` |
 | `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` |
+| `probe` | `debug-probe.php` | driver | dev 轻量内省：内存存活跨度 / 源码位置（不是证据） | `--what` `--source` `--limit` |
 | `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` |
 | `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
 | `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` `--allow-eval` |

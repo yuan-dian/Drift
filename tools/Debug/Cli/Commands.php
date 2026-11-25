@@ -90,6 +90,11 @@ final class Commands
                 Opt::int('maxDepth', 3, 0, null, '属性树深度'),
                 Opt::int('maxFields', 120, 1, null, '每层字段数'),
             ],
+            'probe' => [
+                Opt::str('what', 'memory', 'memory|source：看内存存活跨度还是源码位置'),
+                Opt::str('source', null, 'source 视图的调用点字符串（file:line）'),
+                Opt::int('limit', 40, 1, null, 'memory 视图最多列几个类型'),
+            ],
             'highlight' => [
                 // 必填由出口自己判：`0` 是合法值（清除），缺省值没法同时表达"没给"。
                 // `--remote` / `--json` 不在这里 —— 它们是驱动词表里的通用词。

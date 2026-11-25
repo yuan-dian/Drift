@@ -37,8 +37,48 @@ final class Query
     /** `shapeCache` 属于哪一代；与 `Recorder::generation()` 不一致就整体丢弃。 */
     private int $cacheGeneration = -1;
 
+    /** L2 内存台账：跨多次 memory() 查询累积同一本 WeakMap，不进证据包（A55）。 */
+    private ?MemoryProbe $memoryProbe = null;
+
     public function __construct(private readonly Recorder $recorder)
     {
+    }
+
+    /**
+     * 进程内存 + 活树对象的跨帧内省（L2，不是证据）。
+     *
+     * ★ 必须注入活树：内存看的是**现在**有哪些对象、活了多久；离线包没有活树，
+     *   返回空会读成"没有对象"，所以由派发层在注入回调缺失时明确拒绝。
+     * ★ 不写 Recorder、不进包、不进指纹：这是 A55 的 L2 内省，只有结构上可复算的
+     *   标量才能进证据，而"对象活了几帧"离开当下就无法重算。
+     *
+     * @param list<Element> $roots
+     * @return array<string, mixed>
+     */
+    public function memory(array $roots, int $limit = 40): array
+    {
+        if (!MemoryProbe::available()) {
+            return ['found' => false, 'reason' => 'memory-unavailable'];
+        }
+        $this->memoryProbe ??= new MemoryProbe();
+        $answer = $this->memoryProbe->sample($roots, $this->recorder->lastFrameId(), $limit);
+        $answer['found'] = true;
+        $answer['limit'] = $limit;
+
+        return $answer;
+    }
+
+    /**
+     * 把 `site`（`file:line`）解释成方法定义位置（L2，不是证据）。
+     *
+     * 与 `why()` / `hotspots()` 给出的 `site` 同源：那些输出里的是一个地址字符串，
+     * 这里把它翻译成"在哪个类的哪个方法里、定义在第几行"。纯读，不碰活树与记录。
+     *
+     * @return array<string, mixed>
+     */
+    public function source(string $site): array
+    {
+        return SourceLocator::locate($site);
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */

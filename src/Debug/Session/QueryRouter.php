@@ -50,6 +50,8 @@ final class QueryRouter implements SessionQueries
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）',
+        'memory' => '进程内存与活树对象存活跨度（dev 内省，WeakMap 台账，不是证据、不进包）',
+        'source' => '把 site（file:line）解释成方法定义位置（dev 反射，即时内省、不是证据）',
         'pick' => '按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点',
         'highlight' => '高亮状态：现在高亮谁 / 何时请求 / 最后一次真的上屏在哪帧',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
@@ -125,6 +127,8 @@ final class QueryRouter implements SessionQueries
             'maxDepth' => ['int', 3],
             'maxFields' => ['int', 120],
         ]],
+        'memory' => ['memory', ['roots' => ['inject', 'treeRoots'], 'limit' => ['int', 40]]],
+        'source' => ['source', ['site' => ['string']]],
         'pick' => ['pick', [
             'x' => ['float'],
             'y' => ['float'],

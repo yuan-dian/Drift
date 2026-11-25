@@ -86,6 +86,8 @@ final class DebugSessionTest extends SmokeTestCase
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'find' => ['pattern' => 'Text'],
                 'props' => ['node' => $nodeId],
+                'memory' => [],
+                'source' => ['site' => 'no-such-file.php:1'],
                 'pick' => ['x' => 1.0, 'y' => 2.0],
                 'state' => [],
             ];
