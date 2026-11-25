@@ -41,7 +41,7 @@ final class Registry
             ['host', 'debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）', false],
             ['serve', 'debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看', true],
             ['ctl', 'debug-ctl.php', '控制面：让自走的宿主停一下 / 走一步 / 接着跑', false],
-            ['web', 'debug-web.php', '浏览器视图：同一份证据的第三个消费者（几何画布 + 发现）', true],
+            ['web', 'debug-web.php', '浏览器视图：真机画面 + 几何叠加 + 发现，跟着应用自动刷新', true],
             ['loop', 'debug-loop.php', '重开 N 次：证明关掉这一页再打开是等价的', true],
         ];
 

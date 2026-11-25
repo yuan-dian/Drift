@@ -38,9 +38,16 @@ final class Shot
 
     private float $lastAt = -1e9;
 
-    private int $lastAnchor = -1;
-
     private int $written = 0;
+
+    /**
+     * 快照序号：这是第几张图。单调自增，从目录里已有的最大号接着数。
+     *
+     * ★ 为什么要和录制帧号分开：帧号回答"主循环跑过几轮"（空闲的桥让它以 ~80fps
+     *   推进），快照回答"画面变过几次"。拿帧号当图片版本号，静止的应用每帧都会
+     *   被当成"新图"，而真正变了的那次反而可能落在同一个号上被去重挡掉。
+     */
+    private int $serial = 0;
 
     /** 真的去读了像素的次数 —— 用来给"拍不到就停下"兜底，见 {@see self::starving()}。 */
     private int $attempts = 0;
@@ -54,6 +61,19 @@ final class Shot
         private readonly string $dir,
         private readonly float $gapMs = self::MIN_GAP_MS,
     ) {
+        $this->serial = self::latestSerial($this->shotDir());
+    }
+
+    /** 目录里已有的最大快照号；重启宿主后接着数，不会覆盖上一个进程拍的图。 */
+    private static function latestSerial(string $dir): int
+    {
+        $max = 0;
+        foreach (\glob($dir . '/s*.png') ?: [] as $file) {
+            $n = (int) \substr(\basename($file, '.png'), 1);
+            $max = \max($max, $n);
+        }
+
+        return $max;
     }
 
     /**
@@ -104,20 +124,15 @@ final class Shot
     }
 
     /**
-     * 拍一张。返回是否真的写了 —— `false` 表示"这一帧跳过"。
+     * 拍一张。返回是否真的写了 —— `false` 表示"这一帧跳过"（降频 / 没人看 / 读不回像素）。
      *
-     * @param int $anchor **几何覆盖到的帧号**，同时当文件名与去重键。
-     *                    ★ 不能拿 `Recorder::frameId()` 当键：那是"跑过多少帧"，
-     *                    与"几何覆盖到第几帧"是两个数（几何按变化落记录，且窗口更窄），
-     *                    用前者去重会在几何还没推进时把画面更新全部挡掉 ——
-     *                    表现是"图一直停在启动那一张"。
+     * @param int $anchor **几何覆盖到的帧号**，写进 meta 供 `boxes?frame=N` 配对。
+     *                    ★ 不当去重键：它按"几何变没变"推进，而画面可能只改了颜色
+     *                    或文字 —— 那种变化几何不动，用 anchor 去重会把它们全挡掉。
+     *                    去重交给调用方：观察者只在**真的重画了**的时候才被回调。
      */
     public function capture(Canvas $canvas, int $anchor, float $nowMs): bool
     {
-        if ($anchor === $this->lastAnchor) {
-            return false;
-        }
-
         if ($nowMs - $this->lastAt < $this->gapMs) {
             return false;
         }
@@ -158,20 +173,21 @@ final class Shot
         }
 
         // 先写临时名再 rename：web 随时在读 latest.png，直接覆盖会读到半张图。
-        $tmp = $dir . '/.tmp-' . $anchor;
+        $serial = $this->serial + 1;
+        $tmp = $dir . '/.tmp-' . $serial;
         if (@\file_put_contents($tmp, $png) === false) {
             return false;
         }
 
-        $file = $dir . '/f' . $anchor . '.png';
+        $file = $dir . '/s' . $serial . '.png';
         if (!@\rename($tmp, $file)) {
             @\unlink($tmp);
 
             return false;
         }
 
-        // `latest.png` 必须是**复制**而不是改名：改名会把 `f<anchor>.png` 拿走，
-        // 于是"按帧号取图"只在最近一次拍成功时可用，翻历史帧全是 404。
+        // `latest.png` 必须是**复制**而不是改名：改名会把 `s<serial>.png` 拿走，
+        // 于是"按序号取图"只在最近一次拍成功时可用，翻历史快照全是 404。
         // 走临时名再 rename，web 那边就不会读到半张图。
         $latestTmp = $dir . '/.latest-tmp';
         if (@\copy($file, $latestTmp)) {
@@ -179,9 +195,9 @@ final class Shot
         }
 
         $this->lastAt = $nowMs;
-        $this->lastAnchor = $anchor;
+        $this->serial = $serial;
         $this->written++;
-        $this->publishMeta($anchor, $w, $h);
+        $this->publishMeta($serial, $anchor, $w, $h);
 
         if ($this->written % self::KEEP === 0) {
             $this->prune();
@@ -190,11 +206,16 @@ final class Shot
         return true;
     }
 
-    /** 帧号写进文件名已经够 web 用；这份元数据是给"图比几何旧"这种情况留的线索。 */
-    public function publishMeta(int $frame, int $w, int $h): void
+    /**
+     * 快照元数据：`serial` 是图片的版本号（前端据此决定换不换图），`frame` 是它
+     * 对应得上的录制帧号（前端据此取几何）。两个数必须一起给 —— 分两次请求就会
+     * 拿到"图是第 3 张、几何是第 5 张"的错位，而错位看起来像布局错了。
+     */
+    public function publishMeta(int $serial, int $frame, int $w, int $h): void
     {
         $dir = $this->shotDir();
         $json = \json_encode([
+            'serial' => $serial,
             'frame' => $frame,
             'width' => $w,
             'height' => $h,
@@ -238,7 +259,7 @@ final class Shot
 
     private function prune(): void
     {
-        $files = \glob($this->shotDir() . '/f*.png') ?: [];
+        $files = \glob($this->shotDir() . '/s*.png') ?: [];
         if (\count($files) <= self::KEEP) {
             return;
         }

@@ -57,6 +57,13 @@ button {
 button:hover { border-color: var(--accent); color: var(--accent); }
 button[disabled] { opacity: .4; cursor: default; }
 
+/* 按下态（目前只有「跟随」）：告诉用户"画面会自己换"是开着的。 */
+button.on {
+  background: #1d3b36;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 main {
   flex: 1;
   display: grid;

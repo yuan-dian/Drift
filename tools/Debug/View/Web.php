@@ -122,8 +122,8 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
             ])),
             '/api/node' => $this->node($query),
-            // 画面与证据是两条通道：`/api/shot` 吐的是宿主拍的真机像素（PNG），
-            // 只用于垫底。`/api/shot/ping` 是心跳 + 问"最新那张是哪一帧"，
+            // 画面与证据是两条通道：`/api/shot?serial=N` 吐的是宿主拍的真机像素（PNG），
+            // 只用于垫底。`/api/shot/ping` 是心跳 + 问"最新那张是第几张、拍的哪一帧"，
             // 前端靠它决定要不要换图 —— 拿不到新图就不换，而不是换成空。
             '/api/shot' => $this->shot($query),
             '/api/shot/ping' => $this->shotPing(),
@@ -341,8 +341,10 @@ final class Web
             return $this->error(404, 'no_shot', '这个会话没有画面通道（离线读包 / 从属宿主）');
         }
 
-        $frame = (int) ($query['frame'] ?? 0);
-        $file = $frame > 0 ? $dir . '/f' . $frame . '.png' : $dir . '/latest.png';
+        // 按**快照序号**取图，不按帧号：序号是"第几张画面"，帧号是"主循环跑过几轮"。
+        // 拿帧号当图片地址，同一张图会被不同帧号请求很多次，而换图那一刻又可能撞号。
+        $serial = (int) ($query['serial'] ?? 0);
+        $file = $serial > 0 ? $dir . '/s' . $serial . '.png' : $dir . '/latest.png';
         if (!\is_file($file)) {
             $file = $dir . '/latest.png';
         }
@@ -359,11 +361,11 @@ final class Web
     }
 
     /**
-     * 心跳 + 「最新那张是哪一帧」。
+     * 心跳 + 「最新那张是第几张、拍的哪一帧」。
      *
-     * 心跳走这里而不是靠 `/api/shot` 自己被请求：页面只在帧变了才换图，静止的应用
-     * 没有新帧 ⇒ 不请求图 ⇒ 心跳断 ⇒ 宿主以为没人看，把画面通道关了。那时候用户
-     * 一动窗口就"图不更新"，而它本来是活的。
+     * 心跳走这里而不是靠 `/api/shot` 自己被请求：页面只在序号变了才换图，静止的
+     * 应用没有新快照 ⇒ 不请求图 ⇒ 心跳断 ⇒ 宿主以为没人看，把画面通道关了。那时
+     * 用户一动窗口就"图不更新"，而它本来是活的。
      *
      * @return array{status: int, type: string, body: string}
      */
@@ -377,18 +379,27 @@ final class Web
         // 撑开心跳窗口（宿主按 mtime + TTL 判断有没有人看）。
         @\touch($dir . '/want');
 
+        $serial = null;
         $frame = null;
         $at = null;
         $meta = @\file_get_contents($dir . '/shot.json');
         if ($meta !== false) {
             $decoded = \json_decode($meta, true);
             if (\is_array($decoded)) {
+                // 两个数一起给：`shot` 决定换不换图，`frame` 决定取哪一帧的几何。
+                // 分开问就会拼出"图是第 3 张、几何是第 5 帧"的错位。
+                $serial = $decoded['serial'] ?? null;
                 $frame = $decoded['frame'] ?? null;
                 $at = $decoded['at'] ?? null;
             }
         }
 
-        return $this->json(['shot' => $frame, 'at' => $at, 'channel' => true]);
+        return $this->json([
+            'shot' => $serial,
+            'frame' => $frame,
+            'at' => $at,
+            'channel' => true,
+        ]);
     }
 
     /** `.drift/shot`（不存在就建）—— 与宿主 `Shot` 用的是同一个约定路径。 */

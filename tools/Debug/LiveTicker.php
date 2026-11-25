@@ -8,7 +8,6 @@ use Drift\App\DebugInputInterceptor;
 use Drift\App\DebugSession;
 use Drift\App\DebugTicker;
 use Drift\Debug\Protocol\Server;
-use Drift\Debug\Session\GeometryCapture;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Geometry\BoxConstraints;
@@ -121,7 +120,6 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
             // `boxes?frame=<底图那一帧>` 回 `frame-out-of-window`，屏幕上只剩底图没有框。
             // 省这一份几何换来的是"画面和结构永远对不上"，这个交换不成立。
             RecordOptions::default()
-                ->withGeometry(GeometryCapture::All)
                 ->withScript($script),
         );
         $this->drive = new LiveDrive($script);
@@ -218,12 +216,10 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
      */
     public function onPainted(\Drift\Rendering\Canvas $canvas, int $frame): void
     {
-        // 图挂在"几何实际覆盖到的帧"上：文件名、去重键、`boxes?frame=N` 三处必须是
-        // 同一个数，否则页面会出现"有图无框"或"图永远停在第一张"。
-        $recorder = $this->bound?->debugRecorder();
-        $anchor = $recorder === null ? 0 : (int) ($recorder->geometryCoverage()['to'] ?? 0);
-
-        $this->shot?->capture($canvas, $anchor > 0 ? $anchor : $frame, \hrtime(true) / 1e6);
+        // `frame` 是**拍这张图时主循环跑到第几帧**（这个回调发生在 `endFrame()` 之前，
+        // 本帧的几何还没落账）。它只写进 meta 供人参考 —— 谁也不该拿它去取几何，
+        // 那个号必然落后一帧。web 的跟随用服务端缺省帧（几何窗口最新），与画面同源。
+        $this->shot?->capture($canvas, $frame, \hrtime(true) / 1e6);
     }
 
     /**

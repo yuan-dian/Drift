@@ -20,11 +20,18 @@ const state = {
   lastFrame: -1,
   hintBase: '',
   hidden: 0,
-  // 底图：宿主拍的那一帧。`shotFrame` 与 `state.frame` 不同就说明图和几何错开了，
-  // 这必须显示出来 —— 一张旧图配新框，看起来像布局错了。
+  // 底图对应的录制帧号（宿主拍这张时主循环跑到第几帧）。**只用于显示** ——
+  // 拍照发生在 `endFrame()` 之前，这个号必然落后一帧，拿它取几何就是"新图配旧框"。
   shotFrame: null,
+  // 快照序号：这是第几张画面。与 `shotFrame` 分开——序号只回答"换不换图"，
+  // 帧号回答"配哪一帧的几何"。用帧号当图片版本号，静止的应用会每帧都被当成新图。
+  shotSerial: null,
   shotUrl: '',
   shotSize: { w: 0, h: 0 },
+  // 是否跟着应用最新帧走。★ 用显式标志而不是"帧号相等"来推断：拿两个来自不同
+  // 窗口的数（录制帧号 / 几何覆盖帧号）比较，只要一开始不等就永远不跟，而页面上
+  // 看不出任何异常。用户点了历史帧或地址带 frame= 才置 false。
+  follow: true,
   // 用户是否动过视图。没动过时 `layout()` 每次重新居中（窗口尺寸变了也不跑偏）；
   // 一旦拖过或缩放过就尊重用户的视点，直到点"适配"。
   panned: false,
@@ -147,10 +154,12 @@ async function boot() {
 
   document.getElementById('fit').onclick = () => resetView();
   document.getElementById('actual').onclick = () => actualSize();
+  document.getElementById('follow').onclick = () => setFollow(!state.follow);
   document.addEventListener('keydown', (e) => {
     if (e.target === document.getElementById('q')) return;
     if (e.key === '0') { resetView(); return; }
     if (e.key === '1') { actualSize(); return; }
+    if (e.key === 'f' || e.key === 'F') { setFollow(!state.follow); return; }
     if (e.key === 'Escape') { select(0); return; }
   });
 
@@ -165,24 +174,46 @@ async function boot() {
 
   await Promise.all([loadScript(), loadBrief()]);
 
-  // 第一屏取哪一帧：有底图就跟底图那一帧，没有才退回"最值得看的一帧"。
-  // 顺序反了就会看到"图是新的、框是旧帧的"——而错位看起来像布局 bug。
+  // 第一屏：有底图就跟"最新"（服务端缺省帧 = 几何窗口最新），画面也是最新的，
+  // 两者同源；没有底图（离线包 / 自己跑的会话）才退回"最值得看的一帧"。
   const ping = await get('/api/shot/ping').catch(() => null);
-  const shotFrame = ping && ping.shot ? Number(ping.shot) : 0;
+  const hasShot = !!(ping && ping.shot);
 
   // `?node=32&frame=1` 直接开到那个节点的卡片。发现里的地址能贴进聊天窗口，
   // 收的人点开就是同一帧同一个盒 —— 否则"你看 node:32"要靠对方自己找。
   const params = new URLSearchParams(location.search);
-  await loadFrame(Number(params.get('frame') || shotFrame || 0));
+  const urlFrame = Number(params.get('frame') || 0);
+  // 地址里点名了帧 = 用户要看那一帧，就别让轮询把他拽回最新。
+  if (urlFrame) state.follow = false;
+  await loadFrame(urlFrame || (hasShot ? 0 : ((state.brief && state.brief.worst) || 0)));
   // `?zoom=1` 直接开 1:1：贴给别人"看这个像素"时，比让他自己滚轮找更靠谱。
   state.applyActual = params.get('zoom') === '1';
   const node = Number(params.get('node') || 0);
   if (node) await select(node);
 
-  document.title = `drift · 帧 #${state.frame} · ${state.boxes.length} 盒` + (state.selected ? ` · node:${state.selected}` : '');
   resetView();   // 显式归一：不依赖之前任何一次 draw 留下的 zoom / offset
-  setInterval(poll, 1000);
+  setFollow(state.follow);   // 同步按钮的按下态（地址带了 frame= 时是停住的）
+  // 500ms：宿主拍帧上限是 4 fps，再快也拿不到新图；而 1s 会让"跟着应用动"
+  // 明显滞后 —— 用户点一下按钮，画面要等一秒才换，就像没接上。
+  setInterval(poll, 500);
   pollShot();
+}
+
+/**
+ * 跟着最新画面走 / 停在当前帧。
+ *
+ * ★ 用户一点应用窗口、画面就跟着换，这是"web 看着真应用"的核心体感；而用户
+ *   点了发现里的 `frame:N` 想研究某一帧时，被后台轮询拽走同样致命。两种意图
+ *   必须由用户显式切换，不能靠"帧号相不相等"去猜。
+ */
+function setFollow(on) {
+  state.follow = !!on;
+  const btn = document.getElementById('follow');
+  if (btn) btn.classList.toggle('on', state.follow);
+  // 恢复跟随时立刻回到"最新"（服务端缺省帧），不用快照 meta 里那个滞后的帧号。
+  if (state.follow) {
+    loadFrame(0, true);
+  }
 }
 
 async function loadScript() {
@@ -250,6 +281,8 @@ function jump(address) {
   const n = /node:(\d+)/.exec(address || '');
   if (n) select(Number(n[1]));
   else if (f) loadFrame(Number(f[1]));
+  // 跳到历史帧就不再跟着最新跑 —— 否则一秒后画面自己跳走，用户以为链接坏了。
+  if (f) setFollow(false);
 }
 
 // 搜索：结果一律是地址，点一条就落到那个节点上（与发现列表同一条路 `jump()`）。
@@ -293,8 +326,12 @@ async function search(text) {
 }
 
 async function loadFrame(frame, keepSelected) {
-  const target = frame || (state.brief && state.brief.worst) || 0;
-  const boxes = await get(`/api/boxes?frame=${target}`);
+  // `0` = 服务端缺省（几何窗口最新）。
+  //
+  // ★ 这里**不能**退化成 `brief.worst`：worst 是"最值得看的一帧"，是第一屏的
+  //   入口，不是"现在"。拿它当跟随目标，画面一变就得到"新图配旧框"——而错位
+  //   看起来像布局错，用户只会说"你的线框叠在一起了"。
+  const boxes = await get(frame > 0 ? `/api/boxes?frame=${frame}` : '/api/boxes');
   state.frame = boxes.frame;
   state.lastFrame = boxes.frame;
   state.boxes = boxes.rows || [];
@@ -324,6 +361,12 @@ async function loadFrame(frame, keepSelected) {
   state.hintBase = boxes.stale
     ? `几何取实际生效帧 #${boxes.effective}（目标 #${boxes.frame} 未重新采样）`
     : `帧 #${boxes.frame} · ${state.boxes.length} 个盒`;
+
+  // 标题栏跟着走：用户切到别的标签页时也能看出"页面还在跟"还是"停住了"。
+  // 只在 boot 设一次的话，标签页会永远停在打开时那一个帧号。
+  document.title = `drift · 帧 #${state.frame} · ${state.boxes.length} 盒`
+    + (state.follow ? '' : ' · 已停住')
+    + (state.selected ? ` · node:${state.selected}` : '');
 
   scheduleDraw();
   renderNode(state.selected || null);
@@ -569,11 +612,14 @@ function restoreHint() {
   const info = document.getElementById('shotinfo');
   if (!state.shotUrl) {
     info.textContent = '';
-  } else if (state.shotFrame === state.frame) {
-    info.textContent = `底图 #${state.shotFrame}`;
+  } else if (state.follow) {
+    // 跟随态：图与几何都是"最新"，不存在错位。显示快照序号 —— 帧号是主循环的
+    // 计数器（空闲的桥让它一直涨），拿它当"画面版本"读者只会觉得数字乱跳。
+    info.textContent = `跟随中 · 图 #${state.shotSerial ?? '?'}`;
   } else {
-    // 图和几何不是一帧：不藏起来。藏了就会有人拿着错位图去论证布局。
-    info.textContent = `底图 #${state.shotFrame} · 几何 #${state.frame}`;
+    // 停住了：图仍是最新画面，几何是用户点的那一帧。**不藏起来** ——
+    // 藏了就会有人拿着错位图去论证布局。
+    info.textContent = `已停住 · 图 #${state.shotSerial ?? '?'} · 几何 #${state.frame}`;
   }
 }
 
@@ -770,10 +816,11 @@ async function poll() {
     chip.textContent = st.state + (st.reason ? ` (${st.reason})` : '');
     chip.hidden = false;
     document.getElementById('ctl').hidden = st.driven !== true;
-    if (st.lastFrame !== state.lastFrame) {
-      state.lastFrame = st.lastFrame;
-      if (state.frame) await loadFrame(state.frame, true);
-    }
+
+    // ★ 这里**不**按 `lastFrame` 刷几何。帧号是"主循环跑过几轮"，空闲的应用
+    //   被调试桥叫醒也会涨（~80fps）—— 按它刷新等于每 500ms 全量重取一遍几何，
+    //   而真的换了画面时 `pollShot()` 自然会带着新帧号来。几何跟着**画面**走。
+    state.lastFrame = st.lastFrame;
   } catch (e) {
     document.getElementById('state').textContent = 'offline';
   }
@@ -784,8 +831,8 @@ async function poll() {
 /**
  * 底图的一次轮询：先报心跳（宿主据此决定要不要拍），再问最新那张是哪一帧。
  *
- * ★ 只在帧号变了才换 `src`：静止的应用每秒都换一次 URL 会让浏览器反复解码同一张
- *   图，看起来像"画面在闪"。
+ * ★ 只在**快照序号**变了才换 `src`：静止的应用每秒都换一次 URL 会让浏览器反复
+ *   解码同一张图，看起来像"画面在闪"。序号来自宿主"真的重画了一帧"，不是帧号。
  */
 async function pollShot() {
   let ping;
@@ -798,33 +845,37 @@ async function pollShot() {
   if (!ping || !ping.channel || !ping.shot) {
     if (state.shotUrl) {
       state.shotUrl = '';
+      state.shotSerial = null;
       state.shotFrame = null;
       scheduleDraw();
     }
     return;
   }
 
-  const frame = Number(ping.shot);
-  if (frame === state.shotFrame && state.shotUrl) return;
+  const serial = Number(ping.shot);
+  if (serial === state.shotSerial && state.shotUrl) return;
 
-  // 是否"跟着最新帧走"：只有当前几何就在底图那一帧上才跟。用户选了历史帧
-  // （或点了发现里的 `frame:N`）就停在那一帧，不能被后台的轮询拽走。
-  const following = state.shotFrame === null || state.frame === state.shotFrame;
+  const frame = Number(ping.frame || 0);
 
   const img = document.getElementById('shot');
   img.onload = () => scheduleDraw();
   img.onerror = () => {
     state.shotUrl = '';
+    state.shotSerial = null;
     state.shotFrame = null;
     scheduleDraw();
   };
+  state.shotSerial = serial;
   state.shotFrame = frame;
-  state.shotUrl = `/api/shot?frame=${frame}&t=${Date.now()}`;
+  state.shotUrl = `/api/shot?serial=${serial}&t=${Date.now()}`;
   img.src = state.shotUrl;
   scheduleDraw();
 
-  if (following && state.frame !== frame) {
-    await loadFrame(frame, true);
+  // 跟随：几何也跟到"最新"。★ 不按快照 meta 里的 frame 取 —— 那张图是在
+  // `endFrame()` 之前拍的，它记的几何号必然落后一帧，按它取就是"新图配旧框"。
+  // 几何的"最新"由服务端缺省保证（几何窗口的最新一帧），与画面同源。
+  if (state.follow) {
+    await loadFrame(0, true);
   }
 }
 

@@ -11,8 +11,8 @@ declare(strict_types=1);
  * 而对不上时读者不知道信谁。
  *
  * 用法：
- *   php tools/debug-web.php --page=table --frames=1
- *   php tools/debug-web.php --attach                 # 接 `drift debug serve` 起的宿主
+ *   php tools/debug-web.php                          # 接当前目录正在跑的那个应用
+ *   php tools/debug-web.php --page=table --frames=1  # 不接应用，自己跑示例台
  *   php tools/debug-web.php --from=<证据包>           # 离线读包
  *   php tools/debug-web.php --page=table --slow=5 --port=7000
  *
@@ -68,15 +68,36 @@ $selection = new RuleSelection(
 );
 $label = $args->label();
 
+// 真实应用的常态是「应用先跑着，再开 web 看」，不是先想起 --page。所以没点名
+// 任何来源时，当前目录正好有一个活会话就接它；`--page` 降级成"我要跑示例台"。
+// 有多个不猜 —— 挑错了会让人对着另一个应用的结构找问题。
+if ($from === null && !$attach && $label === null && $sessionId === null) {
+    $running = Discovery::inDirectory((string) \getcwd())->live();
+    if (\count($running) === 1) {
+        $attach = true;
+    } elseif ($running !== []) {
+        \fwrite(\STDERR, \sprintf(
+            "当前目录有 %d 个活会话，不猜：用 --session=<id> 点名\n%s\n",
+            \count($running),
+            \implode("\n", \array_map(
+                static fn(array $e): string => \sprintf('  %s  %s  pid=%d', $e['id'], $e['target'], $e['pid']),
+                $running,
+            )),
+        ));
+        exit(2);
+    }
+}
+
 $source = null;
 $server = null;
 try {
     $drive = null;
     if ($from === null && !$attach) {
         if ($label === null) {
-            \fwrite(\STDERR, "用法：debug-web [<AppClass|路由id>] [--page=<路由id>] [--frames=N] [--port=N]\n"
-                . "      debug-web --attach [--session=<id>]\n"
-                . "      debug-web --from=<证据包>\n");
+            \fwrite(\STDERR, "当前目录没有正在跑的应用。\n"
+                . "  先起一个：drift dev --entry=<入口文件>\n"
+                . "  或自己跑示例台：debug-web --page=<路由id> [--frames=N]\n"
+                . "  或读一份证据包：debug-web --from=<包>\n");
             exit(2);
         }
 
