@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
+use Drift\Dev\Debug\View\Rules\RuleRegistry;
 use Drift\Dev\Debug\View\Rules\Severity;
 
 /**
@@ -66,13 +67,67 @@ final readonly class Finding
          * 规则类通过 `Rule::finding()` 自动盖章，不手写。
          */
         public Severity $severity = Severity::Info,
+        /**
+         * 主度量值，用来**比较两份证据**（基线回归）。
+         *
+         * 为什么不能从 `metric` 反解：`metric` 是给人读的（`42.05ms` / `24 次` /
+         * `3/10`），格式随规则变，解析它等于给每条规则再写一个正则 —— 而正则
+         * 与格式一旦漂开，比较结果就是"这一条读不出数值"而不是"这一条没变差"。
+         * 无法数值化的发现（兜底结论）给 `null`，基线对比会把它标成不可比。
+         */
+        public ?float $value = null,
+        /**
+         * 记录这条发现时的规则版本。`null` = 按当前 `RULE_VERSIONS` 查。
+         *
+         * 基线文件里必须存下当时的版本：拿今天的版本表去解释一份上周的基线，
+         * 结论永远是"规则没换版"，而那正是要发现的东西。
+         */
+        public ?int $recordedVersion = null,
     ) {
     }
 
     /** 这条规则的版本；未登记的规则给 `0`（判据会咬，等于逼人登记）。 */
     public function version(): int
     {
-        return self::RULE_VERSIONS[$this->rule] ?? 0;
+        return $this->recordedVersion ?? self::RULE_VERSIONS[$this->rule] ?? 0;
+    }
+
+    /**
+     * 兜底结论：`clean` / `inconclusive` / `suppressed`。
+     *
+     * 它们不是度量，是**结论**（`value` 恒为 `null`）。基线对比要把它们排除：
+     * 一份干净的应用基线因此是空数组，而"空"与"没测"必须能分开。
+     */
+    public function isFallback(): bool
+    {
+        return \in_array($this->rule, RuleRegistry::FALLBACK_IDS, true);
+    }
+
+    /**
+     * 造一条兜底结论。
+     *
+     * 走工厂而不是字面量：兜底编号只有 `RuleRegistry::FALLBACK_IDS` 一份，
+     * `Brief` 里写三个字符串、`isFallback()` 里再写三个，改一处忘一处就是
+     * "这条兜底被当成度量进了基线" —— 而它在报告里看起来完全正常。
+     */
+    public static function fallback(
+        string $rule,
+        string $title,
+        string $address,
+        string $metric,
+        string $threshold,
+        string $recheck,
+        Severity $severity = Severity::Info,
+    ): self {
+        if (!\in_array($rule, RuleRegistry::FALLBACK_IDS, true)) {
+            throw new \LogicException(\sprintf(
+                '%s 不是兜底结论（可用：%s）',
+                $rule,
+                \implode(' / ', RuleRegistry::FALLBACK_IDS),
+            ));
+        }
+
+        return new self($rule, $title, $address, $metric, $threshold, $recheck, $severity);
     }
 
     /**
@@ -99,7 +154,7 @@ final readonly class Finding
         return Fit::spread('· ' . $this->title, $this->address, $width);
     }
 
-    /** @return array<string, string|int> */
+    /** @return array<string, string|int|float|null> */
     public function toArray(): array
     {
         return [
@@ -109,6 +164,7 @@ final readonly class Finding
             'title' => $this->title,
             'address' => $this->address,
             'metric' => $this->metric,
+            'value' => $this->value,
             'threshold' => $this->threshold,
             'recheck' => $this->recheck,
         ];

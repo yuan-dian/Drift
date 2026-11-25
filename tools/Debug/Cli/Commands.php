@@ -34,6 +34,10 @@ final class Commands
                 Opt::str('session', null, '点名一个常驻会话'),
                 Opt::flag('attach', '接一个已经在跑的会话'),
                 Opt::flag('rules', '列出全部规则（编号 / 严重度 / 说明）后退出'),
+                Opt::str('baseline', null, '读基线文件，与当前发现对比'),
+                Opt::str('save-baseline', null, '把当前发现写成基线文件（与 --baseline 互斥）'),
+                Opt::flag('assert', '有确定性回归时以状态码 3 退出（需 --baseline）'),
+                Opt::float('tolerance', 5.0, 0.0, null, '基线容差（百分比）'),
                 $slow(), $fanout(), $repeat(), ...$rules(),
             ],
             'network' => [

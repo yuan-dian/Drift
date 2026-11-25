@@ -60,6 +60,7 @@ final class UnvirtualizedGroupRule extends Rule
             (string) $count,
             '≥ ' . $t->groupSame,
             \sprintf('cascade(%d).roots[].count 沿 children 往下找', $frameId),
+            (float) $count,
         )];
     }
 

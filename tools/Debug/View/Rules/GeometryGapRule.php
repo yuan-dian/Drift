@@ -59,6 +59,7 @@ final class GeometryGapRule extends Rule
             '0 个盒',
             '至少 1 个盒',
             'boxes(frame).window 看窗口范围；换一帧或加大几何窗口',
+            0.0,
         )];
     }
 }

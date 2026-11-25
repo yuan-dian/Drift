@@ -73,6 +73,7 @@ final class LayerMissRule extends Rule
                 \sprintf('%d 次', $misses),
                 \sprintf('≥ %d', $t->layerMissCount),
                 'repaints(window).nodes[].misses ÷ byReason',
+                (float) $misses,
             );
             if (\count($out) >= 2) {
                 break;

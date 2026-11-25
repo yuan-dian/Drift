@@ -52,6 +52,18 @@ abstract class Rule
     }
 
     /**
+     * 这条规则的度量在同一份脚本重跑时是否可复现。
+     *
+     * 耗时随调度抖动（本机实测 ±7%），拿它当断言等于每天制造一次假红；而假红三次
+     * 之后没人再读报告。默认 `true`：新增规则忘了声明，应该退化成"可比"，
+     * 而不是"悄悄不比" —— 后者会让一条本该进 CI 的判据静默失效。
+     */
+    public function deterministic(): bool
+    {
+        return true;
+    }
+
+    /**
      * 从事实里算出发现。**不裁剪、不排序跨规则**：返回顺序即呈现顺序。
      *
      * @param array<string, mixed> $facts
@@ -73,7 +85,8 @@ abstract class Rule
         string $metric,
         string $threshold,
         string $recheck,
+        ?float $value = null,
     ): Finding {
-        return new Finding($rule, $title, $address, $metric, $threshold, $recheck, $this->severity());
+        return new Finding($rule, $title, $address, $metric, $threshold, $recheck, $this->severity(), $value);
     }
 }

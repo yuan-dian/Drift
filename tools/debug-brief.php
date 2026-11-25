@@ -18,6 +18,8 @@ declare(strict_types=1);
  *   php tools/debug-brief.php --page=table --frames=1 --click=400,300 --json
  *   php tools/debug-brief.php --page=async-table --rows=6 --frames=2 --resolve --hold=3
  *   php tools/debug-brief.php --page=table --frames=1 --remote
+ *   php tools/debug-brief.php --page=table --save-baseline=baseline.json
+ *   php tools/debug-brief.php --page=table --baseline=baseline.json --assert
  *
  * 参数：
  *   --page=<路由id>   页面（与面板同义）
@@ -42,6 +44,10 @@ declare(strict_types=1);
  *   --without=<编号>  跳过这些规则（可重复，或逗号分隔）
  *   --min-severity=<级别>   info|warning|error；低于它的发现不呈现（判据照跑）
  *   --rules           列出全部规则（编号 / 严重度 / 说明）后退出
+ *   --save-baseline=<文件>  把当前发现写成基线后退出（与 --baseline 互斥）
+ *   --baseline=<文件>       与基线对比，多出一段"变差 / 新增 / 持平"的账
+ *   --tolerance=<百分比>    基线容差（默认 5）
+ *   --assert          有确定性回归时以状态码 3 退出（需 --baseline）
  *   --json            输出结构化结果（发现 + 裁剪账 + 指纹；不含排版行）
  *
  * @internal 未进 VerifyPlan：规则阈值还在定，进 CI 会变成"改阈值就红一片"
@@ -52,6 +58,8 @@ require __DIR__ . '/autoload.php';
 use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Source;
+use Drift\Dev\Debug\View\Baseline;
+use Drift\Dev\Debug\View\BaselineText;
 use Drift\Dev\Debug\View\Brief;
 use Drift\Dev\Debug\View\BriefText;
 use Drift\Dev\Debug\View\Facts;
@@ -85,6 +93,21 @@ $selection = new RuleSelection(
     min: $min,
 );
 
+$baselinePath = $args->str('baseline');
+$savePath = $args->str('save-baseline');
+$assert = $args->bool('assert');
+$tolerance = $args->float('tolerance');
+
+if ($baselinePath !== null && $savePath !== null) {
+    \fwrite(\STDERR, "--baseline 与 --save-baseline 互斥：一个读、一个写\n");
+    exit(2);
+}
+if ($assert && $baselinePath === null) {
+    // 断言是"以某个期望为真"，没给期望就无从断言。静默当成"总是通过"是最坏的一种。
+    \fwrite(\STDERR, "--assert 需要 --baseline=<文件>：没有期望值就无从断言\n");
+    exit(2);
+}
+
 $from = $args->str('from');
 $out = $args->str('out');
 $attach = $args->bool('attach');
@@ -101,6 +124,7 @@ $thresholds = Thresholds::default()
 $label = $args->label();
 
 $source = null;
+$code = 0;
 try {
     $drive = null;
     if ($from === null && !$attach) {
@@ -132,19 +156,78 @@ try {
     $source->export();
 
     $projection = Brief::project($facts, $thresholds, $selection);
-    $brief = BriefText::render($facts, $projection, $budget, $textWidth);
+    $captured = Baseline::capture(
+        $label,
+        (string) ($facts['digest']['digest'] ?? ''),
+        $projection['findings'],
+        $projection['thresholds'],
+        $projection['selection'],
+    );
 
-    if ($json) {
-        // 与 `debug web` 的 `/api/brief` 是**同一份**：投影 + 裁剪，不含排版行。
-        // 把它做成同一个函数（见 Web::brief()）而不是两处拼装，是 B4 §9 判据 1 的前提。
-        \fwrite(\STDOUT, (string) \json_encode(
-            Web::brief($label, $facts, $projection) + ['omitted' => $brief['omitted']],
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach ($brief['lines'] as $line) {
-            \fwrite(\STDOUT, $line . "\n");
+    $brief = null;
+    $comparison = null;
+
+    if ($savePath !== null) {
+        $file = Baseline::snapshot($captured);
+        $encoded = \json_encode($file, \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT);
+        if ($encoded === false || \file_put_contents($savePath, $encoded . "\n") === false) {
+            throw new \RuntimeException("写不了基线文件：{$savePath}");
         }
+        \fwrite(\STDOUT, $json
+            ? (string) \json_encode(
+                ['saved' => $savePath, 'findings' => \count($file['findings']), 'excluded' => $file['excluded']],
+                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES,
+            ) . "\n"
+            : \sprintf(
+                "基线已写入 %s：%d 条发现%s\n",
+                $savePath,
+                \count($file['findings']),
+                $file['excluded'] > 0 ? \sprintf('（%d 条兜底结论未收）', $file['excluded']) : '',
+            ));
+    } else {
+        if ($baselinePath !== null) {
+            $raw = @\file_get_contents($baselinePath);
+            if ($raw === false) {
+                // 不存在不能当空基线：空基线会把"每条都新增"报成结论，读者会以为
+                // 是应用真的变差了。文件缺失就是文件缺失。
+                throw new \RuntimeException("读不到基线：{$baselinePath}");
+            }
+            $decoded = \json_decode($raw, true);
+            if (!\is_array($decoded)) {
+                throw new \RuntimeException("基线不是合法 JSON：{$baselinePath}");
+            }
+            $comparison = Baseline::compare(Baseline::restore($decoded), $captured, $tolerance);
+        }
+
+        $brief = BriefText::render($facts, $projection, $budget, $textWidth);
+
+        if ($json) {
+            // 与 `debug web` 的 `/api/brief` 是**同一份**：投影 + 裁剪，不含排版行。
+            // 把它做成同一个函数（见 Web::brief()）而不是两处拼装，是 B4 §9 判据 1 的前提。
+            $payload = Web::brief($label, $facts, $projection) + ['omitted' => $brief['omitted']];
+            if ($comparison !== null) {
+                $payload['baseline'] = $comparison;
+            }
+            \fwrite(\STDOUT, (string) \json_encode(
+                $payload,
+                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
+            ) . "\n");
+        } else {
+            foreach ($brief['lines'] as $line) {
+                \fwrite(\STDOUT, $line . "\n");
+            }
+            if ($comparison !== null) {
+                \fwrite(\STDOUT, "\n");
+                foreach (BaselineText::render($comparison, $baselinePath, $textWidth)['lines'] as $line) {
+                    \fwrite(\STDOUT, $line . "\n");
+                }
+            }
+        }
+    }
+
+    // 只数确定性回归：耗时抖动不该让 CI 红（见 DESIGN-EVIDENCE-B10 §2 方案 C）。
+    if ($assert && ($comparison['regressions'] ?? 0) > 0) {
+        $code = 3;
     }
 } catch (\Throwable $e) {
     \fwrite(\STDERR, $e->getMessage() . "\n");
@@ -152,3 +235,5 @@ try {
 } finally {
     $source?->close();
 }
+
+exit($code);

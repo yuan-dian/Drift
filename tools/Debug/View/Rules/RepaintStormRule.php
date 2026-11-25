@@ -80,6 +80,7 @@ final class RepaintStormRule extends Rule
                 \sprintf('%d/%d', $painted, $frames),
                 \sprintf('≥ %d', $need),
                 'repaints(window).nodes[].frames ÷ repaints.frames',
+                (float) $painted,
             );
             if (\count($out) >= 2) {
                 break;

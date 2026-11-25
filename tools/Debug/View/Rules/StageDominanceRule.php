@@ -44,6 +44,12 @@ final class StageDominanceRule extends Rule
         return '最贵帧里某一段占了大半耗时（≥ 60% 且 ≥ 2ms）';
     }
 
+    /** 段耗时同样是墙钟，与 `slow-frame` 一样不可复现。 */
+    public function deterministic(): bool
+    {
+        return false;
+    }
+
     public function evaluate(array $facts, Thresholds $t): array
     {
         $explain = Facts::mapOf($facts, 'explain');
@@ -77,6 +83,7 @@ final class StageDominanceRule extends Rule
             \sprintf('%.2fms', $ms),
             \sprintf('占比 ≥ %.0f%% 且 ≥ %.2fms', self::SHARE * 100, self::MIN_MS),
             \sprintf('explain(%d).stageMs.%s', $frameId, $name),
+            $ms,
         )];
     }
 }

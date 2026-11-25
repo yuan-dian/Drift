@@ -88,6 +88,23 @@ final class RuleRegistry
     }
 
     /**
+     * 发现编号 => 度量是否可复现。基线对比据此决定哪些能进断言。
+     *
+     * @return array<string, bool>
+     */
+    public static function determinism(): array
+    {
+        $map = [];
+        foreach (self::all() as $rule) {
+            foreach ($rule->ids() as $id) {
+                $map[$id] = $rule->deterministic();
+            }
+        }
+
+        return $map;
+    }
+
+    /**
      * 按选择集挑出要跑的规则。未知编号在这里就报错。
      *
      * 报错而不是静默忽略：`--rule=slowframe` 少一个连字符，静默忽略的表现是

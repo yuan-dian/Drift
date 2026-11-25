@@ -110,7 +110,10 @@ final class ConstraintRewriteRule extends Rule
                     $candidate['delta'],
                     $candidate['cause'],
                 ),
-                Finding::at($frame, (int) $candidate['node']),
+                // 地址带轴：同一节点在同一帧可能**同时**被放宽（宽）与被收紧（高），
+                // 两条发现共用 `frame:N node:M` 就会撞成一条。轴是读者去查的下一步
+                // （`constraints()` 的 chain 里就是按轴分的），所以它属于地址。
+                Finding::at($frame, (int) $candidate['node']) . ' ' . $candidate['axis'],
                 \sprintf(
                     '%s %.0f → %.0f（%+.0fpx）',
                     $axisName,
@@ -124,6 +127,7 @@ final class ConstraintRewriteRule extends Rule
                     (int) $candidate['node'], $frame, $candidate['from'], $candidate['to'],
                     (int) $candidate['node'], $frame,
                 ),
+                \abs($candidate['delta']),
             );
             if (\count($out) >= 4) {
                 break;

@@ -10,7 +10,7 @@
 
 1. **生产可用线**：录制开销已有量具与数字，但 AOT 常驻黑匣子、崩溃取证与多窗口隔离仍未验。
 2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），但 Web 仍缺树 / 时间轴 / 搜索。
-3. **生态线**：发现规则已注册表化并带严重度与开关，但无基线回归、无插件式外部规则；协议与文档存在多处漂移。
+3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
 所以下一阶段的中心不是“再加几个视图”，而是**先把采集预算、生命周期与生产可用补齐，再让视图消费同一份证据**。任何新域如果没有预算、没有判据、没有独立消费者，就不进入主线。
 
@@ -26,7 +26,7 @@
 | 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
 | 属性（Widget / State） | 切片：dev 反射、按需快照、脱敏 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev |
 | 网络 | 切片：骨架 + 发起者 + 落地帧 + 报文 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
-| 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖 | Lighthouse audits、Flutter perf | 缺基线回归、规则权重 |
+| 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 | Chrome/Flutter 多标签 | 缺树、时间轴、网络、搜索 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
@@ -151,7 +151,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 - `Rule` 抽象类（原计划的 `FindingRule` 接口）：`id()` / `ids()` / `version()` / `severity()` / `summary()` / `evaluate(Facts, Thresholds): list<Finding>`；`RuleRegistry` 唯一声明，顺序即输出顺序。
 - `Finding` 增加 `severity`（info / warning / error）；`--rule=` 启用、`--without=` 关闭、`--min-severity=` 过滤呈现；未知规则名报错并列出可用编号。
-- `--baseline=<evidence>`：按同一组规则比较两份证据的发现与关键度量；回归进 CI 退出码，而不是只打印。
+- `--baseline=<文件>`：按同一组规则比较两份发现的**度量**；只有可复现的度量进 CI 退出码，耗时类照列不计。
 - `Thresholds` 的全部字段都要有 CLI 入口；当前只有 slow / fanout / repeat 三项。
 
 **已落地**（规则注册表 + 严重度 + 开关）：
@@ -163,9 +163,21 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
   2. **`--rule` / `--without` 而非 `--rules` / `--disable`**：`--rules` 被"列目录"占用了；`--rule` / `--without` 与 `find --include/--exclude` 的习惯一致，也避免"带 s 的开关做选择"这种容易记反的形状。
   3. **过滤发生在判据之后，并新增 `suppressed` 兜底**：`--min-severity` 只少看几行，判据照跑。发现被过滤光时报告说"N 条被过滤掉了"而不是"没问题" —— 这两者在实现上都表现为"发现列表为空"，结论却相反，是本域最容易写错的一条。
 - `Thresholds` 的 CLI 入口仍只有三项，这是**有意不做**：那三项是表头显示、直接影响"这算不算慢"的判断；其余七项改变的是规则内部的敏感度，用 `--rule=` 把范围缩小到一条规则之后，读者要的是"这条规则说了什么"，不是"把它的阈值调到刚好不报"。`with()` 在库层已支持全部十项，证据包也带着它们。
-- **未做**：`--baseline` 基线回归（依赖规则 id 稳定，现在有了）、七项阈值的 CLI flag、插件式加载外部规则（需要先定 `Rule` 的跨包契约）。
+- **未做**：七项阈值的 CLI flag（有意不做，见上）、插件式加载外部规则（需要先定 `Rule` 的跨包契约）。
 
-**判据**（`tests/Unit/Debug/BriefTest.php`）：注册表声明的编号集合 == 真实产出的集合；每条发现的 severity == 所属规则的 severity；`--rule=` 只跑一条且兜底自报"只跑了 1/9"；`--without` 关掉一个变体不连带关掉兄弟；`--min-severity` 只去掉低级别；过滤光了报 `suppressed` 而不是 `clean`；未知编号抛错并列出可用编号；`--rules` 目录与注册表同源。
+**已落地**（基线回归，`Baseline` + `BaselineText`）：
+
+- 基线是**精简清单**不是证据：`{format, label, digest, thresholds, selection, excluded, findings:[{rule,version,severity,address,title,metric,value}]}`。可进版本控制、可手改、可按行 review；`format` 不认识就报错，不猜。
+- 读写分开：`--save-baseline=<文件>` 写、`--baseline=<文件>` 读、`--assert` 有确定性回归退 3、`--tolerance=<百分比>` 默认 5。不做"文件不存在就写" —— 一次 CI 跑的副作用改掉基线，报告还会说通过。
+- **确定性分级**是核心：`Rule::deterministic()` 默认 `true`，`slow-frame` / `stage-dominance` 覆盖为 `false`。两类都算状态、都列行，只有确定性规则计入 `regressions`。本机实测帧耗时抖动 ±7%，拿它当断言等于每天制造一次假红。
+- 兜底结论（`clean` / `inconclusive` / `suppressed`）不进基线：它们的 `value` 为 `null`，是结论不是度量；`--save-baseline` 过滤并记 `excluded`，解释"干净应用的基线为什么是空数组"。
+- 口径变化（阈值 / 规则选择 / 指纹）只报不平、不改行状态：那三项变了之后 new/fixed 本来就该出现，再叠加"整体不可比"会让读者两个信号都读不懂。
+- 同 `(规则, 地址)` 重复要计数带出（`duplicates`），不静默保留第一条 —— 它是"地址不够唯一"的监视器。
+- Web 不接基线：观察台看"现在什么样"，基线是 CI 的事；`--json` 带 `baseline` 顶层键给机器消费者。
+
+落地时抓到的两件事：① `ConstraintRewriteRule` 的宽 / 高两条发现原本共用 `frame:N node:M` 地址，基线配对会把它们撞成一条 ⇒ 地址改为带轴（`frame:1 node:5 w`）；② CLI 判据原本断言"耗时类必然出现偏离"，而实测只抖了 2.6%（未超容差）—— 判据依赖外部抖动就是偶发假红，改为断言契约（`~` 行存在 + 自报"不计断言"），并补齐呈现层"耗时类一律列行、一律自报"。
+
+**判据**（`tests/Unit/Debug/BriefTest.php` + `BaselineTest.php` + `tests/Feature/Debug/BaselineCliTest.php`）：注册表声明的编号集合 == 真实产出的集合；每条发现的 severity == 所属规则的 severity；`--rule=` 只跑一条且兜底自报"只跑了 1/9"；`--without` 关掉一个变体不连带关掉兄弟；`--min-severity` 只去掉低级别；过滤光了报 `suppressed` 而不是 `clean`；未知编号抛错并列出可用编号；`--rules` 目录与注册表同源；基线七种状态各一条、容差边界（等于不报、略超才报）、0 → 正数算变差、耗时类不进 `regressions`、重复键计数、坏文件五种各自报错、`--assert` 无基线退出 2、有回归退出 3、无回归退出 0。
 
 ### 7. 后续域：内存、异步、无障碍
 
@@ -196,7 +208,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
 | **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |
 | **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
-| **P5** | 基线回归 | `--baseline` 比较两份证据；CI 退出码；回归能红在度量变差 | P5 | M |
+| **P5** | 基线回归 | 已落地：`--baseline` / `--save-baseline` / `--assert` / `--tolerance`；确定性分级（耗时类不计断言）；坏文件五种各自报错；有回归退 3 | P5 | M |
 | **P6** | 内存域 | 节点 / State / 订阅 / 图片缓存计数；泄漏趋势；独立窗口与查询 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |

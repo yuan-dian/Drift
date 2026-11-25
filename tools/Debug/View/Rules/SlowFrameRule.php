@@ -33,6 +33,12 @@ final class SlowFrameRule extends Rule
         return '单帧耗时超过预算（默认 16.7ms）';
     }
 
+    /** 帧耗时随调度抖动 ±7%，跨进程不可复现。 */
+    public function deterministic(): bool
+    {
+        return false;
+    }
+
     public function evaluate(array $facts, Thresholds $t): array
     {
         $slow = [];
@@ -56,6 +62,7 @@ final class SlowFrameRule extends Rule
                 \sprintf('%.2fms', $cost),
                 \sprintf('%.1fms', $t->slowMs),
                 \sprintf('explain(%d).cost 应给出同一数值', $id),
+                $cost,
             );
         }
 

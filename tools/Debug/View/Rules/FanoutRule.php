@@ -72,6 +72,7 @@ final class FanoutRule extends Rule
             (string) $rebuilt,
             '≥ ' . $t->fanoutNodes . ' 且单支 ≥ ' . $t->fanoutShare . '%',
             \sprintf('cascade(%d).roots[0] 与 rebuilt', $frameId),
+            (float) $rebuilt,
         )];
     }
 }

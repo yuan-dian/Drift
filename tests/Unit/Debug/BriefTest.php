@@ -425,7 +425,8 @@ final class BriefTest extends TestCase
         }
 
         self::assertNotNull($found, '收紧 520px 应该被报出来');
-        self::assertSame('frame:1 node:11', $found->address);
+        // 地址带轴：同一节点同一帧可能两条改写同时成立，不带轴就会撞成一条。
+        self::assertSame('frame:1 node:11 w', $found->address);
         self::assertStringContainsString('Column → TableBox', $found->title);
         self::assertStringContainsString('-520px', $found->title);
         self::assertStringContainsString('240', $found->metric);
@@ -461,6 +462,41 @@ final class BriefTest extends TestCase
 
         self::assertStringContainsString('高被收紧到 120', $titles, $titles);
         self::assertStringNotContainsString('宽被收紧', $titles, $titles);
+    }
+
+    /**
+     * 同一节点同一帧宽高都改写：两条发现必须是两个地址。
+     *
+     * 撞车的后果不是"少一行"：任何按地址索引的消费者（面板跳转、Web 节点卡、
+     * 基线配对）都会把它们当成同一条 —— 一条被覆盖，另一条静默消失。
+     */
+    public function testWidthAndHeightRewritesOnOneNodeGetDistinctAddresses(): void
+    {
+        $facts = self::facts([
+            'geometry' => self::geometry([
+                self::row(2, -1, 'Column', [
+                    'inner' => ['minW' => 800.0, 'maxW' => 800.0, 'minH' => 600.0, 'maxH' => 600.0],
+                ]),
+                self::row(11, 2, 'Box', [
+                    'applied' => ['minW' => 240.0, 'maxW' => 240.0, 'minH' => 120.0, 'maxH' => 120.0],
+                    'size' => ['w' => 240.0, 'h' => 120.0],
+                ]),
+            ]),
+        ]);
+
+        $addresses = [];
+        foreach (self::findings($facts) as $one) {
+            if ($one->rule === 'constraint-tightened') {
+                $addresses[] = $one->address;
+            }
+        }
+
+        self::assertSame(['frame:1 node:11 w', 'frame:1 node:11 h'], $addresses);
+        self::assertSame(
+            \array_unique($addresses),
+            $addresses,
+            '同一节点的宽 / 高发现共用地址，按地址索引的消费者会合并它们',
+        );
     }
 
     /** 放宽与收紧是两句不同的话：把 320 变成 536 不能报成"收紧"。 */

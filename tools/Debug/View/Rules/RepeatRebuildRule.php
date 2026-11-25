@@ -61,6 +61,7 @@ final class RepeatRebuildRule extends Rule
                 \sprintf('%d/%d', $rebuilds, $count),
                 \sprintf('≥ %d', $need),
                 'nodes(window).rebuilds ÷ window.count',
+                (float) $rebuilds,
             );
             if (\count($out) >= 2) {
                 break;

@@ -141,7 +141,7 @@ final class Brief
         $address = \sprintf('window:%d-%d', (int) ($window['from'] ?? 0), (int) ($window['to'] ?? 0));
 
         if ($evaluated > 0) {
-            return new Finding(
+            return Finding::fallback(
                 'suppressed',
                 \sprintf('%d 条发现被过滤掉了，不是没有问题', $evaluated),
                 $address,
@@ -159,7 +159,7 @@ final class Brief
         // "没触发规则"与"没问题"是两句话。树被截断时只能说前者 —— 后者是
         // 把"我没看到"当成"不存在"，而这恰好是这类报告最容易犯、最难发现的错。
         if ($cov['complete']) {
-            return new Finding(
+            return Finding::fallback(
                 'clean',
                 \sprintf('窗口内没有触发任何规则（%s）', $scope),
                 $address,
@@ -169,7 +169,7 @@ final class Brief
             );
         }
 
-        return new Finding(
+        return Finding::fallback(
             'inconclusive',
             \sprintf(
                 '扫过的那部分没有触发规则，但因果树不完整：展开到第 %d 层、%d 处深度截断、%d 支同层分支被折叠（%s）',
