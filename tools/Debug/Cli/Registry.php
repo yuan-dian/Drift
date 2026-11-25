@@ -26,6 +26,7 @@ final class Registry
 
         $rows = [
             ['brief', 'debug-brief.php', '预算内的证据简报：哪里不对、为什么、下一步查哪', true],
+            ['targets', 'debug-targets.php', '把当前目录所有活会话并列成一份视图（不跨窗口 join）', false],
             ['report', 'debug-report.php', '帧因果报告：哪些节点重建了、因为谁', true],
             ['panel', 'debug-panel.php', '同一个会话上反复追问：时间轴 + 因果树 + 原因', true],
             ['network', 'debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）', true],

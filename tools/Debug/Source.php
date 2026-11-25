@@ -21,6 +21,10 @@ use Drift\Debug\Session\SessionQueries;
  * | 证据包 | `--from=<文件>` | 离线复算的只读面 |
  * | 接现有会话 | `--attach` | 别人正在跑的那一次运行 |
  *
+ * `attachOne()` 把第三行单独做成可复用入口（A59）：`resolve()` 与多 target 出口
+ * 都从它走，连接与诊断不写第二份。这不改变"四种来源选一种"——多 target 是
+ * "一个出口连接多个来源"，不是某个来源有了第二种解释。
+ *
  * ## 为什么要把这团东西抽出来
  *
  * `brief` 与 `network` 各有一份 `--from` 分支（互斥检查、`hydrate`、标签取值，约 20
@@ -115,22 +119,8 @@ final class Source
                 );
             }
 
-            $discovery ??= Discovery::inDirectory((string) \getcwd());
-            $entry = self::pick($discovery, $session);
-            $live = new RemoteSession(self::connect($discovery, $entry));
-            $live->attach($entry['token']);
-
-            return new self(
-                $live,
-                $entry['target'] !== '' ? $entry['target'] : 'attached',
-                true,
-                null,
-                // 退出只断开：接别人的会话时走人，不该把人家正在看的那次运行结束掉。
-                static function () use ($live): void {
-                    $live->detach();
-                },
-                $live,
-            );
+            // 互斥在上面判完；找会话与连接收敛到 attachOne，多 target 出口走同一个入口。
+            return self::attachOne($session, $discovery);
         }
 
         if ($drive === null) {
@@ -171,6 +161,37 @@ final class Source
         return new self($live, $drive->target, false, $out, static function () use ($live): void {
             $live->close();
         });
+    }
+
+    /**
+     * 连一个已经在跑的会话。`resolve()` 的互斥检查不在这里 —— 那是"四种来源选
+     * 一种"的纪律，不是连接的纪律。
+     *
+     * 多 target 出口逐个点名调用它（A59）：socket 与诊断只有这一份，出口只拿
+     * 查询面。`$session` 给了就精确匹配；省略时仍由 {@see pick()} 在多个会话
+     * 面前要求点名，不猜。
+     *
+     * @param string|null    $session   登记 id；`null` = 当前目录只有一个会话时可省
+     * @param Discovery|null $discovery 只给测试注入；默认按当前目录
+     */
+    public static function attachOne(?string $session = null, ?Discovery $discovery = null): self
+    {
+        $discovery ??= Discovery::inDirectory((string) \getcwd());
+        $entry = self::pick($discovery, $session);
+        $live = new RemoteSession(self::connect($discovery, $entry));
+        $live->attach($entry['token']);
+
+        return new self(
+            $live,
+            $entry['target'] !== '' ? $entry['target'] : 'attached',
+            true,
+            null,
+            // 退出只断开：接别人的会话时走人，不该把人家正在看的那次运行结束掉。
+            static function () use ($live): void {
+                $live->detach();
+            },
+            $live,
+        );
     }
 
     public function queries(): SessionQueries

@@ -53,6 +53,8 @@
 
 `debug pick-live` 是活窗口拾取：布防之后到真窗口里点一下，回执给节点号 / Widget 类型 / 树路径，可直接接 `debug-props --node=N` 追问。先以 `DRIFT_DEBUG_LIVE=1` 起开发壳，再在另一个终端 `drift debug pick-live`；被拾取的点击不进应用（否则选中一个按钮会顺手把它按下）；想提前收手可以撤防（参数见出口帮助）。只对 dev 态有意义，自走宿主回 `not_applicable`。裁决 A58。
 
+`debug targets` 把所有活会话并列成一份只读视图：发现文件里每个进程一行，给发现数、最慢帧与指纹；连接不上的单独标成不可达并附诊断，其他会话照常。它只并列、不按节点号或帧号合并 —— 两个窗口的节点编号不是同一个节点；深挖仍走既有出口并点名会话。裁决 A59。
+
 <!-- drift-cli-reference:start -->
 下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
 
@@ -61,6 +63,7 @@
 | 动词 | 脚本 | 类别 | 摘要 | 特有参数 |
 |---|---|---|---|---|
 | `brief` | `debug-brief.php` | driver | 预算内的证据简报：哪里不对、为什么、下一步查哪 | `--budget` `--text-width` `--from` `--out` `--session` `--attach` `--rules` `--baseline` `--save-baseline` `--assert` `--tolerance` `--slow` `--fanout` `--repeat` `--rule` `--without` `--min-severity` |
+| `targets` | `debug-targets.php` | protocol | 把当前目录所有活会话并列成一份视图（不跨窗口 join） | — |
 | `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` |

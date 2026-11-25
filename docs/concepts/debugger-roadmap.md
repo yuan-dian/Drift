@@ -32,8 +32,8 @@
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
-| 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 缺多 target 合并视图 |
-| 多窗口 / 多 target | 切片：同进程每个窗口一份录制器、互不串证据；`Discovery` 多条目与跨窗口合并视图仍待做 | 成熟 DevTools 多 target | S2 的前置已清，缺"看得见两个窗口"的消费者 |
+| 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 多 target 并列视图已由 A59 落地；真正跨窗口归因仍未做 |
+| 多窗口 / 多 target | 已落地：每窗口一份录制器互不串证据（A53）；`Discovery` 数组与多会话点名早已生效；`debug targets` 把所有活会话并列成一份只读视图（A59） | 成熟 DevTools 多 target | S2 前置已清；并列看得见，归因要等采集层给全局节点 id |
 | 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
 | 交互式提问（任意表达式） | 已落地：`debug eval` 对活宿主求值，默认关（`serve --allow-eval`）、只绑 loopback、不是证据（A55）；离线包拒绝，求值前后比指纹报 `evidenceChanged` | Chrome Console、Flutter Inspector eval | 补上 dev 壳最大的体验缺口；缺多会话上下文切换 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
@@ -143,9 +143,9 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 **设计**：
 
-- **live attach（dev-only，2026-11-25 已落地 A57）**：走**协作式 tick**，不开线程 —— `EventLoop` 每轮等完、派发前调一次中立 `DebugTicker`；有桥时 `waitEvents()` 的上界压到 25ms（没桥仍是 `-1` 无限等，空闲 CPU 归零）。消息分派复用 `Host::pollOnce()`，与自走宿主同一条路；`Drive` / `LiveDrive` 收成 `DrivePort`，所以 `pause` / `resume` 的回执与 `state` 查询同形。真窗口的 `t` 只能来自墙钟 ⇒ `attach` 回执显式给 `live=true` / `replayable=false`，`frame` 与 `finish` 照自走宿主那样拒掉，单步走 `resume --frames=1`。一个桥只接**第一个窗口**；AOT 组合根一行不改，产物里没有 socket。**判据**：桥每轮 poll、等待有界、暂停连输入一起不派发但消息照收、单步在帧末扣预算、真 socket 往返（5 例 / 28 断言，六轮变异全咬红）。**仍未做**：多 target 合并视图；`pick` 接活窗口点击已由 A58 落地。
+- **live attach（dev-only，2026-11-25 已落地 A57）**：走**协作式 tick**，不开线程 —— `EventLoop` 每轮等完、派发前调一次中立 `DebugTicker`；有桥时 `waitEvents()` 的上界压到 25ms（没桥仍是 `-1` 无限等，空闲 CPU 归零）。消息分派复用 `Host::pollOnce()`，与自走宿主同一条路；`Drive` / `LiveDrive` 收成 `DrivePort`，所以 `pause` / `resume` 的回执与 `state` 查询同形。真窗口的 `t` 只能来自墙钟 ⇒ `attach` 回执显式给 `live=true` / `replayable=false`，`frame` 与 `finish` 照自走宿主那样拒掉，单步走 `resume --frames=1`。一个桥只接**第一个窗口**；AOT 组合根一行不改，产物里没有 socket。**判据**：桥每轮 poll、等待有界、暂停连输入一起不派发但消息照收、单步在帧末扣预算、真 socket 往返（5 例 / 28 断言，六轮变异全咬红）。多 target 并列视图由 A59 落地（只并列、不 join）；`pick` 接活窗口点击已由 A58 落地。真正跨窗口归因仍未做。
 - **select / highlight**：`pick` 已经是查询面；反向流 `highlight(node)`（`0` = 清除）**已落地**（2026-11-25，A50/A51/A52）—— 它在绘制后叠加，不写结构、不改布局。三处要点：① 注解是**脚本里的一步**（`Step::HIGHLIGHT`），否则"同一份脚本跑两遍"会让"一次高亮了一次没高亮的"拿到同一个驱动指纹；② 叠加层**自带失效判据**（`paintRequested` + `continueFrame` + `setDebugHighlight()` 排帧），否则 `Frame` 会整帧跳过而不显示；③ 判据是**双向**的 —— `Digest::causal()`（只含 `rebuilt` / `causes`）逐帧不变 **且** 像素必变，另加"环画在这个节点的边框上、盒心不是描边色"与"稳态不再重画"。原始表述"`Digest::ofFrame()` 前后逐值相同"会恒红：它含 `skip`，而高亮正是要求这一帧必须画。**仍未做的**：面板 / Web 侧的悬停即高亮（连续流要节流合并，见 A50 的失效条件）；`pick` 接活窗口点击已由 A58 落地。
-- **多窗口**（2026-11-25 已落地，A53）：**录制器属于应用**，进程级单例改掉 —— 帧内"当前录制器"由 `Recorder::enter()/leave()` 的栈回答（`null` 也压一层，否则第二个窗口的帧会落到别人的录制器上）。判据是"交错跑 == 单独跑"：两个窗口的帧键、节点表、两份指纹逐一相同。**仍未做**：`Discovery` 的数组条目真正生效、跨窗口的合并视图（那属于投影）。
+- **多窗口**（2026-11-25 已落地，A53）：**录制器属于应用**，进程级单例改掉 —— 帧内"当前录制器"由 `Recorder::enter()/leave()` 的栈回答（`null` 也压一层，否则第二个窗口的帧会落到别人的录制器上）。判据是"交错跑 == 单独跑"：两个窗口的帧键、节点表、两份指纹逐一相同。`Discovery` 数组与多会话点名早已生效；跨窗口并列视图由 A59 落地（投影层，不进采集）。真正跨窗口归因仍未做。
 
 这三件事与 A33 相关：A33 已在 P0 收口——九方法按角色分组、live attach 只做 dev 形态、发布态不做；A57 进一步定下 dev 形态的实现（协作式 tick，不开线程）。四项均已落地，余下的是多 target 视图。
 
@@ -224,7 +224,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P1** | 节点表回收 | 已落地：`lastSeen` + 周期性回收；`node-evicted` 与 `unknown-node` 分开；回收地址随包走 | P1 | M |
 | **P1** | 录制开销量具 | 已落地：2000 节点固定场景；off / frames / geometry / full 四档；frames-only 帧预算 < 2%；`--check` 咬预算 | P1 | M |
 | **P2** | S3d 绘制归因 | 已落地：`PaintRecord` + `paint(frame)` / `repaints()` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树、命中不算"画过"；独立 60 帧窗口；证据包带 `paint` 域；简报 / Web / `/api/paint` 有入口；AOT 可用（无反射） | P1 | L |
-| **P3** | live attach（dev） | 已落地（A57）：`DebugTicker` 协作式 tick + `Host::pollOnce` 共用分派 + `DrivePort`；`DRIFT_DEBUG_LIVE=1` 才装桥，pause / step / query 可真 socket 往返，`live/replayable` 如实报；AOT 组合根不变、产物无 socket。A58 已把 `pick` 接到活窗口点击（布防 → 真窗口 down → 高亮）；未做多 target 合并视图 | P0、P1 | L |
+| **P3** | live attach（dev） | 已落地（A57）：`DebugTicker` 协作式 tick + `Host::pollOnce` 共用分派 + `DrivePort`；`DRIFT_DEBUG_LIVE=1` 才装桥，pause / step / query 可真 socket 往返，`live/replayable` 如实报；AOT 组合根不变、产物无 socket。A58 已把 `pick` 接到活窗口点击（布防 → 真窗口 down → 高亮）；A59 把多 target 并列成只读视图（不 join） | P0、P1 | L |
 | **P3** | select / highlight | 反向流已落地；`pick` 接到活窗口点击已由 A58 落地；highlight 绘制后叠加；highlight 前后**结构因果**指纹相同且像素必变 | P3 | M |
 | **P3** | 多窗口隔离 | 已落地（A53）：录制器绑到应用 + 帧内压栈；交错跑与单独跑逐值相同、第二窗口不推进第一会话的帧号与节点表、无主兜底保住老夹具；`Discovery` 多条目仍待做 | P3 | L |
 | **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
