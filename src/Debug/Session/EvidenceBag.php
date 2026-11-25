@@ -31,6 +31,8 @@ final readonly class EvidenceBag
         public array $frames = [],
         /** @var array<int, array<int, GeometryRecord>> 帧号 ⇒ 节点号 ⇒ 几何 */
         public array $geometry = [],
+        /** @var array<int, PaintRecord> 帧号 ⇒ 绘制事实 */
+        public array $paint = [],
         /** @var array<int, NetworkRecord> requestId ⇒ 骨架 */
         public array $network = [],
         /** @var array<int, NetworkBodyRecord> requestId ⇒ 报文 */

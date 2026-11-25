@@ -591,6 +591,13 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         // 切了不恢复 —— 帧后测试/探针读的正是刚跑完这一帧的计数。
         Pipeline::enter($this->pipeline);
 
+        // 绘制域是可选预算：只有当前录制器显式开了它，才把观察者接到管线上。
+        // 每帧设一次而不是安装时设一次：会话可能在两个帧之间开 / 关。
+        $recorder = Recorder::current();
+        $this->pipeline->setPaintObserver(
+            $recorder !== null && $recorder->options()->paint() ? $recorder : null,
+        );
+
         // 帧开始的请求记为已服务，帧内新增的留给下一帧；必须在四个泵之前。
         $this->pipeline->beginFrame();
 

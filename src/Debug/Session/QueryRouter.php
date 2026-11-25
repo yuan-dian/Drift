@@ -43,6 +43,8 @@ final class QueryRouter implements SessionQueries
         'boxes' => '一帧全部盒的几何摘要（只读几何记录，供投影层跨盒比较约束）',
         'boxModel' => '单节点盒模型：margin / border / padding / content 四层与位置（几何快照）',
         'constraints' => '单节点约束链：逐跳复算并与快照交叉验证，标出归不到基类默认的跳',
+        'paint' => '一帧的绘制事实：重画节点集合、层缓存命中数、各边界重录原因（独立 60 帧窗口）',
+        'repaints' => '跨帧重画聚合：谁每帧都在画、哪些边界反复重录、按原因分布与命中率',
         'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
@@ -100,6 +102,8 @@ final class QueryRouter implements SessionQueries
             'frame' => ['?int'],
             'maxDepth' => ['int', 12],
         ]],
+        'paint' => ['paint', ['frame' => ['?int']]],
+        'repaints' => ['repaints', ['frames' => ['int', 300], 'limit' => ['int', 10]]],
         'network' => ['network', ['request' => ['?int'], 'limit' => ['int', 50]]],
         'networkBody' => ['networkBody', [
             'request' => ['int'],

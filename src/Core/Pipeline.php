@@ -480,10 +480,45 @@ final class Pipeline
         return $this->layoutCount;
     }
 
-    /** @internal 量具：层缓存**真画**次数 */
-    public function bumpPaint(): void
+    /**
+     * 绘制事实的观察者；未安装调试器时恒 `null`。
+     *
+     * 放在管线而不是让 `Layout` 直接 import `Debug`：绘制层只报事实，谁消费由
+     * 组合根决定。每帧由壳按"当前录制器是否开了绘制域"设置一次。
+     */
+    private ?PaintObserver $paintObserver = null;
+
+    /** @internal 组合根/壳每帧设置一次；`null` = 不采集。 */
+    public function setPaintObserver(?PaintObserver $observer): void
+    {
+        $this->paintObserver = $observer;
+    }
+
+    /** @internal 量具：层缓存**真画**次数；`$reason` 是层缓存重录原因 */
+    public function bumpPaint(object $box, string $reason): void
     {
         ++$this->paintCount;
+
+        $observer = $this->paintObserver;
+        if ($observer !== null) {
+            $observer->notePaint($box, false, $reason);
+        }
+    }
+
+    /**
+     * 没有层缓存的盒直接画。
+     *
+     * 不计入 `paintCount`：那个数一直是"层缓存未命中次数"，命中率靠它算；
+     * 把每个叶子盒都算进去会让命中率失去意义。
+     *
+     * @internal
+     */
+    public function notePaintNode(object $box): void
+    {
+        $observer = $this->paintObserver;
+        if ($observer !== null) {
+            $observer->notePaint($box, false, 'direct');
+        }
     }
 
     public function paintCount(): int
@@ -492,9 +527,14 @@ final class Pipeline
     }
 
     /** @internal 量具：层缓存**重放**次数（命中率 = replay / (paint + replay)） */
-    public function bumpReplay(): void
+    public function bumpReplay(object $box): void
     {
         ++$this->replayCount;
+
+        $observer = $this->paintObserver;
+        if ($observer !== null) {
+            $observer->notePaint($box, true, 'hit');
+        }
     }
 
     public function replayCount(): int

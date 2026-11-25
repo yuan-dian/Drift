@@ -97,6 +97,17 @@ final class Facts
             ? $session->query('boxes', ['frame' => $worst])
             : $session->query('boxes');
 
+        // 绘制同帧：一条帧记录里"重建了什么"与"画了什么"是两个问题，而"重建少、
+        // 重画多"正是缺少重绘边界的典型形状 —— 两域不同帧就永远看不出这个组合。
+        $facts['paint'] = $worst > 0
+            ? $session->query('paint', ['frame' => $worst])
+            : $session->query('paint');
+
+        // 重画聚合**不截断**：`limit: 0`，裁剪留给投影层（与 hotspots / nodes 同一条）。
+        // 窗口用 `frames: 0`（全绘制窗口）：规则的分母是 `repaints.frames`，
+        // 只取最近 300 个绘制帧会让分母与实际扫过的帧数分家。
+        $facts['repaints'] = $session->query('repaints', ['frames' => 0, 'limit' => 0]);
+
         return $facts;
     }
 

@@ -38,6 +38,8 @@ final readonly class Finding
         'fanout' => 1,
         'unvirtualized-group' => 1,
         'repeat-rebuild' => 1,
+        'repaint-storm' => 1,
+        'layer-miss' => 1,
         'constraint-widened' => 1,
         'constraint-tightened' => 1,
         'geometry-inconclusive' => 1,

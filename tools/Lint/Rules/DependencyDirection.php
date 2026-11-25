@@ -91,7 +91,12 @@ final class DependencyDirection implements Rule
         // 与 `Widget` 的环见 DOCUMENTED_CYCLES。
         // 录制器读 `Rendering\SurfaceProfile` 的分段计时账（唯一计时入口）；
         // 脚本要把输入事件编成标量（`InputScript`），滚轮的轴用 `Geometry\Axis`。
-        'Debug'     => ['Debug', 'Widget', 'Rendering', 'Input', 'Geometry'],
+        //
+        // ★ `Core`（2026-11-25，S3d）：`Recorder` 实现 `Core\PaintObserver` ——
+        //   绘制事实的总线 `Pipeline` 住在 `Core`，而 `Layout` 不能反向依赖 `Debug`，
+        //   所以观察者契约只能放在总线所在层。这是**真实流量**（不是预留），
+        //   也是本表允许"事后加行"的那种情况：先有边，再登记，写清理由。
+        'Debug'     => ['Debug', 'Widget', 'Rendering', 'Input', 'Geometry', 'Core'],
         'Logging'   => ['Logging'],
     ];
 

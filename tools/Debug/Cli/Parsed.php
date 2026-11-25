@@ -100,7 +100,11 @@ final class Parsed
     /** CLI 的采集预算唯一组装点：正文默认不抓。 */
     public function recordOptions(): RecordOptions
     {
-        return RecordOptions::of(bodies: $this->bool('bodies'));
+        // 两个域都是"默认关、显式要"：报文是隐私与体积，绘制是每帧多记一个节点集合。
+        return RecordOptions::of(
+            bodies: $this->bool('bodies'),
+            paint: $this->bool('paint'),
+        );
     }
 
     /**

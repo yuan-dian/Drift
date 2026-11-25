@@ -17,6 +17,7 @@ final readonly class RecordOptions
      * @param int $capacity 帧窗口；几何 / 网络 / 报文仍各有独立窗口
      * @param bool $network 记网络骨架（方法 / URL / 状态 / 帧号 / 发起者）
      * @param bool $bodies 抓请求 / 响应体；默认关，隐私与体积理由见证据模型
+     * @param bool $paint 记每帧重画集合与层缓存命中 / 未命中；默认关，先证明预算
      * @param bool $redact 报文脱敏；关掉时 manifest 必须说"含明文"
      */
     public function __construct(
@@ -26,6 +27,7 @@ final readonly class RecordOptions
         private GeometryCapture $geometry = GeometryCapture::Changed,
         private bool $network = true,
         private bool $bodies = false,
+        private bool $paint = false,
     ) {
         if ($this->capacity < 1) {
             throw new \InvalidArgumentException('录制帧窗口至少为 1');
@@ -63,6 +65,7 @@ final readonly class RecordOptions
             geometry: GeometryCapture::All,
             network: true,
             bodies: true,
+            paint: true,
         );
     }
 
@@ -76,8 +79,9 @@ final readonly class RecordOptions
         GeometryCapture $geometry = GeometryCapture::Changed,
         bool $network = true,
         bool $bodies = false,
+        bool $paint = false,
     ): self {
-        return new self($capacity, $script, $redact, $geometry, $network, $bodies);
+        return new self($capacity, $script, $redact, $geometry, $network, $bodies, $paint);
     }
 
     /** 兼容旧的 `install(int, ?Script, bool)` / `open(int, ?Script, bool)` 调用。 */
@@ -96,7 +100,7 @@ final readonly class RecordOptions
         return self::of(capacity: $capacity, script: $script, redact: $redact);
     }
 
-    /** @return array{capacity: int, geometry: string, network: bool, bodies: bool, redact: bool} */
+    /** @return array{capacity: int, geometry: string, network: bool, bodies: bool, paint: bool, redact: bool} */
     public function toManifest(): array
     {
         return [
@@ -104,6 +108,7 @@ final readonly class RecordOptions
             'geometry' => $this->geometry->value,
             'network' => $this->network,
             'bodies' => $this->bodies,
+            'paint' => $this->paint,
             'redact' => $this->redact,
         ];
     }
@@ -122,6 +127,7 @@ final readonly class RecordOptions
             geometry: $geometry,
             network: (bool) ($raw['network'] ?? true),
             bodies: (bool) ($raw['bodies'] ?? false),
+            paint: (bool) ($raw['paint'] ?? false),
         );
     }
 
@@ -155,39 +161,51 @@ final readonly class RecordOptions
         return $this->bodies;
     }
 
+    public function paint(): bool
+    {
+        return $this->paint;
+    }
+
     /** 段耗时量具只在需要分段归因的档位开；frames-only 不付这笔税。 */
     public function profileStages(): bool
     {
-        return $this->geometry !== GeometryCapture::Off || $this->network || $this->bodies;
+        // 绘制域也要：`repaint-storm` 拿 paint 段耗时与重画节点数一起看才有区分度，
+        // 只给节点数会把"画了 400 个便宜盒"和"画了 3 个天价盒"排成一档。
+        return $this->geometry !== GeometryCapture::Off || $this->network || $this->bodies || $this->paint;
     }
 
     public function withCapacity(int $capacity): self
     {
-        return new self($capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies);
+        return new self($capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint);
     }
 
     public function withScript(?Script $script): self
     {
-        return new self($this->capacity, $script, $this->redact, $this->geometry, $this->network, $this->bodies);
+        return new self($this->capacity, $script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint);
     }
 
     public function withRedact(bool $redact): self
     {
-        return new self($this->capacity, $this->script, $redact, $this->geometry, $this->network, $this->bodies);
+        return new self($this->capacity, $this->script, $redact, $this->geometry, $this->network, $this->bodies, $this->paint);
     }
 
     public function withGeometry(GeometryCapture $geometry): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $geometry, $this->network, $this->bodies);
+        return new self($this->capacity, $this->script, $this->redact, $geometry, $this->network, $this->bodies, $this->paint);
     }
 
     public function withNetwork(bool $network): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $network, $this->bodies);
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $network, $this->bodies, $this->paint);
     }
 
     public function withBodies(bool $bodies): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $bodies);
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $bodies, $this->paint);
+    }
+
+    public function withPaint(bool $paint): self
+    {
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $paint);
     }
 }

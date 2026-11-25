@@ -133,7 +133,7 @@ final class BriefText
     }
 
     /**
-     * 明细：最贵帧的段账、最大写入点、最热节点。三行封顶，多了也不是信息。
+     * 明细：最贵帧的段账、最大写入点、最热节点、这一帧画了什么。四行封顶，多了也不是信息。
      *
      * @param array<string, mixed> $facts
      * @return list<string>
@@ -192,7 +192,60 @@ final class BriefText
             ), $width);
         }
 
+        // 绘制：与"重建"分开报。重建少而重画多，正是缺重绘边界的形状 —— 两个数
+        // 并排出现在一屏里，这个组合才看得出来。`paintedNodes` 是映射到节点的去重数，
+        // `paintedTotal` 是真实绘制次数，两者之差就是没有 Element 认领的盒（浮层 / 内部盒）。
+        $paint = Facts::mapOf($facts, 'paint');
+        if (($paint['found'] ?? false) === true) {
+            $out[] = Fit::spread(
+                \sprintf(
+                    '重画 %d 次（%d 个节点 / %d 个盒无主）',
+                    (int) ($paint['paintedTotal'] ?? 0),
+                    (int) ($paint['paintedNodes'] ?? 0),
+                    (int) ($paint['unmapped'] ?? 0),
+                ),
+                \sprintf(
+                    '层缓存命中 %d · 重录 %d',
+                    (int) ($paint['hits'] ?? 0),
+                    \count(Facts::mapOf($paint, 'misses')),
+                ),
+                $width,
+            );
+        }
+
         return $out;
+    }
+
+    /**
+     * 绘制域的扫描范围，写进裁剪账。
+     *
+     * 绘制窗口只有 60 帧（帧窗口是 600），不写这一句，读者会把"没报重画问题"
+     * 当成"全窗口都没有重画问题"。
+     *
+     * @param array<string, mixed> $facts
+     */
+    private static function paintScope(array $facts): string
+    {
+        $agg = Facts::mapOf($facts, 'repaints');
+        if (($agg['captured'] ?? false) !== true) {
+            return '绘制未采集';
+        }
+        $window = Facts::mapOf($agg, 'window');
+        $capacity = (int) ($window['capacity'] ?? 0);
+        if ((int) ($agg['frames'] ?? 0) === 0) {
+            // 开了预算但一帧都还没画：`#0–#0` 会被读成一个真实帧号。
+            return \sprintf('绘制 0/%d 帧', $capacity);
+        }
+
+        return \sprintf(
+            // 比几何那句更短：裁剪账一行要装下四个域的范围，长一句就会把末尾的
+            // "窗口已满 / 未满"挤掉，而那正是这一行最不能省的部分。容量直接写在
+            // 斜杠后面（`#1–#7/60`），不再单独起一句。
+            '绘制 #%d–#%d/%d',
+            (int) ($window['from'] ?? 0),
+            (int) ($window['to'] ?? 0),
+            $capacity,
+        );
     }
 
     /**
@@ -259,6 +312,8 @@ final class BriefText
         // 几何也要自报扫描范围：60 帧的几何窗口比 600 帧的因果窗口短，
         // 不写这一句，读者会把"没报布局问题"当成"全窗口都没有布局问题"。
         $parts[] = self::geometryScope($facts);
+        // 绘制同理，且窗口同样是 60 帧 —— 两个短窗口各说各的，不合并成一句。
+        $parts[] = self::paintScope($facts);
 
         // 帧级不完整（异常中断 / 因果边超限）必须在裁剪账里出现：这两种情况下
         // 树和规则都"看起来正常"，只有这一行能说明它们其实缺料。

@@ -25,6 +25,9 @@ final class LayerCache
     /** Optional op 集合是录制时按回放端 capabilities() 定的，换端就必须重录。 */
     private int $caps = -1;
 
+    /** 上一次 `beginRecord()` 的结论：hit / first / invalidated / resized / capabilities。 */
+    private string $miss = 'first';
+
     /**
      * 丢掉缓存，下一次 `beginRecord()` 必然重录。
      *
@@ -38,6 +41,7 @@ final class LayerCache
     {
         $this->list = null;
         $this->caps = -1;
+        $this->miss = 'invalidated';
     }
 
     /**
@@ -52,15 +56,33 @@ final class LayerCache
         $caps = $canvas->capabilities();
         $cached = $this->list;
         if ($cached !== null && $this->w === $w && $this->h === $h && $this->caps === $caps) {
+            $this->miss = 'hit';
             $cached->replay($canvas);
 
             return null;
+        }
+
+        if ($cached === null) {
+            // `invalidated` 是写点主动丢缓存；其余（含首帧）都还没有可复用的命令流。
+            if ($this->miss !== 'invalidated') {
+                $this->miss = 'first';
+            }
+        } elseif ($this->w !== $w || $this->h !== $h) {
+            $this->miss = 'resized';
+        } else {
+            $this->miss = 'capabilities';
         }
 
         $rec = new RecordingCanvas(new DisplayList(), $caps);
         $this->recording = $rec;
 
         return $rec;
+    }
+
+    /** 上一次 `beginRecord()` 的结论；`RenderBox` 只在观察者存在时读它。 */
+    public function lastMissReason(): string
+    {
+        return $this->miss;
     }
 
     /**

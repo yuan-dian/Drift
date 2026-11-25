@@ -101,6 +101,15 @@ final class Web
             '/api/boxes' => $this->json($this->queries->query('boxes', [
                 'frame' => (int) ($query['frame'] ?? 0) ?: null,
             ])),
+            // 绘制与几何并列而不是塞进 `/api/boxes`：一个盒"在哪、多大"与"这一帧
+            // 画没画它"是两个问题，合进一个响应会让页面拿不到 `captured=false`
+            // 这种"没采"与"没画"的区别。
+            '/api/paint' => $this->json($this->queries->query('paint', [
+                'frame' => (int) ($query['frame'] ?? 0) ?: null,
+            ])),
+            '/api/repaints' => $this->json($this->queries->query('repaints', [
+                'limit' => (int) ($query['limit'] ?? 200),
+            ])),
             '/api/node' => $this->node($query),
             default => $this->error(404, 'not_found', "没有这个路径：{$path}"),
         };

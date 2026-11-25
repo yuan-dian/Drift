@@ -70,6 +70,14 @@ final class Brief
             $found[] = $one;
         }
 
+        foreach (self::repaintFindings($facts, $t) as $one) {
+            $found[] = $one;
+        }
+
+        foreach (self::layerMissFindings($facts, $t) as $one) {
+            $found[] = $one;
+        }
+
         foreach (self::reshapeFindings($facts, $t) as $one) {
             $found[] = $one;
         }
@@ -376,6 +384,131 @@ final class Brief
                 \sprintf('%d/%d', $rebuilds, $count),
                 \sprintf('≥ %d', $need),
                 'nodes(window).rebuilds ÷ window.count',
+            );
+            if (\count($out) >= 2) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    // ------------------------------------------------------------ 绘制
+
+    /**
+     * 重画风暴：同一节点在窗口里几乎每帧都被重画。
+     *
+     * ## 为什么这条比"这一帧画得多"有用
+     *
+     * 单帧画 400 个节点不一定是问题（首帧、整页切换都这样）。**每帧**都画同一批
+     * 节点才是问题：说明包住它们的重绘边界没起作用，或者根本没有边界。
+     *
+     * 判据是"该节点被画的帧数 ÷ 窗口帧数"，两个数都来自同一次 `repaints()` ——
+     * 分母不另取，否则"扫过的帧"与"节点的帧"会各算一遍而悄悄分家。
+     *
+     * 优先报**自己就是边界**的节点（`misses > 0`）：它们是"要不要画"的决策点，
+     * 修法落在它们身上（挪边界、拆子树）。没有边界候选时才退回报普通节点，
+     * 那时结论是"这一片都没有边界"，而不是"这几个节点各自有问题"。
+     *
+     * @param array<string, mixed> $facts
+     * @return list<Finding>
+     */
+    private static function repaintFindings(array $facts, Thresholds $t): array
+    {
+        $agg = Facts::mapOf($facts, 'repaints');
+        $frames = (int) ($agg['frames'] ?? 0);
+        // 窗口太短时"每帧都画"是必然：2 帧里画 2 帧不构成任何结论。
+        if (($agg['captured'] ?? false) !== true || $frames < 5) {
+            return [];
+        }
+
+        $need = (int) \ceil($frames * $t->repaintPercent / 100);
+        $hot = [];
+        $plain = [];
+        foreach (Facts::listOf($agg, 'nodes') as $row) {
+            if ((int) ($row['frames'] ?? 0) < $need) {
+                continue;
+            }
+            if ((int) ($row['misses'] ?? 0) > 0) {
+                $hot[] = $row;
+            } else {
+                $plain[] = $row;
+            }
+        }
+
+        $pick = $hot !== [] ? $hot : $plain;
+        $note = $hot === [] ? '（窗口里没有重绘边界）' : '';
+        $out = [];
+        foreach ($pick as $row) {
+            $painted = (int) ($row['frames'] ?? 0);
+            $out[] = new Finding(
+                'repaint-storm',
+                \sprintf(
+                    '%s 在 %d/%d 帧都被重画%s',
+                    Fit::tailPath((string) ($row['path'] ?? ('#' . $row['node'])), 48),
+                    $painted,
+                    $frames,
+                    $note,
+                ),
+                \sprintf('node:%d', (int) ($row['node'] ?? 0)),
+                \sprintf('%d/%d', $painted, $frames),
+                \sprintf('≥ %d', $need),
+                'repaints(window).nodes[].frames ÷ repaints.frames',
+            );
+            if (\count($out) >= 2) {
+                break;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * 层缓存失效：某个重绘边界在窗口里反复重录。
+     *
+     * ## 为什么这条必须单独有
+     *
+     * 边界存在的意义是"子树没变就重放命令流"。它每帧都重录，等于边界白放 ——
+     * 而这件事**看不见**：帧耗时正常、重建数正常，只是每帧多画几百个节点。
+     * 只有把命中 / 未命中记下来，这类"结构性浪费"才第一次可检。
+     *
+     * 报**原因**而不只报次数：四种原因的修法完全不同 —— `invalidated` 要查谁在
+     * 主动丢缓存，`resized` 要查布局抖动，`capabilities` 要查跨端回放，
+     * `first` 只是新边界。只给次数等于让读者自己去猜是哪一种。
+     *
+     * @param array<string, mixed> $facts
+     * @return list<Finding>
+     */
+    private static function layerMissFindings(array $facts, Thresholds $t): array
+    {
+        $agg = Facts::mapOf($facts, 'repaints');
+        if (($agg['captured'] ?? false) !== true) {
+            return [];
+        }
+
+        $frames = (int) ($agg['frames'] ?? 0);
+        $rate = (int) \round((float) ($agg['hitRate'] ?? 0.0) * 100);
+
+        $out = [];
+        foreach (Facts::listOf($agg, 'nodes') as $row) {
+            $misses = (int) ($row['misses'] ?? 0);
+            if ($misses < $t->layerMissCount) {
+                continue;
+            }
+            $out[] = new Finding(
+                'layer-miss',
+                \sprintf(
+                    '%s 的层缓存重录 %d/%d 帧（最近原因 %s，窗口命中率 %d%%）',
+                    Fit::tailPath((string) ($row['path'] ?? ('#' . $row['node'])), 48),
+                    $misses,
+                    $frames,
+                    (string) ($row['reason'] ?? '?'),
+                    $rate,
+                ),
+                \sprintf('node:%d', (int) ($row['node'] ?? 0)),
+                \sprintf('%d 次', $misses),
+                \sprintf('≥ %d', $t->layerMissCount),
+                'repaints(window).nodes[].misses ÷ byReason',
             );
             if (\count($out) >= 2) {
                 break;

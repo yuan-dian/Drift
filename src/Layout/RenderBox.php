@@ -1116,7 +1116,12 @@ abstract class RenderBox extends RenderObject
      */
     private function paintOrReplay(Canvas $canvas): void
     {
+        $pipeline = $this->pipeline();
+
         if (!$this->repaintBoundary) {
+            // 没有层缓存的盒每帧真画；不记进 paintCount（那本是层未命中账），
+            // 但绘制域需要"这一帧到底画了哪些节点"的完整集合。
+            $pipeline->notePaintNode($this);
             $this->paint($canvas);
 
             return;
@@ -1130,17 +1135,18 @@ abstract class RenderBox extends RenderObject
 
             $rec = $layer->beginRecord($canvas, $w, $h);
             if ($rec === null) {   // 命中：整棵子树一次 paint() 都不跑
-                $this->pipeline()->bumpReplay();
+                $pipeline->bumpReplay($this);
 
                 return;
             }
-            $this->pipeline()->bumpPaint();
+            $pipeline->bumpPaint($this, $layer->lastMissReason());
             $this->paint($rec);
             $layer->endRecord($canvas, $w, $h);
 
             return;
         }
 
+        $pipeline->notePaintNode($this);
         $this->paint($canvas);
     }
 

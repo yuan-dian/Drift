@@ -36,6 +36,10 @@ final readonly class Thresholds
         public float $reshapePercent = 10.0,
         /** 只看本身够大的盒：1px 图标被"从 760 收到 1"骗出来不是发现。 */
         public float $reshapeMinSize = 100.0,
+        /** 同一节点在窗口内被**重画**的帧数占比达到它，算重画风暴（缺重绘边界）。 */
+        public int $repaintPercent = 80,
+        /** 单个重绘边界在窗口内重录达到它，算层缓存没起作用。 */
+        public int $layerMissCount = 3,
     ) {
     }
 
@@ -66,6 +70,8 @@ final readonly class Thresholds
             (float) ($known['reshapePx'] ?? $this->reshapePx),
             (float) ($known['reshapePercent'] ?? $this->reshapePercent),
             (float) ($known['reshapeMinSize'] ?? $this->reshapeMinSize),
+            (int) ($known['repaintPercent'] ?? $this->repaintPercent),
+            (int) ($known['layerMissCount'] ?? $this->layerMissCount),
         );
     }
 
@@ -81,6 +87,8 @@ final readonly class Thresholds
             'reshapePx' => $this->reshapePx,
             'reshapePercent' => $this->reshapePercent,
             'reshapeMinSize' => $this->reshapeMinSize,
+            'repaintPercent' => $this->repaintPercent,
+            'layerMissCount' => $this->layerMissCount,
         ];
     }
 }

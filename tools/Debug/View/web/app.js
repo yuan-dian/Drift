@@ -8,6 +8,7 @@ const state = {
   brief: null,
   frame: 0,
   boxes: [],
+  paint: null,
   selected: 0,
   scale: 0,
   offset: { x: 0, y: 0 },
@@ -109,7 +110,7 @@ async function loadBrief() {
 
   const t = brief.thresholds || {};
   document.getElementById('thresholds').textContent =
-    `慢帧 ${t.slowMs}ms · 扇出 ${t.fanoutNodes} · 重复 ${t.repeatPercent}%`;
+    `慢帧 ${t.slowMs}ms · 扇出 ${t.fanoutNodes} · 重复 ${t.repeatPercent}% · 重画 ${t.repaintPercent}%`;
 
   renderFindings(brief.findings || []);
 
@@ -154,6 +155,9 @@ async function loadFrame(frame, keepSelected) {
   state.frame = boxes.frame;
   state.lastFrame = boxes.frame;
   state.boxes = boxes.rows || [];
+  // 绘制是**这一帧**的事实，与几何同一次刷新取回；`captured:false` 表示预算没开，
+  // 页面据此显示"未采集"而不是"没重画"——后者是一个会骗人的结论。
+  state.paint = await get(`/api/paint?frame=${state.frame}`).catch(() => null);
   if (!keepSelected) state.selected = 0;
 
   // 轮询刷新时保住选中：否则"点一下盒子、一秒后选中没了"，而用户以为自己点错了。
@@ -359,6 +363,19 @@ function renderNode(node) {
   }
 }
 
+// 一个节点这一帧的绘制状态。三态必须分开报：**没采**（预算没开）/ **没画** /
+// **画了**（其中"边界重录"还带原因）。混成两句会让"没采"看起来像"没重画"。
+function paintFact(node) {
+  const p = state.paint;
+  if (!p || p.frame !== state.frame) return '—';
+  if (p.found === false) {
+    return p.reason === 'paint-not-captured' ? '未采集' : `查不到（${p.reason || '?'}）`;
+  }
+  const reason = (p.misses || {})[node];
+  if (reason) return `边界重录（${reason}）`;
+  return (p.painted || []).includes(node) ? '重画' : '未重画';
+}
+
 function renderCard(card) {
   const host = document.getElementById('card');
   host.textContent = '';
@@ -382,6 +399,7 @@ function renderCard(card) {
     ['尺寸', `${bm.size?.w ?? '?'} × ${bm.size?.h ?? '?'}`],
     ['偏移', `${bm.offset?.x ?? '?'}, ${bm.offset?.y ?? '?'}（相对父内容盒）`],
     ['父', bm.parent || '—'],
+    ['本帧绘制', paintFact(card.node)],
     ['内容盒约束', `${bm.inner?.minW ?? '?'}…${bm.inner?.maxW ?? '?'}`],
     ['收到约束', `${bm.applied?.minW ?? '?'}…${bm.applied?.maxW ?? '?'}`],
   ];

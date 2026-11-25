@@ -58,6 +58,7 @@ final class Evidence
     public const string D_EVICTED = 'evicted';
     public const string D_FRAMES = 'frames';
     public const string D_GEOMETRY = 'geometry';
+    public const string D_PAINT = 'paint';
     public const string D_NETWORK = 'network';
     public const string D_BODIES = 'bodies';
     public const string D_PROPS = 'props';
@@ -80,6 +81,7 @@ final class Evidence
         self::D_EVICTED,
         self::D_FRAMES,
         self::D_GEOMETRY,
+        self::D_PAINT,
         self::D_NETWORK,
         self::D_PROPS,
         self::D_SCRIPT,
@@ -92,6 +94,7 @@ final class Evidence
         self::D_EVICTED,
         self::D_FRAMES,
         self::D_GEOMETRY,
+        self::D_PAINT,
         self::D_NETWORK,
         self::D_BODIES,
         self::D_PROPS,
@@ -104,6 +107,7 @@ final class Evidence
     private const string K_EVICTED = 'evicted';
     private const string K_FRAME = 'frame';
     private const string K_GEOMETRY = 'geometry';
+    private const string K_PAINT = 'paint';
     private const string K_NETWORK = 'network';
     private const string K_BODY = 'body';
     private const string K_PROP = 'prop';
@@ -126,6 +130,10 @@ final class Evidence
         self::K_EVICTED => ['domain' => self::D_EVICTED, 'keys' => ['node']],
         self::K_FRAME => ['domain' => self::D_FRAMES, 'keys' => ['id', 't', 'cost', 'rebuilt', 'causes']],
         self::K_GEOMETRY => ['domain' => self::D_GEOMETRY, 'keys' => ['frame', 'node', 'parent']],
+        // 绘制一行一帧：一帧的重画集合与命中数是**同一个**事实，拆成多行要么重复
+        // 记账（`hits` 只能挂在其中一行），要么让"这个集合属于哪帧"要靠行序推。
+        // `truncated` 也算必需：缺了按 false 走，一份被截断的集合会被读成完整集合。
+        self::K_PAINT => ['domain' => self::D_PAINT, 'keys' => ['frame', 'painted', 'misses', 'paintedTotal', 'hits', 'truncated']],
         self::K_NETWORK => ['domain' => self::D_NETWORK, 'keys' => ['request', 'method', 'url']],
         self::K_BODY => ['domain' => self::D_BODIES, 'keys' => ['request']],
         self::K_PROP => ['domain' => self::D_PROPS, 'keys' => ['node', 'widget']],
@@ -209,6 +217,15 @@ final class Evidence
                 }
             }
 
+            if (\in_array(self::D_PAINT, $domains, true)) {
+                foreach ($recorder->paintFrames() as $frame) {
+                    $record = $recorder->paintFrame($frame);
+                    if ($record !== null) {
+                        self::put($handle, ['kind' => self::K_PAINT] + $record->encode());
+                    }
+                }
+            }
+
             if (\in_array(self::D_NETWORK, $domains, true)) {
                 foreach ($recorder->networkRows() as $row) {
                     self::put($handle, ['kind' => self::K_NETWORK] + $row->encode());
@@ -274,6 +291,8 @@ final class Evidence
         $frames = [];
         /** @var array<int, array<int, GeometryRecord>> $geometry */
         $geometry = [];
+        /** @var array<int, PaintRecord> $paint */
+        $paint = [];
         /** @var array<int, NetworkRecord> $network */
         $network = [];
         /** @var array<int, NetworkBodyRecord> $bodies */
@@ -377,6 +396,17 @@ final class Evidence
                     $geometry[$row->frame][$row->node] = $row;
                     break;
 
+                case self::K_PAINT:
+                    $paintRow = PaintRecord::decode($raw);
+                    // 同帧两条 = 包里自相矛盾（后一条会静默盖掉前一条，而 counts 照样对）。
+                    if (isset($paint[$paintRow->frame])) {
+                        throw new \InvalidArgumentException(
+                            "{$path} 第 {$lineNo} 行：帧 {$paintRow->frame} 的绘制记录重复",
+                        );
+                    }
+                    $paint[$paintRow->frame] = $paintRow;
+                    break;
+
                 case self::K_NETWORK:
                     $networkRow = NetworkRecord::decode($raw);
                     $network[$networkRow->requestId] = $networkRow;
@@ -422,6 +452,7 @@ final class Evidence
             nodes: $nodes,
             frames: $frames,
             geometry: $geometry,
+            paint: $paint,
             network: $network,
             bodies: $bodies,
             props: $props,
@@ -484,6 +515,7 @@ final class Evidence
                     : GeometryCapture::Off->value,
                 'network' => \in_array(self::D_NETWORK, $domains, true),
                 'bodies' => \in_array(self::D_BODIES, $domains, true),
+                'paint' => \in_array(self::D_PAINT, $domains, true),
             ];
         }
 
@@ -513,6 +545,7 @@ final class Evidence
             self::K_SCRIPT => [self::D_SCRIPT, $recorder->script() === null ? 0 : 1],
             self::K_FRAME => [self::D_FRAMES, \count($recorder->frames())],
             self::K_GEOMETRY => [self::D_GEOMETRY, $recorder->geometryCoverage()['nodes']],
+            self::K_PAINT => [self::D_PAINT, \count($recorder->paintFrames())],
             self::K_NETWORK => [self::D_NETWORK, \count($recorder->networkRows())],
             self::K_BODY => [self::D_BODIES, \count($recorder->bodyRequests())],
             self::K_PROP => [self::D_PROPS, \count($recorder->propNodes())],

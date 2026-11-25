@@ -123,6 +123,44 @@ final class BriefTest extends TestCase
         return Brief::findings($facts);
     }
 
+    /**
+     * 一份重画聚合事实（`repaints()` 的形状）。
+     *
+     * @param list<array<string, mixed>> $nodes
+     * @return array<string, mixed>
+     */
+    private static function repaints(array $nodes, int $frames = 10): array
+    {
+        $hits = 0;
+        $misses = 0;
+        $byReason = [];
+        foreach ($nodes as $row) {
+            $misses += (int) ($row['misses'] ?? 0);
+            $reason = $row['reason'] ?? null;
+            if ($reason !== null) {
+                $byReason[$reason] = ($byReason[$reason] ?? 0) + (int) $row['misses'];
+            }
+        }
+
+        return [
+            'captured' => true,
+            'frames' => $frames,
+            'hits' => $hits,
+            'misses' => $misses,
+            'hitRate' => $hits + $misses === 0 ? 0.0 : $hits / ($hits + $misses),
+            'byReason' => $byReason,
+            'nodesTotal' => \count($nodes),
+            'nodes' => $nodes,
+            'window' => [
+                'captured' => true,
+                'frames' => $frames,
+                'capacity' => 60,
+                'from' => 1,
+                'to' => $frames,
+            ],
+        ];
+    }
+
     /** @param list<Finding> $findings */
     private static function ruleOf(array $findings): string
     {
@@ -605,6 +643,18 @@ final class BriefTest extends TestCase
             'geometry-inconclusive' => self::facts(['geometry' => self::geometry([], ['frame' => 5, 'window' => [
                 'frames' => 1, 'capacity' => 60, 'from' => 10, 'to' => 12, 'nodes' => 1,
             ]])]),
+            // 绘制两兄弟：同一帧里一个"每帧被画且自己就是边界"，一个"每帧被画但
+            // 没有边界"。两条规则必须各自命中 —— 只让其中一条跑，另一条的版本登记
+            // 就永远不会被咬到，而"登记了但从不产出"与"没登记"一样是空头承诺。
+            'paint' => self::facts([
+                'cascade' => self::cascade([self::node(1, 'PageShell', [self::node(2, 'Text')])]),
+                'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 0],
+                'frames' => [['id' => 1, 'cost' => 1.0, 'rebuilt' => 1]],
+                'repaints' => self::repaints([
+                    ['node' => 5, 'path' => 'PageShell > Column', 'type' => 'Column', 'frames' => 10, 'misses' => 9, 'reason' => 'invalidated'],
+                    ['node' => 9, 'path' => 'PageShell > Column > Text', 'type' => 'Text', 'frames' => 9, 'misses' => 0, 'reason' => null],
+                ]),
+            ]),
         ];
 
         $seen = [];
@@ -624,6 +674,47 @@ final class BriefTest extends TestCase
         \sort($inUse);
         \sort($registered);
         self::assertSame($registered, $inUse, '登记表与实际产出的规则集合必须双向闭合');
+    }
+
+    /** @param list<Finding> $findings @return list<string> */
+    private static function rulesOf(array $findings): array
+    {
+        return \array_map(static fn(Finding $one): string => $one->rule, $findings);
+    }
+
+    /**
+     * 绘制两条规则的分工：**缺边界**报 storm，**边界失效**报 layer-miss。
+     *
+     * 两者看起来都是"每帧在重画"，修法却相反：前者要加重绘边界，后者要查谁在
+     * `invalidate()`。合并成一条，读者会照着"加边界"去修一个已经有边界的地方 ——
+     * 而那条路上没有任何东西可加，结论因此不可执行。
+     *
+     * 第三条钉的是窗口下限：4 帧里画 4 帧是必然，不是结论。短窗口下的"每帧都画"
+     * 与长窗口下的同一句话，证据强度差一个量级。
+     */
+    public function testRepaintRulesTellMissingBoundaryFromFailingBoundary(): void
+    {
+        // ① 每帧被画、窗口里没有任何边界（misses 全 0）⇒ 缺边界。
+        $noBoundary = self::facts(['repaints' => self::repaints([
+            ['node' => 7, 'path' => 'PageShell > Column', 'type' => 'Column', 'frames' => 10, 'misses' => 0, 'reason' => null],
+        ])]);
+        $rules = self::rulesOf(self::findings($noBoundary));
+        self::assertContains('repaint-storm', $rules, '没有边界时只能报缺边界');
+        self::assertNotContains('layer-miss', $rules, '没有边界就不该报"边界失效"');
+
+        // ② 同一个节点自己就是边界、每帧重录 ⇒ 边界在失效，不是缺边界。
+        $failing = self::facts(['repaints' => self::repaints([
+            ['node' => 7, 'path' => 'PageShell > Column', 'type' => 'Column', 'frames' => 10, 'misses' => 10, 'reason' => 'invalidated'],
+        ])]);
+        $rules = self::rulesOf(self::findings($failing));
+        self::assertContains('layer-miss', $rules);
+        self::assertContains('repaint-storm', $rules, '边界自己也在每帧被画，两条都该出（一个说是什么、一个说为什么）');
+
+        // ③ 窗口太短时不给"每帧都画"的结论。
+        $short = self::facts(['repaints' => self::repaints([
+            ['node' => 7, 'path' => 'PageShell > Column', 'type' => 'Column', 'frames' => 4, 'misses' => 0, 'reason' => null],
+        ], 4)]);
+        self::assertNotContains('repaint-storm', self::rulesOf(self::findings($short)), '4 帧窗口不构成"每帧都画"的结论');
     }
 
     /**

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Debug\Session;
 
+use Drift\Core\PaintObserver;
 use Drift\Input\InputEvent;
 use Drift\Rendering\SurfaceProfile;
 use Drift\Widget\Element;
@@ -44,7 +45,7 @@ use Drift\Widget\State;
  *
  * @api
  */
-final class Recorder
+final class Recorder implements PaintObserver
 {
     /** 保留的最大帧数；超出丢最旧的一帧 */
     public const int DEFAULT_CAPACITY = 600;
@@ -69,6 +70,15 @@ final class Recorder
      * 报文是**按需查的附件**，不是默认证据面；这个窗口只保证"最近几百次"可回看。
      */
     public const int BODY_CAPACITY = 200;
+
+    /** 绘制事实保留的帧数：与几何同量级，逐帧节点集合比几何更大，不能跟 600 帧。 */
+    public const int PAINT_FRAMES = 60;
+
+    /** 单帧最多记多少个重画节点；超出标 truncated，paintedTotal 仍给真实总数。 */
+    private const int MAX_PAINTED_NODES = 4096;
+
+    /** 单帧最多记多少个层缓存未命中；边界的数量远小于节点数，上限只防异常树。 */
+    private const int MAX_PAINT_MISSES = 512;
 
     /** 节点超过这么多帧没再出现就可以回收（仍在窗口里的引用会保住它）。 */
     private const int NODE_TTL_FRAMES = 120;
@@ -116,6 +126,24 @@ final class Recorder
      * 两道整段跳过的信号，不是盒换代序号。
      */
     private bool $geometryPrimed = false;
+
+    /** @var array<int, PaintRecord> 帧号 => 绘制事实；独立 60 帧窗口 */
+    private array $paint = [];
+
+    /** @var list<int> 本帧真画的盒（spl_object_id，帧末映射成节点号） */
+    private array $openPaint = [];
+
+    /** @var array<int, string> 本帧层缓存未命中的盒 => 原因 */
+    private array $openPaintMisses = [];
+
+    /** 本帧真画次数（截断前；一个盒可能因多次绘制被重复计入） */
+    private int $openPaintTotal = 0;
+
+    /** 本帧层缓存命中次数（命中即整棵子树不画） */
+    private int $openPaintHits = 0;
+
+    /** 本帧绘制记录被上限截断（节点集合或未命中表） */
+    private bool $paintTruncated = false;
 
     /**
      * 没有自己 RenderBox 的节点（复合控件，如 PageShell）。
@@ -287,6 +315,9 @@ final class Recorder
         if ($bag->bodies !== [] && !$options->bodies()) {
             $options = $options->withBodies(true);
         }
+        if ($bag->paint !== [] && !$options->paint()) {
+            $options = $options->withPaint(true);
+        }
         $recorder = new self($options);
 
         $recorder->nodes = $bag->nodes;
@@ -298,6 +329,7 @@ final class Recorder
         $recorder->frameId = $recorder->lastFrameId();
         $recorder->geometry = $bag->geometry;
         $recorder->geometryPrimed = $bag->geometry !== [];
+        $recorder->paint = $bag->paint;
         $recorder->network = $bag->network;
         $recorder->bodies = $bag->bodies;
         $recorder->props = $bag->props;
@@ -341,6 +373,43 @@ final class Recorder
         \sort($ids);
 
         return $ids;
+    }
+
+    /** @return list<int> 有绘制记录的帧号（升序） */
+    public function paintFrames(): array
+    {
+        $ids = \array_map('\intval', \array_keys($this->paint));
+        \sort($ids);
+
+        return $ids;
+    }
+
+    public function paintFrame(int $frame): ?PaintRecord
+    {
+        return $this->paint[$frame] ?? null;
+    }
+
+    /**
+     * 绘制域的窗口与采集状态。
+     *
+     * `captured=false` 与"这一帧没画"必须分开：前者是预算没开，后者是帧整段跳过。
+     * 少了这一位，读者会把"没采"读成"没画"。
+     *
+     * @return array<string, mixed>
+     */
+    public function paintCoverage(): array
+    {
+        $ids = $this->paintFrames();
+
+        return [
+            'captured' => $this->options->paint(),
+            'frames' => \count($ids),
+            'capacity' => self::PAINT_FRAMES,
+            'from' => $ids === [] ? 0 : $ids[0],
+            'to' => $ids === [] ? 0 : $ids[\count($ids) - 1],
+            'paintedCap' => self::MAX_PAINTED_NODES,
+            'missesCap' => self::MAX_PAINT_MISSES,
+        ];
     }
 
     /** @return list<int> 读过属性的节点号（升序） */
@@ -406,6 +475,9 @@ final class Recorder
             $this->sampleGeometry($root, $this->frameId);
             $this->geometryPrimed = true;
         }
+        if ($this->options->paint()) {
+            $this->samplePaint($root, $this->frameId);
+        }
         $incomplete = [];
         if ($this->causesTruncated) {
             $incomplete[] = FrameRecord::CAUSES_TRUNCATED;
@@ -431,6 +503,11 @@ final class Recorder
         $this->openWrote = [];
         $this->openSaw = [];
         $this->causesTruncated = false;
+        $this->openPaint = [];
+        $this->openPaintMisses = [];
+        $this->openPaintTotal = 0;
+        $this->openPaintHits = 0;
+        $this->paintTruncated = false;
         // 归因标记只在结算的同步段内有效：跨帧残留会把下一帧无关的 setState
         // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
         $this->activeRequest = 0;
@@ -438,6 +515,42 @@ final class Recorder
         if ($this->frameId - $this->lastRecycleFrame >= self::NODE_RECYCLE_EVERY) {
             $this->recycleNodes();
             $this->lastRecycleFrame = $this->frameId;
+        }
+    }
+
+    /**
+     * 绘制事实（`Pipeline` 的观察者入口）。
+     *
+     * 只收盒身份与原因，不在这里解析节点号：绘制发生在元素树之外，帧末才有
+     * `Element::boxOwners()` 的活树映射。命中只记次数 —— 命中意味着整棵子树
+     * 一条 paint 都没跑，逐个记下来会把"省掉的节点"记成"画过的节点"。
+     */
+    public function notePaint(object $box, bool $replayed, string $reason): void
+    {
+        if (!$this->open || !$this->options->paint()) {
+            return;
+        }
+
+        if ($replayed) {
+            ++$this->openPaintHits;
+
+            return;
+        }
+
+        ++$this->openPaintTotal;
+        $id = \spl_object_id($box);
+        if (\count($this->openPaint) < self::MAX_PAINTED_NODES) {
+            $this->openPaint[] = $id;
+        } else {
+            $this->paintTruncated = true;
+        }
+
+        if ($reason !== PaintRecord::REASON_DIRECT && $reason !== '') {
+            if (\count($this->openPaintMisses) < self::MAX_PAINT_MISSES) {
+                $this->openPaintMisses[$id] = $reason;
+            } else {
+                $this->paintTruncated = true;
+            }
         }
     }
 
@@ -953,6 +1066,63 @@ final class Recorder
         ];
     }
 
+    /**
+     * 帧末把绘制盒映射回节点号。
+     *
+     * 映射只在开了绘制域时建一次；`boxOwners()` 与焦点反查 / `pick()` 共用同一份
+     * 口径，避免"绘制记的节点"和"点选查到的节点"各用一套 `effectiveBox()`。
+     * 浮层不在主树映射里 ⇒ 记 `unmapped`，不冒充成某个节点。
+     */
+    private function samplePaint(?Element $root, int $frame): void
+    {
+        $owners = $root === null ? [] : Element::boxOwners([$root]);
+        $painted = [];
+        $seen = [];
+        $unmapped = [];
+        foreach ($this->openPaint as $boxId) {
+            $owner = $owners[$boxId] ?? null;
+            if ($owner === null) {
+                $unmapped[$boxId] = true;
+                continue;
+            }
+            $node = $this->idOf($owner);
+            if (isset($seen[$node])) {
+                continue;
+            }
+            $seen[$node] = true;
+            if (\count($painted) < self::MAX_PAINTED_NODES) {
+                $painted[] = $node;
+            } else {
+                $this->paintTruncated = true;
+            }
+        }
+
+        $misses = [];
+        foreach ($this->openPaintMisses as $boxId => $reason) {
+            $owner = $owners[$boxId] ?? null;
+            if ($owner === null) {
+                $unmapped[$boxId] = true;
+                continue;
+            }
+            $node = $this->idOf($owner);
+            if (\count($misses) < self::MAX_PAINT_MISSES) {
+                $misses[$node] = $reason;
+            } else {
+                $this->paintTruncated = true;
+            }
+        }
+
+        $this->paint[$frame] = new PaintRecord(
+            $frame,
+            $painted,
+            $misses,
+            $this->openPaintTotal,
+            $this->openPaintHits,
+            \count($unmapped),
+            $this->paintTruncated,
+        );
+    }
+
     /** 帧末从根先序采一遍；父指针取最近的**有盒祖先**，约束是沿盒树传的。 */
     private function sampleGeometry(Element $root, int $frame): void
     {
@@ -1200,6 +1370,12 @@ final class Recorder
         $this->geometry = [];
         $this->geometryDigest = [];
         $this->geometryPrimed = false;
+        $this->paint = [];
+        $this->openPaint = [];
+        $this->openPaintMisses = [];
+        $this->openPaintTotal = 0;
+        $this->openPaintHits = 0;
+        $this->paintTruncated = false;
         // 属性是旧会话的活树读数，重开会话后一句都不能留（帧号会从头开始，
         // 残留快照会被读成"这一帧的属性"，且不会报 stale）。
         $this->props = [];
@@ -1343,6 +1519,13 @@ final class Recorder
                 return;
             }
             unset($this->geometry[$oldest]);
+        }
+        while (\count($this->paint) > self::PAINT_FRAMES) {
+            $oldest = \array_key_first($this->paint);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->paint[$oldest]);
         }
         // 网络是独立窗口：帧窗口 600 裁不掉 500 条请求，必须在这里单独裁。
         while (\count($this->network) > self::NETWORK_CAPACITY) {

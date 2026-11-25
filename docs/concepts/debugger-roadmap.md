@@ -117,6 +117,18 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 **判据**：重画集合 ⊆ 结构树；与 `markPaintChanged()` 调用点对得上；缓存命中率跨帧可复算；AOT 真机可出同一份记录。
 
+**已落地**（与上面的设计有三处出入，都是实现时才看清的）：
+
+- **不引入反射，也不新增 `digest(Paint)`**：绘制事实不参与指纹。它是**预算相关**的观测量（开不开 `paint` 域不改变应用行为），进指纹会让"同一个应用、两份不同的预算"算出不同指纹，而那正是指纹要排除的东西。
+- **命中只记次数，不记节点**：命中意味着整棵子树一条 `paint()` 都没跑，逐个记下来会把"省掉的节点"记成"画过的节点"——报告会把收益算成成本。因此 `painted` 里只有真跑过 `paint()` 的盒。
+- **绘制耗时不做按节点聚合**：`paint` 段耗时在 `FrameRecord::$stageNs` 里已有一份（整段），按节点再切一次要在 `paint()` 里插钩子，热路径代价与本域"默认关、可常驻"的定位冲突。规则改用"重画节点数 × 段耗时"两个已有数字并排看。
+
+另外补了一个设计里没写的查询 `repaints(frames, limit)`：绘制窗口 60 帧、单帧最多 4096 个节点，让投影层逐帧调 `paint()` 是 60 次查询、24 万个节点号，远端会话还要 60 个往返。聚合在查询层做一次，规则读一张几十行的表。
+
+**落点**：`Core\PaintObserver`（中立接口，`Layout` 不反向依赖 `Debug`）→ `Pipeline` 转接 → `Debug\Session\PaintRecord` / `Recorder`；查询 `paint` / `repaints`；投影 `repaint-storm` / `layer-miss`；消费者是 `debug-brief`（发现 + 明细 + 裁剪账）、`/api/paint` `/api/repaints` 与 Web 节点卡的"本帧绘制"行。
+
+**判据**（`tests/Feature/Debug/PaintTest.php` + `BriefTest`）：重画集合 ⊆ 结构树（每个节点有类型与路径）；集合大小不超过真画次数（命中不是"画过"）；聚合可由逐帧复算；`paint-not-captured` 与"这帧没画"分开；窗口外不 clamp；窗口 60 帧有界且 `from`/`to` 跟着走；证据往返逐值相同；两条规则分别对应"缺边界"与"边界失效"。
+
 ### 5. 实时 attach、select / highlight 与多窗口
 
 **问题**：当前只能对 headless / 宿主子进程取证；用户不能在正在跑的真窗口上点一个控件、看它的约束链。多窗口直接拒绝。
@@ -133,7 +145,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 ### 6. 规则注册表、严重度与基线回归
 
-**问题**：7 条发现规则硬编码在 `Brief`；`Finding` 没有 severity；文档说“规则可关”，代码没有开关；没有 baseline，无法回答“这次比上次慢了吗”。
+**问题**：12 条发现规则硬编码在 `Brief`；`Finding` 没有 severity；文档说“规则可关”，代码没有开关；没有 baseline，无法回答“这次比上次慢了吗”。
 
 **设计**：
 
@@ -166,7 +178,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P1** | 几何采样降本 | 已落地：签名直接由盒字段计算，不再每帧 new 记录；全静止帧跳过采样；几何窗口仍 60 帧并自报 | P1 | M |
 | **P1** | 节点表回收 | 已落地：`lastSeen` + 周期性回收；`node-evicted` 与 `unknown-node` 分开；回收地址随包走 | P1 | M |
 | **P1** | 录制开销量具 | 已落地：2000 节点固定场景；off / frames / geometry / full 四档；frames-only 帧预算 < 2%；`--check` 咬预算 | P1 | M |
-| **P2** | S3d 绘制归因 | `PaintRecord` + `paint(frame)` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树；AOT 可用；面板/Web 有入口 | P1 | L |
+| **P2** | S3d 绘制归因 | 已落地：`PaintRecord` + `paint(frame)` / `repaints()` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树、命中不算"画过"；独立 60 帧窗口；证据包带 `paint` 域；简报 / Web / `/api/paint` 有入口；AOT 可用（无反射） | P1 | L |
 | **P3** | live attach（dev） | 运行中真窗口可 attach、pause、step、query；AOT 仍拒绝并说明原因 | P0、P1 | L |
 | **P3** | select / highlight | `pick` 接到活窗口点击；高亮绘制后叠加；highlight 前后 digest 相同 | P3 | M |
 | **P3** | 多窗口隔离 | 会话按应用/窗口命名空间；`Discovery` 多条目生效；第二窗口独立或明确拒绝 | P3 | L |
