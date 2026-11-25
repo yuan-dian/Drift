@@ -72,6 +72,17 @@ final class Methods
     public const string HIGHLIGHT = 'highlight';
 
     /**
+     * 布防 / 撤防**活窗口拾取**。参数 `enabled`（布尔）。
+     *
+     * ★ 布防后真窗口的下一次点击不进应用，只走 `pick` → `highlight`，点完自动撤防。
+     *   与查询名 `pick` 的关系、与 `highlight` 动词和 `highlight` 查询的关系完全同形：
+     *   动词改"下一次会发生什么"，查询读"现在是什么"。
+     * ★ 只对有真窗口的 live 宿主有意义，自走宿主回 `not_applicable`。
+     * ★ 暂停态布防不会生效（A57：暂停连输入一起挡），回执如实报 `armed=false`。
+     */
+    public const string PICK = 'pick';
+
+    /**
      * 让自走的宿主继续。参数 `frames`（可选正整数）：给了就只走这么多帧，
      * 走完回 `paused` + `reason=step`。`1` 就是单步 —— 推进的是脚本自己的下一帧，
      * 客户端不必（也不该）提供时间戳。
@@ -96,6 +107,7 @@ final class Methods
         self::EVAL,
         self::PAUSE,
         self::HIGHLIGHT,
+        self::PICK,
         self::RESUME,
         self::FINISH,
         self::CLOSE,

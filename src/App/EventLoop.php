@@ -129,6 +129,14 @@ final class EventLoop
                             continue;   // 应用拒绝：窗口原样留着，什么都不做
                         }
 
+                        // A58：调试桥可选地消费输入（活窗口拾取）。必须排在 `dispatchInput()`
+                        // 之前 —— 吞掉 down、放过 up 会让脚本多出一条没有配对的 up，也会让
+                        // InputRouter 对着一个已经消失的按下目标结算。不认识这个能力的桥
+                        // 走原路，发布态（`$ticker === null`）零开销。
+                        if ($ticker instanceof DebugInputInterceptor && $ticker->interceptInput($event)) {
+                            continue;
+                        }
+
                         $shape = $app->dispatchInput($event, $platform->now());
                         if ($shape !== null) {
                             // 光标由**这里**喂给 `WindowHost`：应用它需要平台类型，而框架不持平台 ⇒ 组合根是唯一合法位置。

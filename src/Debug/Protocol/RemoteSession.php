@@ -245,6 +245,24 @@ final class RemoteSession implements Session
         $this->callObject(Methods::HIGHLIGHT, $params);
     }
 
+    /**
+     * 布防 / 撤防活窗口拾取（A58）。只对有真窗口的 live 宿主有意义。
+     *
+     * ★ 不在这里记"布防了没有"：那是桥的状态，客户端再存一份就会漂。回执是唯一
+     *   事实来源，`armed=false` 时看 `reason` 决定是 `resume` 还是放弃。
+     *
+     * @return array{armed: bool, reason?: string}
+     */
+    public function pick(bool $enabled): array
+    {
+        $result = $this->callObject(Methods::PICK, ['enabled' => $enabled]);
+        if (!\is_array($result)) {
+            throw new ProtocolError(ProtocolError::BAD_RESPONSE, 'pick 的响应不是数组');
+        }
+
+        return $result;
+    }
+
     public function query(string $name, array $args = []): array
     {
         $result = $this->call(Methods::QUERY, ['name' => $name, 'args' => $args]);

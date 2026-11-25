@@ -193,7 +193,7 @@ final class CliTest extends SmokeTestCase
         foreach (Registry::all() as $verb => $entry) {
             check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
         }
-        check('16 个出口', \count(Registry::all()) === 16, (string) \count(Registry::all()));
+        check('17 个出口', \count(Registry::all()) === 17, (string) \count(Registry::all()));
         $this->flushChecks();
     }
 

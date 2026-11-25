@@ -51,6 +51,8 @@
 
 `debug probe` 是两个高频内省问题的结构化快捷方式：`--what=memory` 用 `gc_status()` / `memory_get_usage()` 报进程标量，并用 `WeakMap` 台账给出每个类型的对象从哪一帧起还活着（跨多次查询累积，`maxAge` 越大越可疑）；`--what=source --source=file:line` 用 `ReflectionMethod::getFileName()` 把 `debug report` 给出的调用点翻译成"哪个类的哪个方法、定义在第几行"。两者都是 A55 的 L2 内省——当场读、不进证据包、不进指纹；内存是进程级（含同进程其他窗口），源码只看已加载类。报文原文走证据面的独立出口（`bodies` 开关），不在这里旁路。
 
+`debug pick-live` 是活窗口拾取：布防之后到真窗口里点一下，回执给节点号 / Widget 类型 / 树路径，可直接接 `debug-props --node=N` 追问。先以 `DRIFT_DEBUG_LIVE=1` 起开发壳，再在另一个终端 `drift debug pick-live`；被拾取的点击不进应用（否则选中一个按钮会顺手把它按下）；想提前收手可以撤防（参数见出口帮助）。只对 dev 态有意义，自走宿主回 `not_applicable`。裁决 A58。
+
 <!-- drift-cli-reference:start -->
 下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
 
@@ -66,6 +68,7 @@
 | `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` |
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |
 | `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` |
+| `pick-live` | `debug-pick-live.php` | protocol | 布防后到真窗口点一下，回命中节点的身份与路径（live attach） | — |
 | `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` |
 | `probe` | `debug-probe.php` | driver | dev 轻量内省：内存存活跨度 / 源码位置（不是证据） | `--what` `--source` `--limit` |
 | `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` |

@@ -162,15 +162,20 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 三者的查询代码完全相同：`DebugSession` 与 `RemoteSession` 实现同一对接口
 （`SessionQueries` / `SessionDriver`），差异只在"谁执行那串步骤"。
 
-### 协议九个方法，按角色分组
+### 协议十二个方法，按角色分组
 
 | 角色 | 方法 |
 |---|---|
 | 会话 | `open` / `close` |
 | 驱动 | `frame` / `input` / `effect` |
 | 读 | `query` |
-| 干预 | `pause` / `resume` |
+| 内省 | `eval`（默认关，不是证据） |
+| 干预 | `pause` / `resume` / `highlight` / `pick` |
 | 收尾 | `finish` |
+
+`pause` / `resume` 改的是谁推帧，`highlight` 改的是下一帧画什么，`pick` 改的是
+下一次输入给谁（A58）—— 三者都不改记录，所以同属干预这一组。活窗口拾取只由
+有真窗口的 live 宿主支持，自走宿主回 `not_applicable`。
 
 凡是 `query` 能表达的都不另开动词 —— `script` 与 `digest` 因此是**查询名**。
 每多一个动词，对端就多一份"哪个先哪个后"的状态要维护，而状态会漂。

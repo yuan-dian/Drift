@@ -68,12 +68,16 @@ final class Host
      *   是否开 `eval`（任意代码执行）。**默认关**：要显式 `debug serve --allow-eval`
      *   才开。这是安全面不是功能开关 —— loopback 只挡住"外人连得上"，挡不住
      *   "连上的人能不能让宿主执行代码"，两者得分开判。
+     * @param null|\Closure(bool): array{armed: bool, reason?: string} $armPick
+     *   活窗口拾取的布防回调（A58）。`null` = 这个宿主没有可拾取的窗口，`PICK` 回
+     *   `not_applicable`。状态必须存在回调那一侧 —— 宿主再存一份布尔必然与桥漂开。
      */
     public function __construct(
         private readonly Server $server,
         private readonly ?string $accessToken = null,
         private readonly ?DrivePort $drive = null,
         private readonly bool $allowEval = false,
+        private readonly ?\Closure $armPick = null,
     ) {
     }
 
@@ -343,6 +347,7 @@ final class Host
                 Methods::INPUT => $this->input($this->session, $params),
                 Methods::EFFECT => $this->effect($this->session, $params),
                 Methods::HIGHLIGHT => $this->highlight($this->session, $params),
+                Methods::PICK => $this->pick($params),
                 Methods::QUERY => $this->query($this->session, $params),
                 // Methods::ALL 已在上面挡过，这里不可达；写成显式异常，
                 // 让"加了方法名却忘了实现"在第一次调用时就撞红。
@@ -600,6 +605,29 @@ final class Host
             'node' => $session->recorder()->highlightedNode(),
             'drawnFrame' => $drawn === null ? null : $drawn['frame'],
         ];
+    }
+
+    /**
+     * 布防 / 撤防活窗口拾取（A58）。宿主不自己存布尔：状态归桥所有，宿主只做协议翻译。
+     * 两边各存一份迟早会漂 —— 表现是"回执说布防了，可点击照旧进应用"。
+     *
+     * @param array<array-key, mixed> $params
+     * @return array<array-key, mixed>
+     */
+    private function pick(array $params): array
+    {
+        $enabled = $params['enabled'] ?? null;
+        if (!\is_bool($enabled)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'pick 需要布尔 enabled');
+        }
+        if ($this->armPick === null) {
+            throw new ProtocolError(
+                ProtocolError::NOT_APPLICABLE,
+                '这个宿主没有可拾取的活窗口（pick 只对 live attach 有意义）',
+            );
+        }
+
+        return ($this->armPick)($enabled);
     }
 
     /**

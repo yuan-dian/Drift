@@ -33,6 +33,7 @@ final class Registry
             ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
             ['eval', 'debug-eval.php', 'dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据）', false],
             ['pick', 'debug-pick.php', '按视口坐标点选，给命中链与每层路径', true],
+            ['pick-live', 'debug-pick-live.php', '布防后到真窗口点一下，回命中节点的身份与路径（live attach）', false],
             ['props', 'debug-props.php', '按节点读 Widget / State 配置', true],
             ['probe', 'debug-probe.php', 'dev 轻量内省：内存存活跨度 / 源码位置（不是证据）', true],
             ['highlight', 'debug-highlight.php', '让一个节点在屏上被描边，并回答"真的上屏了没"', true],
