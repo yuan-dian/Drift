@@ -1,0 +1,115 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Dev\Tests\Unit\Core;
+
+use Drift\Core\BlackBox;
+use PHPUnit\Framework\TestCase;
+
+/**
+ * 常驻黑匣子的形状与账。
+ *
+ * 这一组只判"写进去的东西能不能被正确读回来"；"有没有人在正确时机写"
+ * 由 Feature 组的 Pipeline / Frame 判据负责——两组合起来才回答得了
+ * "崩溃时能看到什么"。
+ */
+final class BlackBoxTest extends TestCase
+{
+    private string $dir = '';
+
+    protected function setUp(): void
+    {
+        $this->dir = \sys_get_temp_dir() . '/drift-blackbox-' . \bin2hex(\random_bytes(6));
+        \mkdir($this->dir, 0700, true);
+    }
+
+    protected function tearDown(): void
+    {
+        foreach (\glob($this->dir . '/*') ?: [] as $file) {
+            @\unlink($file);
+        }
+        @\rmdir($this->dir);
+        parent::tearDown();
+    }
+
+    public function testRingReportsEvictionInsteadOfSilentlyDropping(): void
+    {
+        $box = new BlackBox(3);
+        for ($i = 1; $i <= 5; ++$i) {
+            $box->record($i, (float) $i, 0, 0, 0, false);
+        }
+
+        $snapshot = $box->snapshot();
+
+        self::assertSame(3, $snapshot['capacity']);
+        self::assertSame(5, $snapshot['total']);
+        self::assertSame(2, $snapshot['dropped']);
+        self::assertSame([3, 4, 5], \array_column($snapshot['frames'], 'frame'));
+    }
+
+    public function testSlowestFrameSurvivesEviction(): void
+    {
+        $box = new BlackBox(2);
+        $box->record(1, 99.0, 0, 0, 0, false);
+        $box->record(2, 1.0, 0, 0, 0, false);
+        $box->record(3, 2.0, 0, 0, 0, false);
+
+        $snapshot = $box->snapshot();
+
+        self::assertSame([2, 3], \array_column($snapshot['frames'], 'frame'));
+        self::assertSame(['frame' => 1, 'cost' => 99.0], $snapshot['worst']);
+    }
+
+    public function testFailureKeepsTheFirstSiteAndPointsAtCurrentFrame(): void
+    {
+        $box = new BlackBox(8);
+        $box->record(1, 1.0, 0, 0, 0, false);
+        $box->noteFailure('settle', '第一现场');
+        $box->noteFailure('paint', '连锁反应');
+
+        $failure = $box->snapshot()['failure'];
+
+        self::assertSame('settle', $failure['stage']);
+        self::assertSame('第一现场', $failure['message']);
+        self::assertSame(2, $failure['frame']);
+    }
+
+    public function testRecordCarriesSkippedAndStageScalars(): void
+    {
+        $box = new BlackBox(2);
+        $box->record(7, 12.5, 11, 22, 33, true);
+
+        $row = $box->snapshot()['frames'][0];
+
+        self::assertSame(7, $row['frame']);
+        self::assertSame(12.5, $row['cost']);
+        self::assertSame(['settle' => 11, 'layout' => 22, 'paint' => 33], [
+            'settle' => $row['settle'],
+            'layout' => $row['layout'],
+            'paint' => $row['paint'],
+        ]);
+        self::assertTrue($row['skipped']);
+    }
+
+    public function testFlushWritesReadableJsonAndNeverThrowsOnUnwritablePath(): void
+    {
+        $file = $this->dir . '/blackbox.json';
+        $box = new BlackBox(4, $file);
+        $box->record(1, 3.5, 0, 0, 0, false);
+        $box->noteFailure('layout', '崩了');
+
+        $raw = \file_get_contents($file);
+        self::assertIsString($raw);
+        self::assertSame($box->snapshot(), \json_decode($raw, true));
+
+        // 落盘失败绝不能变成第二种失败：G2 的中止序列后面没有 catch。
+        $bad = new BlackBox(2, $this->dir . '/missing/deep/box.json');
+        @\chmod($this->dir, 0500);
+        try {
+            $bad->flush();
+            self::assertTrue(true);
+        } finally {
+            @\chmod($this->dir, 0700);
+        }
+    }
+}

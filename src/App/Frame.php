@@ -173,9 +173,12 @@ final class Frame
                     $this->pipeline->bumpSettleSkip();
                 }
             } catch (Throwable $e) {
+                // 只留崩溃现场；错误仍按 G2 响亮失败，落盘失败由黑匣子自己吞掉。
+                $detail = Errors::describe($e);
+                $this->pipeline->blackBox()->noteFailure('settle', $detail);
                 Errors::report(sprintf(
                     '帧循环：未捕获异常冒到帧末（沿途无错误边界）—— %s',
-                    Errors::describe($e),
+                    $detail,
                 ));
             }
             // 结构快照必须在 settle 之后取：本帧的增删/重排要进下一帧的判据
@@ -213,9 +216,11 @@ final class Frame
                 try {
                     $box->layout($constraints);
                 } catch (Throwable $e) {
+                    $detail = Errors::describe($e);
+                    $this->pipeline->blackBox()->noteFailure('layout', $detail);
                     Errors::report(sprintf(
                         '帧循环：layout 阶段未捕获异常（沿途无错误边界）—— %s',
-                        Errors::describe($e),
+                        $detail,
                     ));
                 }
             }
@@ -323,9 +328,11 @@ final class Frame
             $this->surface->endFrame();
             $painted = true;
         } catch (Throwable $e) {
+            $detail = Errors::describe($e);
+            $this->pipeline->blackBox()->noteFailure('paint', $detail);
             Errors::report(sprintf(
                 '帧循环：paint 阶段未捕获异常（沿途无错误边界）—— %s',
-                Errors::describe($e),
+                $detail,
             ));
         }
 

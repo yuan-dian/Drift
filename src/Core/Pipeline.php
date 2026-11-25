@@ -185,11 +185,33 @@ final class Pipeline
         $this->frameConsumed = $this->frameRequests - $this->frameServed;
         $this->frameServed = $this->frameRequests;
         $this->inFrame = true;
+
+        // 帧开始取一次时钟，帧末算总耗时。不再到 AppShell 里加第二个写入点：
+        // 零视口早退等所有出口都经过这里，漏写会被读成"那段时间没发生"。
+        $this->blackBoxStartNs = \hrtime(true);
+        $this->blackBoxOpen = true;
+        ++$this->blackBoxFrame;
+        $this->settleSkipAtStart = $this->settleSkipCount;
+        $this->paintSkipAtStart = $this->paintSkipCount;
     }
 
     public function endFrame(): void
     {
         $this->inFrame = false;
+
+        if ($this->blackBoxOpen) {
+            $this->blackBoxOpen = false;
+            $elapsed = \hrtime(true) - $this->blackBoxStartNs;
+            $this->blackBox()->record(
+                $this->blackBoxFrame,
+                (float) $elapsed / 1_000_000.0,
+                0,
+                0,
+                0,
+                $this->settleSkipCount === $this->settleSkipAtStart
+                    && $this->paintSkipCount === $this->paintSkipAtStart,
+            );
+        }
     }
 
     public function inFrame(): bool
@@ -478,6 +500,49 @@ final class Pipeline
     public function layoutCount(): int
     {
         return $this->layoutCount;
+    }
+
+    // S2 常驻黑匣子：每应用一份，帧内唯一写入点在下面的 begin/endFrame。
+    private ?BlackBox $blackBox = null;
+
+    /** 帧开始的 hrtime 刻度；$blackBoxOpen 才是"这一帧 begin 过"的真相 */
+    private int $blackBoxStartNs = 0;
+
+    private bool $blackBoxOpen = false;
+
+    /** 黑匣子单调帧号：不用 frameServed（一帧可 +N，会跳号） */
+    private int $blackBoxFrame = 0;
+
+    /** 帧开始时的跳过计数：本帧整段跳过就靠这两个差值判 */
+    private int $settleSkipAtStart = 0;
+
+    private int $paintSkipAtStart = 0;
+
+    /**
+     * 常驻黑匣子。懒建：没有帧跑过的纯单测不必付落盘路径的代价。
+     * 文件名带管线对象号 —— 多窗口各写各的，不串（A53）。
+     */
+    public function blackBox(): BlackBox
+    {
+        if ($this->blackBox === null) {
+            $this->blackBox = new BlackBox(
+                BlackBox::DEFAULT_CAPACITY,
+                \getcwd() . '/.drift/blackbox-' . \spl_object_id($this) . '.json',
+            );
+        }
+
+        return $this->blackBox;
+    }
+
+    /**
+     * 替换黑匣子写点，只给测试与内嵌宿主；`null` = 恢复懒建。
+     * 测试用它避开 `getcwd()` 的落盘路径，不改被测的写入时机。
+     *
+     * @internal
+     */
+    public function setBlackBox(?BlackBox $box): void
+    {
+        $this->blackBox = $box;
     }
 
     /**

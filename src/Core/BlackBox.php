@@ -1,0 +1,167 @@
+<?php
+declare(strict_types=1);
+
+namespace Drift\Core;
+
+/**
+ * 发布态常驻的现场便签：固定容量标量环形缓冲，崩溃时落盘。
+ *
+ * ## 为什么不是 Recorder
+ *
+ * `Recorder` 是 dev 侧按需安装的可复算证据源：完整因果边、节点表、几何窗口，
+ * 装了才有、不装零成本。黑匣子反过来——默认就在、只存标量、不参与重放。两者
+ * 的生命期和格式都不同，合成一个会让"证据"这一层背上常驻预算，也会让崩溃文件
+ * 与证据包格式耦合（A60 否决的方案①）。
+ *
+ * ## 为什么契约住 Core
+ *
+ * 持有者 `Pipeline` 在 `Core`，而 `Core` 只允许依赖自己。把黑匣子放 `Debug`
+ * 就得让总线靠 `object` 弱类型偷传，类型检查与 `@internal` 一起丢——与
+ * `PaintObserver` 是同一条理由（A60 否决的方案②）。
+ *
+ * ## 截断是事实，不是缺陷
+ *
+ * `total` 单调增，`dropped = total - capacity`：窗口被覆盖过就说被覆盖过，不把
+ * "没写到"读成"没发生"。`worst` 在覆盖之外单独保留最慢那一帧——环形窗口里
+ * 最贵的帧可能已经被挤走，而它恰恰是最该留下的一笔。
+ *
+ * @internal 只由 `Pipeline` 写入；发布态没有 CLI 消费者，落盘文件自己可读
+ */
+final class BlackBox
+{
+    public const int DEFAULT_CAPACITY = 64;
+
+    /** 发现文件格式；与协议版本无关，遇到未知版本显式报错而不是降级 */
+    public const int PROTOCOL = 1;
+
+    /** @var list<array{frame: int, cost: float, settle: int, layout: int, paint: int, skipped: bool}|null> */
+    private array $frames;
+
+    private int $write = 0;
+
+    private int $total = 0;
+
+    private int $worstFrame = 0;
+
+    private float $worstCost = 0.0;
+
+    /** @var array{stage: string, message: string, frame: int}|null */
+    private ?array $failure = null;
+
+    /**
+     * @param int    $capacity 环形容量；预分配一次，帧内不再分配对象
+     * @param string $path     落盘路径；空串 = 只留在内存（测试 / 内嵌宿主）
+     */
+    public function __construct(
+        private readonly int $capacity = self::DEFAULT_CAPACITY,
+        private readonly string $path = '',
+    ) {
+        if ($capacity < 1) {
+            throw new \InvalidArgumentException('黑匣子容量至少为 1');
+        }
+        $this->frames = \array_fill(0, $capacity, null);
+    }
+
+    /**
+     * 写一帧。阶段 ns 只在显式开启分段计时时有值；常驻档不取它们——手写段名
+     * 常量会与 `FrameStage` 漂（项目既有纪律：段名只写一遍），所以这里收参数
+     * 但不猜名字。
+     */
+    public function record(
+        int $frame,
+        float $costMs,
+        int $settleNs,
+        int $layoutNs,
+        int $paintNs,
+        bool $skipped,
+    ): void {
+        $this->frames[$this->write] = [
+            'frame' => $frame,
+            'cost' => $costMs,
+            'settle' => $settleNs,
+            'layout' => $layoutNs,
+            'paint' => $paintNs,
+            'skipped' => $skipped,
+        ];
+        $this->write = ($this->write + 1) % $this->capacity;
+        ++$this->total;
+
+        if ($costMs > $this->worstCost) {
+            $this->worstCost = $costMs;
+            $this->worstFrame = $frame;
+        }
+    }
+
+    /**
+     * 记崩溃现场并立即落盘：调用方紧接着会走 G2 的中止序列，没有第二机会。
+     *
+     * 只留第一条失败——崩溃路径上先到的通常是根因，后面几条多是连锁反应；
+     * 覆盖掉根因会让报告指向一个后果。
+     */
+    public function noteFailure(string $stage, string $message): void
+    {
+        if ($this->failure !== null) {
+            return;
+        }
+        // 当前帧还没 record：total + 1 就是它，不必另开一个帧号出口。
+        $this->failure = [
+            'stage' => $stage,
+            'message' => $message,
+            'frame' => $this->total + 1,
+        ];
+        $this->flush();
+    }
+
+    /**
+     * 落盘。写不动就静默——这是崩溃现场便签，绝不能因为目录权限让应用
+     * 换一种失败方式（更不能在 G2 的中止序列里抛出第二个异常）。
+     */
+    public function flush(): void
+    {
+        if ($this->path === '') {
+            return;
+        }
+        $json = \json_encode(
+            $this->snapshot(),
+            \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE,
+        );
+        if ($json === false) {
+            return;
+        }
+        $dir = \dirname($this->path);
+        if (!\is_dir($dir) && !@\mkdir($dir, 0700, true) && !\is_dir($dir)) {
+            return;
+        }
+        @\file_put_contents($this->path, $json . "\n");
+    }
+
+    public function path(): string
+    {
+        return $this->path;
+    }
+
+    /** @return array<string, mixed> */
+    public function snapshot(): array
+    {
+        $frames = [];
+        foreach ($this->frames as $row) {
+            if ($row !== null) {
+                $frames[] = $row;
+            }
+        }
+        // 环形缓冲的物理顺序从写指针开始；按帧号排回时间序，读者才看得出经过。
+        \usort($frames, static fn(array $a, array $b): int => $a['frame'] <=> $b['frame']);
+
+        return [
+            'protocol' => self::PROTOCOL,
+            'capacity' => $this->capacity,
+            'total' => $this->total,
+            'dropped' => \max(0, $this->total - $this->capacity),
+            'frames' => $frames,
+            'worst' => $this->worstFrame > 0
+                ? ['frame' => $this->worstFrame, 'cost' => $this->worstCost]
+                : null,
+            'failure' => $this->failure,
+        ];
+    }
+}
