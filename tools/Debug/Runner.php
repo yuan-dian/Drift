@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Debug;
 
 use Drift\App\DebugSession;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Geometry\BoxConstraints;
@@ -36,6 +37,7 @@ final class Runner
         float $height,
         array $meta = [],
         ?Script $skeleton = null,
+        ?RecordOptions $options = null,
     ): array {
         $rows = (int) ($meta['rows'] ?? 0);
         [$app, $source] = Target::app($label, (bool) ($meta['page'] ?? false), $rows);
@@ -49,7 +51,8 @@ final class Runner
         $app->attach(new SurfaceProbe(), $constraints);
         $mountMs = (\hrtime(true) - $start) / 1e6;
 
-        $session = DebugSession::open($app, $constraints, script: $skeleton);
+        $options = ($options ?? RecordOptions::default())->withScript($skeleton);
+        $session = DebugSession::open($app, $constraints, $options);
 
         if ($source !== null) {
             $session->defineEffect('resolve', static fn(): bool => $source->resolveNext());

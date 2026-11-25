@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Debug\Cli;
 
 use Drift\Dev\Debug\Plan;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 
 /** 解析结果。出口只读这里，不再回头看 argv。 */
@@ -94,6 +95,12 @@ final class Parsed
         }
 
         return $meta;
+    }
+
+    /** CLI 的采集预算唯一组装点：正文默认不抓。 */
+    public function recordOptions(): RecordOptions
+    {
+        return RecordOptions::of(bodies: $this->bool('bodies'));
     }
 
     /**

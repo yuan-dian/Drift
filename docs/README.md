@@ -40,6 +40,7 @@
 | 约束布局、Canvas op 流、三后端、确定性与文本栈 | [渲染模型](concepts/rendering.md) |
 | 一帧为什么变成这样、因果怎么记、调试器边界在哪 | [调试模型](concepts/debug-model.md) |
 | 记录怎么变成可追问、可复算、可携带的证据；投影与消费者怎么分工；检查器与网络怎么接入 | [证据模型](concepts/evidence-model.md) |
+| 调试器还差什么、按什么顺序补、怎么算完成 | [调试器成熟度路线](concepts/debugger-roadmap.md) |
 
 ## 查阅
 

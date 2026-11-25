@@ -162,7 +162,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 三者的查询代码完全相同：`DebugSession` 与 `RemoteSession` 实现同一对接口
 （`SessionQueries` / `SessionDriver`），差异只在"谁执行那串步骤"。
 
-### 协议八个方法，按角色分组
+### 协议九个方法，按角色分组
 
 | 角色 | 方法 |
 |---|---|
@@ -170,6 +170,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 | 驱动 | `frame` / `input` / `effect` |
 | 读 | `query` |
 | 干预 | `pause` / `resume` |
+| 收尾 | `finish` |
 
 凡是 `query` 能表达的都不另开动词 —— `script` 与 `digest` 因此是**查询名**。
 每多一个动词，对端就多一份"哪个先哪个后"的状态要维护，而状态会漂。
@@ -281,8 +282,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 
 ### 轮询，不是 SSE 也不是 WebSocket
 
-`frames(since)` 本来就是无状态游标（见上）。页面的"帧在动"就是每 250 ms 问一次
-`since=lastFrame`。SSE 要在服务端存订阅者集合，WS 要多一套帧协议与掩码 —— 两个都要引入
+当前页面每 1s 轮询 `/api/state`，帧号变化后再取该帧几何；`frames(since)` 本身仍是无状态游标（见上），只是页面暂未用它。SSE 要在服务端存订阅者集合，WS 要多一套帧协议与掩码 —— 两个都要引入
 "谁在看"这份状态，而这份状态会与帧推进耦合。
 
 Chrome DevTools 用 WebSocket 是因为 CDP 是**双向命令**通道；这层的控制只有 `pause` /

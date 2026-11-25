@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
+use Drift\Debug\Session\Edge;
 use Drift\Debug\Session\FrameRecord;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -128,6 +129,38 @@ final class RecorderTest extends SmokeTestCase
         } finally {
             Recorder::uninstall();
         }
+    }
+
+    /** settle 与 paint 都整段跳过的帧没有新几何；不采它才能把成本压到变化量。 */
+    public function testQuietFrameSkipsGeometrySampling(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            $before = \count($recorder->geometryFrames());
+            check('首帧采了几何', $before > 0, 'frames=' . $before);
+
+            // 先把盒的真实几何改掉：若跳过条件失效，这一帧会多出几何记录。
+            $app->root()?->effectiveBox()?->layout(BoxConstraints::tight(new Size(150.0, 90.0)));
+
+            $recorder->beginFrame(16.0);
+            $recorder->endFrame(
+                ['settleSkipped' => true, 'paintSkipped' => true],
+                0.0,
+                $app->root(),
+            );
+
+            check('全静止帧不再采几何', \count($recorder->geometryFrames()) === $before,
+                'frames=' . \count($recorder->geometryFrames()));
+            check('帧记录仍照常落账', \count($recorder->frames()) === 2,
+                'frames=' . \count($recorder->frames()));
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
     }
 
     public function testStageCostsConvertAndLeaveNoGapHidden(): void
@@ -343,6 +376,45 @@ final class RecorderTest extends SmokeTestCase
      * 判据写成「两轮号序列逐值相同」而不是「两轮都有号」：后者在累加时同样通过，
      * 而那正是要防的那件事。
      */
+    public function testNodeRecyclingKeepsReferencedAndRecentNodes(): void
+    {
+        $recorder = Recorder::install();
+
+        try {
+            $set = static function (string $name, mixed $value) use ($recorder): void {
+                $property = new \ReflectionProperty(Recorder::class, $name);
+                $property->setValue($recorder, $value);
+            };
+            $set('nodes', [
+                1 => ['p' => -1, 'c' => 'Old', 'x' => false, 's' => 1],
+                2 => ['p' => -1, 'c' => 'Recent', 'x' => false, 's' => 200],
+                3 => ['p' => -1, 'c' => 'Referenced', 'x' => false, 's' => 1],
+            ]);
+            $set('evicted', []);
+            $set('boxless', [1 => true, 3 => true]);
+            $set('geometryDigest', [1 => 'old', 3 => 'keep']);
+            $set('frameId', 200);
+            $set('frames', [200 => new FrameRecord(
+                200, 3200.0, 1.0,
+                [new Edge('state', null, 3, '', '')], [3], [], [], false, false, [],
+            )]);
+
+            $method = new \ReflectionMethod(Recorder::class, 'recycleNodes');
+            $method->invoke($recorder);
+
+            check('过期且未被引用的节点被回收', $recorder->nodeStatus(1) === 'evicted');
+            check('最近出现的节点保留', $recorder->nodeStatus(2) === 'active');
+            check('帧窗口仍引用的节点保留', $recorder->nodeStatus(3) === 'active');
+            check('回收地址记下最后见到的帧', ($recorder->evictedNodes()[1] ?? -1) === 1);
+            check('伴随元数据一起回收', !\in_array(1, $recorder->boxlessNodes(), true),
+                \json_encode($recorder->boxlessNodes()));
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
     public function testResetRestartsNodeNumbering(): void
     {
         $app = $this->boot();

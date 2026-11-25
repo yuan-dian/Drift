@@ -75,12 +75,17 @@ final class Query
         if ($element === null) {
             // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，
             // 后者是活树里已经没有它（快照窗口里仍可能有当时的读数）。
+            $status = $this->recorder->nodeStatus($node);
             $known = $this->recorder->nodeIndex()[$node] ?? null;
 
             return [
                 'found' => false,
                 'node' => $node,
-                'reason' => $known === null ? 'unknown-node' : 'node-unmounted',
+                'reason' => match ($status) {
+                    'evicted' => 'node-evicted',
+                    'active' => 'node-unmounted',
+                    default => 'unknown-node',
+                },
                 'type' => $known['c'] ?? null,
                 'window' => $this->recorder->propsCoverage(),
             ];
@@ -811,12 +816,14 @@ final class Query
             'network' => $this->recorder->networkCoverage(),
         ];
         if (!$known) {
+            $reason = $this->recorder->nodeStatus($node) === 'evicted' ? 'node-evicted' : 'unknown-node';
+
             return $base + [
                 'found' => false,
-                'reason' => 'unknown-node',
-                'causal' => ['found' => false, 'reason' => 'unknown-node'],
+                'reason' => $reason,
+                'causal' => ['found' => false, 'reason' => $reason],
                 'geometry' => $this->geometryMiss($node, $frame, $win['geometry']),
-                'network' => ['found' => false, 'reason' => 'unknown-node', 'window' => $win['network']],
+                'network' => ['found' => false, 'reason' => $reason, 'window' => $win['network']],
                 'windows' => $win,
             ];
         }
@@ -1067,6 +1074,15 @@ final class Query
         $window = $this->recorder->bodyCoverage();
         $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both';
         $maxBytes = \max(0, $maxBytes);
+        if (($window['captured'] ?? false) !== true) {
+            // 未开启报文预算时，空窗口不是"抓了但为空"：读者必须能分辨这两种事实。
+            return [
+                'request' => $request,
+                'found' => false,
+                'miss' => 'bodies-not-captured',
+                'window' => $window,
+            ];
+        }
         $record = $this->recorder->bodyAt($request);
         if ($record === null) {
             $skeleton = $this->recorder->networkAt($request);
@@ -1166,7 +1182,11 @@ final class Query
             'frame' => $frame,
             'reason' => $boxless
                 ? 'no-render-box'
-                : ($this->recorder->typeOf($node) === '' ? 'unknown-node' : 'outside-geometry-window'),
+                : match ($this->recorder->nodeStatus($node)) {
+                    'evicted' => 'node-evicted',
+                    'unknown' => 'unknown-node',
+                    default => 'outside-geometry-window',
+                },
             'window' => $window,
         ];
 

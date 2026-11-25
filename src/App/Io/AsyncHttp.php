@@ -85,8 +85,10 @@ final class AsyncHttp
         //   两条路径都从这里出去，用 Future 的结算观察钩子一次覆盖。
         $worker = $this->needsWorker($opts);
         $requestId = Recorder::tapNetworkStart($method, $url, $worker ? 'worker' : 'inline');
+        // 报文是预算域：默认只记骨架，不读请求 / 响应正文。
+        $captureBodies = Recorder::current()?->options()->bodies() ?? false;
         // 请求体摘要：callable 进不了证据，文件只留名字与字节数（不读上传内容）。
-        $requestSummary = self::requestSummary($opts);
+        $requestSummary = $captureBodies ? self::requestSummary($opts) : '';
 
         $future = $worker
             ? $this->submitWorker($method, $url, $opts, $requestId)
@@ -95,7 +97,7 @@ final class AsyncHttp
         if ($requestId > 0) {
             // onSettle 不派生 Future：onProgress 与 Fatal 判据都不受影响。
             // 观察者在 then() 之前跑 ⇒ 结算同帧的 setState 能被记成这条请求的落地。
-            $future->onSettle(static function (bool $ok, mixed $payload) use ($requestId, $requestSummary): void {
+            $future->onSettle(static function (bool $ok, mixed $payload) use ($requestId, $requestSummary, $captureBodies): void {
                 if ($payload instanceof HttpResponse) {
                     Recorder::tapNetworkSettle(
                         $requestId,
@@ -104,16 +106,18 @@ final class AsyncHttp
                         $payload->elapsedMs(),
                         $ok,
                     );
-                    // 报文是骨架的按需附件：脱敏与截断都在 NetworkBodyRecord 里做，
-                    // 门面只负责把原文递过去，不在这里读/改 body 语义。
-                    Recorder::tapNetworkBody($requestId, $requestSummary, $payload->body());
+                    if ($captureBodies) {
+                        Recorder::tapNetworkBody($requestId, $requestSummary, $payload->body());
+                    }
 
                     return;
                 }
                 // 失败路径：payload 是 \Throwable；不记 message（可能含隐私 / 瞬时主机名），
-                // 只记"这条请求没成"——骨架要的是对齐，不是错误全文。报文仍存请求侧。
+                // 只记"这条请求没成"——骨架要的是对齐，不是错误全文。正文按预算决定。
                 Recorder::tapNetworkSettle($requestId, 0, 0, 0.0, false);
-                Recorder::tapNetworkBody($requestId, $requestSummary, '');
+                if ($captureBodies) {
+                    Recorder::tapNetworkBody($requestId, $requestSummary, '');
+                }
             });
         }
 

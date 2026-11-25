@@ -75,6 +75,7 @@ try {
         drive: $drive,
         at: $at,
         session: $sessionId,
+        recordOptions: $args->recordOptions(),
     );
     $label = $source->label();
 

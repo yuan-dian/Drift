@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Debug\Protocol;
 
 use Drift\Debug\Session\InputScript;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Session;
 use Drift\Input\InputEvent;
@@ -61,14 +62,18 @@ final class RemoteSession implements Session
      *
      * @return float 挂载墙钟毫秒（与本地 `attach()` 同口径）
      */
-    public function open(Script $script): float
+    public function open(Script $script, ?RecordOptions $options = null): float
     {
         if ($this->opened) {
             throw new \LogicException('这个远端会话已经打开过：一个宿主进程只服务一次运行');
         }
         $this->opened = true;
 
-        $result = $this->callObject(Methods::OPEN, ['script' => $script->toArray()]);
+        $params = ['script' => $script->toArray()];
+        if ($options !== null) {
+            $params['options'] = $options->toManifest();
+        }
+        $result = $this->callObject(Methods::OPEN, $params);
         $mount = $result['mountMs'] ?? null;
         if (!\is_int($mount) && !\is_float($mount)) {
             throw new ProtocolError(ProtocolError::BAD_RESPONSE, 'open 的响应缺少 mountMs');

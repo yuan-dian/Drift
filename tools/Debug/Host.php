@@ -10,6 +10,7 @@ use Drift\Debug\Protocol\ProtocolError;
 use Drift\Debug\Protocol\Server;
 use Drift\Debug\Protocol\Wire;
 use Drift\Debug\Session\InputScript;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Step;
 
@@ -406,9 +407,14 @@ final class Host
             throw new ProtocolError(ProtocolError::BAD_REQUEST, 'open 需要 script（脚本骨架）');
         }
         $script = Script::fromArray($raw);
+        $optionsRaw = $params['options'] ?? null;
+        if ($optionsRaw !== null && !\is_array($optionsRaw)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'open 的 options 必须是对象');
+        }
+        $options = $optionsRaw === null ? RecordOptions::default() : RecordOptions::fromManifest($optionsRaw);
 
         // 录制落在**分叉**上：脚本进、脚本出，客户端交上来的那份不被改动。
-        $opened = $open($script->fork());
+        $opened = $open($script->fork(), $options);
 
         return [
             'session' => $opened['session'],

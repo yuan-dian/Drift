@@ -1,0 +1,229 @@
+# 调试器成熟度路线：从证据引擎到 DevTools
+
+> 本页定义调试器从“可判的证据”走到“可用的 DevTools”的目标形态、能力分层、缺口与分期。机制细节见[调试模型](debug-model.md)与[证据模型](evidence-model.md)；本页只回答“还差什么、按什么顺序补、怎么算完成”。
+
+## 结论
+
+当前实现已经跨过多数 GUI 框架没有跨过的那道坎：**因果是精确记录的，不是采样推断的；记录是可重放的，不是一次性快照；证据是可携带的，不是绑在某个面板里的**。这三件事构成了“证据引擎”的底座。
+
+但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
+
+1. **生产可用线**：录制开销已有量具与数字，但 AOT 常驻黑匣子、崩溃取证与多窗口隔离仍未验。
+2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加，没有绘制归因，Web 只是几何画布。
+3. **生态线**：发现规则硬编码、无严重度、无开关、无基线回归；协议与文档存在多处漂移。
+
+所以下一阶段的中心不是“再加几个视图”，而是**先把采集预算、生命周期与生产可用补齐，再让视图消费同一份证据**。任何新域如果没有预算、没有判据、没有独立消费者，就不进入主线。
+
+## 能力现状
+
+图例：**已落地** = 有代码、有判据、有消费者；**切片** = 主路径可用但缺关键一块；**未做** = 只有设计或只有查询面。
+
+| 能力 | 现状 | 成熟参照 | 判断 |
+|---|---|---|---|
+| 帧因果（谁写、谁重建、父传播） | 已落地：三挂点 + 精确边 + 结构折叠 | Chrome initiator、Flutter rebuild stats、React Profiler | **领先**：因果不是估的 |
+| 重放与指纹 | 已落地：脚本驱动 + 三指纹 + 重开 N 次 | Chrome Recorder、Redux 时间旅行、Tracy | **领先**：重放是重新执行 |
+| 证据包 | 已落地：NDJSON + manifest + 版本 + 逐域 counts + 导入校验 | Chrome trace、Perfetto | **领先**：语义化、可复算 |
+| 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
+| 属性（Widget / State） | 切片：dev 反射、按需快照、脱敏 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev |
+| 网络 | 切片：骨架 + 发起者 + 落地帧 + 报文 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
+| 确定性发现 | 切片：7 条规则、阈值可配三项 | Lighthouse audits、Flutter perf | 缺规则开关、严重度、基线回归 |
+| 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
+| Web 视图 | 切片：几何画布 + 发现 + 节点卡 | Chrome/Flutter 多标签 | 缺树、时间轴、网络、搜索 |
+| 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
+| 多窗口 / 多 target | 未做：第二个会话直接拒绝 | 成熟 DevTools 多 target | S2 的前置 |
+| 绘制 / layer / GPU | 未做：只有 `paint` 段总耗时 | Chrome Layers、Flutter Raster、Unity Frame Debugger | **核心性能缺口** |
+| 内存 / 泄漏 | 未做 | Chrome Memory、Flutter Memory、Tracy | 长跑应用必需 |
+| 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
+| 崩溃 / 生产黑匣子 | 未做 | Sentry breadcrumb、Chrome trace | S2 的核心价值 |
+| 规则扩展 / 插件 | 未做：规则硬编码在 `Brief` | ESLint、Lighthouse、Flutter lint | 生态门槛 |
+| 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
+| 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
+
+## 目标架构
+
+```text
+L3 消费者     CLI 12 出口        Web 视图         AI / CI          IDE（未来）
+                    \              |               |               /
+L2 投影        Brief / Findings  Inspector     Timeline     Network     Loop     Paint     Memory
+                    \              |               |               /
+L1 证据        FrameStore   NodeRegistry   GeometryStore   NetworkStore   PropStore   Script   Digest   Evidence
+                    \              |               |               /
+L0 采集        frame  state-write  rebuild  input  network  geometry  props  pick  paint  memory  async
+```
+
+四条不变量沿用[裁决索引](../decisions/README.md)：
+
+- **一份数一个名字**：每个域只有一个写入点、一个查询入口、一份投影；不在消费者里重算。
+- **四层不越层**：消费者只读投影，投影只读证据，证据只由采集写。
+- **窗口是常态**：任何交给消费者的证据都要逐域自报 from / to / capacity / dropped。
+- **诊断器不产出改法**：规则只给地址、度量、阈值、复算方式；“怎么改”归 AI / CI，且必须引用地址。
+
+## 关键设计
+
+### 1. 采集预算：`RecordOptions` 取代“装了全录”
+
+**问题**：改造前只要安装录制器，`AsyncHttp` 就会抓请求/响应体（最多 200 × 64KB），几何也会每帧先序全树并 `new GeometryRecord()` 再比签名。前者与“报文按需记”的文档相反，后者是 O(节点数)/帧，不是文档说的 O(变化量)。因果分析不需要为这两个域付全价。
+
+**设计**：引入只读值对象 `RecordOptions`，由调用方声明要哪些域：
+
+| 域 | 默认 | 说明 |
+|---|---|---|
+| frames / causes | 开 | 因果主路径，不可关 |
+| geometry | `changed` | `changed` 只存变化；`all` 每帧全量；`off` 不采 |
+| network skeleton | 开 | 方法 / URL / 状态 / 字节 / 帧号 / 发起者 |
+| network bodies | **关** | 显式开启才抓；未开启时 `networkBody` 报 `bodies-not-captured`，不返回空 |
+| props | 关 | 查询时按需读，仍走独立窗口 |
+| paint / memory / async | 关 | 新域一律默认关，先证明预算 |
+
+`Recorder::install()` / `DebugSession::open()` 收 `RecordOptions`；旧的位置参数由 `fromLegacy()` 一处归一，避免每个夹具各自翻译。`RecordOptions` 随 `Evidence` manifest 导出，读者才能判断“这份证据为什么没有报文”。
+
+**已落地判据**：常驻档不抓正文、不采几何、不记网络骨架；默认档只抓骨架；`networkBody` 的 `bodies-not-captured` 与“抓了但为空”分开；manifest 逐项带出预算，开启 bodies 后导出→导入仍逐字节稳定。几何在 `changed` 档直接用盒字段算签名，未变节点不再造记录；`settle` 与 `paint` 都整段跳过的全静止帧不进几何采样。这里不用 `layoutEpoch` 当唯一跳过信号：滚动偏移是就地推盒，不换代却会改几何。
+
+### 2. 节点生命周期：`NodeRegistry` 要有回收
+
+**问题**：`nodes` / `boxless` / `geometryDigest` 只增不减。长跑 + 动态节点会持续上涨，导出还带着已卸载节点；这与“环形窗口”承诺不一致。
+
+**设计**：节点登记只增加 `lastSeenFrame`；按“仍在帧窗口内被引用”或“超过 N 帧未见”回收元数据。**不引入 `generation`**：会话戳 + id 不复用已经承担代际，再造一个代际号只多一份要对齐的状态。被回收的地址查询返回 `node-evicted`，与 `unknown-node` 分开。
+
+**已落地判据**：节点登记记 `lastSeen`，每 60 帧回收一次长期未见且不被帧 / 几何 / 属性 / 网络引用保住的元数据；id 不复用，回收地址进 `evicted` 证据域，离线查询仍答 `node-evicted`。`nodes` 域只写活动节点，`unknown-node` 与“已回收”分开。
+
+### 3. 开销预算：没有量具就不加域
+
+**问题**：S2 的验收线是“默认开启帧耗时增幅 < 2%”，但仓库没有 recorder on/off 的 benchmark；现在无法证明“可常驻”。
+
+**设计**：加一个固定场景的 benchmark（约 2000 个渲染节点的合成列表树，标签逐帧变，避免判等复用把静止帧量成零成本），同脚本分别测：
+
+- off
+- frames-only
+- geometry(changed)
+- full（含网络骨架与 bodies）
+
+每次新增域必须给出数字，并写进该域的判据。默认常驻只允许 frames-only；full 只允许显式开启。
+
+**已落地判据**：`php tools/recorder-overhead.php --check` 同脚本跑四档、逐帧取中位。分母取 60fps 帧预算（16.67ms）而不是接近零的静止微基准：后者会把固定 2–3µs 放大成几十个百分点，和"能不能常驻"不是同一个问题。frames-only 的实测预算占用约 0.01%；geometry 与 full 的先后落在噪声范围内，不做单调性承诺。数字由量具现跑，不抄进判据当常量。
+
+### 4. S3d 绘制归因：把“慢”拆到节点与层
+
+**问题**：现在只能回答 `paint` 段花了多少，不能回答“这一帧重画了哪些节点、哪些层缓存没命中”。对 GUI 框架，这是性能调试的核心一问。
+
+**设计**：新增 `PaintRecord`（每帧）：
+
+- 本帧重画的节点 id 集合（来自 `markPaintChanged()` 的唯一写点）
+- layer cache 命中 / 未命中计数
+- 每个未命中层的节点 id 与原因（首次 / 尺寸变 / 内容变 / 变换变）
+- 绘制耗时按节点聚合（或按层聚合，粒度需裁决）
+
+查询面加 `paint(frame)`；投影加 `repaint-storm` / `layer-miss` 发现；面板与 Web 加绘制页。**不引入反射**，AOT 可用；绘制记录进 facts 指纹前必须先证明确定性，否则单列 `digest(Paint)`。
+
+**判据**：重画集合 ⊆ 结构树；与 `markPaintChanged()` 调用点对得上；缓存命中率跨帧可复算；AOT 真机可出同一份记录。
+
+### 5. 实时 attach、select / highlight 与多窗口
+
+**问题**：当前只能对 headless / 宿主子进程取证；用户不能在正在跑的真窗口上点一个控件、看它的约束链。多窗口直接拒绝。
+
+**设计**：
+
+- **live attach（dev-only）**：在帧循环里做非阻塞轮询，或把读记录放到独立线程；AOT 发布态仍不做（没有空闲帧循环，暂停会改事实）。
+- **select / highlight**：`pick` 已经是查询面；新增反向流 `highlight(node)` / `clearHighlight()`，在绘制后叠加，不写结构、不改布局。判据是 `Digest::ofFrame()` 前后逐值相同。
+- **多窗口**：录制器按应用/窗口命名空间隔离；`Discovery` 的数组条目真正生效；同一进程第二个窗口要么独立会话，要么显式拒绝并说明原因，不允许“开了就错”。
+
+这三件事都触碰 A33 的旧表述（六个方法、不做 live attach）。实施前先重开 A33，把“dev 形态做 / 发布态不做”和“九个方法按角色分组”写清楚。
+
+**判据**：attach 到运行中的窗口后能 pause / step / query；highlight 不改变 digest；两个窗口的节点 id、帧号、会话令牌不串。
+
+### 6. 规则注册表、严重度与基线回归
+
+**问题**：7 条发现规则硬编码在 `Brief`；`Finding` 没有 severity；文档说“规则可关”，代码没有开关；没有 baseline，无法回答“这次比上次慢了吗”。
+
+**设计**：
+
+- `FindingRule` 接口：`id()` / `version()` / `evaluate(Facts, Thresholds): list<Finding>`；`RuleRegistry` 唯一声明。
+- `Finding` 增加 `severity`（info / warn / error）与 `suppressed` 理由；规则可 `--rules=...` 启用、`--disable=...` 关闭；未知规则名报错，不静默。
+- `--baseline=<evidence>`：按同一组规则比较两份证据的发现与关键度量；回归进 CI 退出码，而不是只打印。
+- `Thresholds` 的全部字段都要有 CLI 入口；当前只有 slow / fanout / repeat 三项。
+
+**判据**：新增规则不修改 `Brief`；关闭规则后该条发现消失且其他发现不变；基线回归能红在“同一规则、同一地址的度量变差”上。
+
+### 7. 后续域：内存、异步、无障碍
+
+这三个域都重要，但不与 S3d / S2 同期做；先按“预算 + 独立窗口 + 独立查询”的形状评估：
+
+- **内存**：节点 / State 存活数、订阅数、图片缓存、worker 内存；不做堆转储（PHP/AOT 限制），只做可复算的计数与泄漏趋势。
+- **异步**：Future / worker job 的时间线、队列深度、结算延迟、取消；网络只是其中一个子域。
+- **无障碍**：语义树 + UIA 属性；已有 UIA 实现，缺的是查询面与投影。
+
+每个域进入主线前必须回答：采集点在哪、窗口多大、进不进 digest、AOT 是否可用、消费者是谁。
+
+## 计划列表
+
+规模用 S / M / L 表示，不是工期承诺。每一批的“完成”都包含代码、判据、文档三件事。
+
+| 批次 | 任务 | 交付与判据 | 依赖 | 规模 |
+|---|---|---|---|---|
+| **P0** | 文档真相校正 | 把 S0 标为已落地；`debug-model` 的方法数改为九个并补 `finish`；Web 轮询描述改为当前实现；阈值“全部可配”改为实际三项；架构图去掉诊断器里的“根因建议 / 基线回归”，把“黑匣子”标为 S2；`ROADMAP` 余项补 S3d。`doccheck` 通过，全文不再出现互相矛盾的现状句 | 无 | S |
+| **P0** | 重开 A33 | 把“六个方法”改为按角色分组的九个；把 live attach 条款改为“dev 形态做、发布态不做”；写明失效条件 | 无 | S |
+| **P1** | `RecordOptions` 与报文按需 | 已落地：因果-only 不抓 body、不采几何、不记网络骨架；`bodies-not-captured` 可区分；manifest 记录选项；导出往返稳定 | P0 | M |
+| **P1** | 几何采样降本 | 已落地：签名直接由盒字段计算，不再每帧 new 记录；全静止帧跳过采样；几何窗口仍 60 帧并自报 | P1 | M |
+| **P1** | 节点表回收 | 已落地：`lastSeen` + 周期性回收；`node-evicted` 与 `unknown-node` 分开；回收地址随包走 | P1 | M |
+| **P1** | 录制开销量具 | 已落地：2000 节点固定场景；off / frames / geometry / full 四档；frames-only 帧预算 < 2%；`--check` 咬预算 | P1 | M |
+| **P2** | S3d 绘制归因 | `PaintRecord` + `paint(frame)` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树；AOT 可用；面板/Web 有入口 | P1 | L |
+| **P3** | live attach（dev） | 运行中真窗口可 attach、pause、step、query；AOT 仍拒绝并说明原因 | P0、P1 | L |
+| **P3** | select / highlight | `pick` 接到活窗口点击；高亮绘制后叠加；highlight 前后 digest 相同 | P3 | M |
+| **P3** | 多窗口隔离 | 会话按应用/窗口命名空间；`Discovery` 多条目生效；第二窗口独立或明确拒绝 | P3 | L |
+| **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
+| **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |
+| **P5** | 规则注册表 | `FindingRule` + `RuleRegistry`；severity；启用/关闭；未知规则报错 | P2 | M |
+| **P5** | 基线回归 | `--baseline` 比较两份证据；CI 退出码；回归能红在度量变差 | P5 | M |
+| **P6** | 内存域 | 节点 / State / 订阅 / 图片缓存计数；泄漏趋势；独立窗口与查询 | P4 | L |
+| **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
+| **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
+| **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
+| **P7** | 协议版本与能力发现 | 协议版本、能力列表、错误码表；老客户端遇到未知能力显式报错 | P3 | M |
+
+### 建议顺序的理由
+
+- **P0 先做**：当前文档把已完成的 S0 标成未做，会直接导致下一轮重复劳动；A33 的六方法表述会让新消费者按错的协议写代码。
+- **P1 先于 S3d**：绘制域会新增每帧记录；如果采集预算与节点生命周期没先收口，S3d 会把开销问题放大。
+- **P3 先于 S2**：S2 的“多窗口隔离”与“常驻”需要 live attach 探出的会话/窗口形状；先做 S2 会返工。
+- **P5 可以并行**：规则注册表只依赖 S3d 的投影形状，不依赖 live attach；如果人力允许，与 P3 并行。
+- **P6 最后**：内存/异步/无障碍都是新域，必须等预算与回收机制稳定，否则每个域都会自带一套泄漏。
+
+## 验收门
+
+不是“功能列表做完”，而是三扇门：
+
+| 门 | 必须同时满足 | 对应批次 |
+|---|---|---|
+| **生产可用** | AOT 常驻默认开销 < 2%；崩溃文件可检出截断；多窗口隔离；慢帧可回看 | P1、P3、P4 |
+| **调试体验** | 真窗口 attach；点选 + 高亮；因果树 / 时间线 / 绘制页可在同一会话里联动 | P2、P3 |
+| **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议有能力发现；使用指南可独立走通 | P5、P7 |
+
+三扇门都过，才谈“成熟 DevTools”。只过第一扇，是“可用的生产诊断器”；只过第二扇，是“好用的开发检查器”；三扇都过，才是别人愿意长期依赖的工具。
+
+## 不做
+
+- **完整 PHP 断点调试器**：与证据模型是两条产品线；没有真实需求前不做。
+- **像素级视觉回归**：归 golden 基线，不混进符号证据。
+- **实时属性编辑**：控件不可变，改了就与运行时不是同一份证据。
+- **远程多用户 / TLS 调试面**：当前只绑 loopback；要开远程另立安全设计。
+- **GPU 驱动级 / 系统级采样**：S3d 只做框架绘制与 layer，不做 Perfetto 级系统追踪。
+- **替代 Sentry / APM**：崩溃取证只服务本框架的现场，不做通用告警平台。
+
+## 待裁决
+
+以下事项会改变现行裁决或兼容面，实施前需要单独拍板：
+
+1. **A36 的“规则可关”**：当前只有阈值可配，没有规则开关；是补开关，还是把“可关”改成“可配阈值”。
+2. **多窗口模型**：一个进程一个录制器（按窗口命名空间）还是每个窗口一个录制器；这决定 S2 的隔离形状。
+3. **绘制域的指纹**：`PaintRecord` 进 facts 指纹，还是单列 `digest(Paint)`；取决于 layer cache 是否跨机器确定。
+
+A33（九方法 / dev attach）、S0 状态与报文默认关闭已分别在 P0 / P1 收口，不再列为待裁决。
+
+## 相关
+
+- 一帧怎么记、因果方向与边界：[调试模型](debug-model.md)
+- 证据的形态、投影与消费者：[证据模型](evidence-model.md)
+- 现行裁决与失效条件：[裁决索引](../decisions/README.md)
+- 命令入口与参数：[命令速查](../reference/cli.md)
+- 验证分层与真机纪律：[测试与验证](../guides/testing.md)
+- 对外兼容承诺与 1.0 门槛：[路线图](../../ROADMAP.md)

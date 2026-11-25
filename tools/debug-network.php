@@ -16,7 +16,7 @@ declare(strict_types=1);
  *
  * 用法：
  *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2
- *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2 --request=1
+ *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2 --request=1 --bodies
  *   php tools/debug-network.php ... --request=1 --part=response --maxBytes=0 --json
  *   php tools/debug-network.php ... --remote
  *   php tools/debug-network.php --page=async-table --rows=3 --resolve --frames=2 --out=case.evidence
@@ -27,6 +27,7 @@ declare(strict_types=1);
  *   --part=both|request|response  只要一侧（默认 both）
  *   --limit=N         骨架列表条数（默认 50，0=不截断）
  *   --maxBytes=N      查询侧每条 body 的上限（默认 8192，0=不截断）
+ *   --bodies          采集请求 / 响应正文（脱敏，默认关）
  *   --page=<路由id>   页面（与面板同义）
  *   --frames=N        驱动几帧（默认 1）
  *   --rows=N          取数替身参数（异步页需要）
@@ -82,6 +83,7 @@ try {
         drive: $drive,
         at: $at,
         out: $out,
+        recordOptions: $args->recordOptions(),
     );
     $label = $source->label();
     $session = $source->queries();

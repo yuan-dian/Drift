@@ -39,17 +39,14 @@ final readonly class EvidenceBag
         public array $props = [],
         /** @var array<int, true> 没有自己盒的节点（复合控件） */
         public array $boxless = [],
+        /** @var array<int, int> 已回收节点 id => 最后见到的帧 */
+        public array $evicted = [],
         public ?Script $script = null,
-        /** 产生这份证据时的帧窗口容量；实际帧数可能更多（全量导出）。 */
-        public int $capacity = Recorder::DEFAULT_CAPACITY,
         /**
-         * 采集时是否开着报文脱敏。
-         *
-         * 必须随包走：导出的报文已经定型，若导入后一律报"已脱敏"，包里存的是明文时
-         * 读者会把凭证当成"检查过且干净"——与 A38 那条"`redacted: 0` 不等于没敏感字段"
-         * 是同一个陷阱，只是换了一层。
+         * 采集预算。脱敏开关也在这里：包里存的是明文时若一律报"已脱敏"，读者会把
+         * 凭证当成"检查过且干净"——`redacted: 0` 不等于没敏感字段。
          */
-        public bool $redactBodies = true,
+        public ?RecordOptions $options = null,
         /**
          * 包里**声明包含**哪些域，值域见 {@see Evidence::D_*}。
          *

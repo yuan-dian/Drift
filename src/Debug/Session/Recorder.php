@@ -70,6 +70,12 @@ final class Recorder
      */
     public const int BODY_CAPACITY = 200;
 
+    /** 节点超过这么多帧没再出现就可以回收（仍在窗口里的引用会保住它）。 */
+    private const int NODE_TTL_FRAMES = 120;
+
+    /** 每 N 帧扫一次节点表：摊薄扫描成本，上界仍由 TTL + 活动窗口决定。 */
+    private const int NODE_RECYCLE_EVERY = 60;
+
     private static ?self $current = null;
 
     /**
@@ -83,8 +89,13 @@ final class Recorder
     /** @var array<int, FrameRecord> 帧号 => 记录，键升序 */
     private array $frames = [];
 
-    /** @var array<int, array{p: int, c: string}> 节点 id => 父 id（`-1` 根、`-2` 未解析）/ Widget 短类名 */
+    /** @var array<int, array{p: int, c: string, x: bool, s: int}> 节点 id => 父 / 类名 / Flex / 最后见到的帧 */
     private array $nodes = [];
+
+    /** @var array<int, int> 已回收节点 id => 最后见到的帧；id 永不复用 */
+    private array $evicted = [];
+
+    private int $lastRecycleFrame = 0;
 
     /**
      * 几何窗口比帧窗口短得多：600 帧 × 2000 节点全存撑不住，而"这一帧为什么这个尺寸"
@@ -96,6 +107,15 @@ final class Recorder
 
     /** @var array<int, string> node => 上一次记下的几何签名（帧被裁掉也不删：它代表"已经记过"） */
     private array $geometryDigest = [];
+
+    /**
+     * 是否已经采过至少一帧几何。
+     *
+     * settle 与 paint 都整段跳过的帧才算"全静止"：既不重建也不重画，几何没有理由变。
+     * 只用 layoutEpoch 会漏掉"就地推盒 + 重画"这一类（滚动偏移），所以这里认的是
+     * 两道整段跳过的信号，不是盒换代序号。
+     */
+    private bool $geometryPrimed = false;
 
     /**
      * 没有自己 RenderBox 的节点（复合控件，如 PageShell）。
@@ -186,43 +206,33 @@ final class Recorder
     private float $openT = 0.0;
 
     public function __construct(
-        private readonly int $capacity = self::DEFAULT_CAPACITY,
-        private readonly ?Script $script = null,
-        /**
-         * 报文脱敏开关（默认开）。
-         *
-         * 为什么默认开：浏览器 DevTools 不脱敏，是因为它的数据**不出进程** ——
-         * 关掉标签页就没了。本仓的证据会过 NDJSON 协议到另一个进程、会进
-         * `Brief` 喂给 AI 读、可能随 CI artifact 上传，三处都在开发者控制之外。
-         *
-         * 为什么仍然给开关：本地排查"密码到底传对没有"时需要看原文，而脱敏一旦
-         * 发生就不可逆（存的就是换过的那份）。关掉时 meta 会记 `redact: false` ——
-         * `redacted: 0` 必须能被区分成"没扫"和"扫了没发现"，否则读者会把
-         * "没脱敏"读成"没敏感字段"，那又是一次自报说谎。
-         */
-        private readonly bool $redactBodies = true,
+        private readonly RecordOptions $options = new RecordOptions(),
     ) {
         $this->tag = ++self::$sessionSeq;
     }
 
     // ---------------------------------------------------------------- 生命周期
 
+    /**
+     * 安装录制器。旧的三参数位置 / 命名调用仍可用，但统一归一成 {@see RecordOptions}。
+     */
     public static function install(
-        int $capacity = self::DEFAULT_CAPACITY,
+        RecordOptions|int|null $options = null,
         ?Script $script = null,
         bool $redactBodies = true,
     ): self {
+        $options = RecordOptions::fromLegacy($options, $script, $redactBodies);
         // 段耗时不用第二套计时：`SurfaceProfile` 已经是全仓唯一的"计一段"入口
         // （九段里的 settle/layout/paint 在 `Frame::run()` 里记，壳的 stage() 拿不到）。
         // 装录制器就把量具打开，帧首清零、帧末读账 —— 两条驱动路径拿到同一份数据。
-        if (self::$current === null) {
+        if (self::$current === null && $options->profileStages()) {
             self::$ownsProfile = !SurfaceProfile::$on;
             if (self::$ownsProfile) {
                 SurfaceProfile::$on = true;
             }
         }
 
-        return self::$current = new self($capacity, $script, $redactBodies);
+        return self::$current = new self($options);
     }
 
     public static function uninstall(): void
@@ -231,6 +241,7 @@ final class Recorder
             SurfaceProfile::$on = false;
             SurfaceProfile::reset();
         }
+        self::$ownsProfile = false;
         self::$current = null;
     }
 
@@ -266,16 +277,27 @@ final class Recorder
      */
     public static function hydrate(EvidenceBag $bag): self
     {
-        $capacity = \max(1, $bag->capacity, \count($bag->frames));
-        $recorder = new self($capacity, $bag->script, $bag->redactBodies);
+        $options = ($bag->options ?? new RecordOptions())->withScript($bag->script);
+        $capacity = \max(1, $options->capacity(), \count($bag->frames));
+        if ($capacity !== $options->capacity()) {
+            $options = $options->withCapacity($capacity);
+        }
+        // 包里有报文就说明当时开着；选项缺失的旧包靠这条事实补齐，避免把已有
+        // 报文说成"未开启"。
+        if ($bag->bodies !== [] && !$options->bodies()) {
+            $options = $options->withBodies(true);
+        }
+        $recorder = new self($options);
 
         $recorder->nodes = $bag->nodes;
+        $recorder->evicted = $bag->evicted;
         $recorder->frames = [];
         foreach ($bag->frames as $frame) {
             $recorder->frames[$frame->id] = $frame;
         }
         $recorder->frameId = $recorder->lastFrameId();
         $recorder->geometry = $bag->geometry;
+        $recorder->geometryPrimed = $bag->geometry !== [];
         $recorder->network = $bag->network;
         $recorder->bodies = $bag->bodies;
         $recorder->props = $bag->props;
@@ -353,7 +375,7 @@ final class Recorder
         $this->openT = $t;
         // 帧步骤带的是**注入的时间戳**，不是墙钟：脚本要能在另一台机器上重演出
         // 同一串时刻，而墙钟每跑一次都不一样。
-        $this->script?->add(Step::frame($t));
+        $this->options->script()?->add(Step::frame($t));
         // 量具是累计账：不清零就会把上一帧的耗时记到这一帧头上。
         if (self::$ownsProfile) {
             SurfaceProfile::reset();
@@ -377,8 +399,12 @@ final class Recorder
             return;
         }
         $this->open = false;
-        if ($root !== null) {
+        $quietFrame = $this->geometryPrimed
+            && ($facts['settleSkipped'] ?? false) === true
+            && ($facts['paintSkipped'] ?? false) === true;
+        if ($root !== null && $this->options->geometry() !== GeometryCapture::Off && !$quietFrame) {
             $this->sampleGeometry($root, $this->frameId);
+            $this->geometryPrimed = true;
         }
         $incomplete = [];
         if ($this->causesTruncated) {
@@ -409,6 +435,10 @@ final class Recorder
         // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
         $this->activeRequest = 0;
         $this->trim();
+        if ($this->frameId - $this->lastRecycleFrame >= self::NODE_RECYCLE_EVERY) {
+            $this->recycleNodes();
+            $this->lastRecycleFrame = $this->frameId;
+        }
     }
 
     /** 状态写入（clean→dirty 跳变时调；同帧同节点只记第一条）。 */
@@ -507,7 +537,7 @@ final class Recorder
      */
     public function noteInput(InputEvent $event, ?float $t): void
     {
-        $this->script?->add(InputScript::pack($event, $t));
+        $this->options->script()?->add(InputScript::pack($event, $t));
     }
 
     /**
@@ -520,15 +550,21 @@ final class Recorder
      */
     public function noteEffect(string $name, array $args, ?float $t): void
     {
-        $this->script?->add(Step::effect($name, $args, $t));
+        $this->options->script()?->add(Step::effect($name, $args, $t));
     }
 
     // ------------------------------------------------------------------ 查询
 
+    /** 本次录制的采集预算；随证据包导出。 */
+    public function options(): RecordOptions
+    {
+        return $this->options;
+    }
+
     /** 录制中的脚本；没开脚本时为 `null`。 */
     public function script(): ?Script
     {
-        return $this->script;
+        return $this->options->script();
     }
 
     /**
@@ -541,6 +577,22 @@ final class Recorder
     public function nodeIndex(): array
     {
         return $this->nodes;
+    }
+
+    /** @return array<int, int> 已回收节点 id => 最后见到的帧 */
+    public function evictedNodes(): array
+    {
+        return $this->evicted;
+    }
+
+    /** 查询侧的单一出口：活动 / 已回收 / 从未发号，三者不可混。 */
+    public function nodeStatus(int $node): string
+    {
+        if (isset($this->nodes[$node])) {
+            return 'active';
+        }
+
+        return isset($this->evicted[$node]) ? 'evicted' : 'unknown';
     }
 
     /**
@@ -746,17 +798,15 @@ final class Recorder
         );
     }
 
-    /**
-     * 存一份报文：只在录制器安装时发生，且按条数独立裁剪。
-     *
-     * 请求体传进来时在门面就把 callable / 文件句柄剔掉了（它们进不了证据）；
-     * multipart 的文件只留字段名与字节数摘要，不读文件内容。
-     */
+    /** 存一份报文：只在预算显式开启时发生，且按条数独立裁剪。 */
     public function noteNetworkBody(
         int $requestId,
         string $requestRaw,
         string $responseRaw,
     ): void {
+        if (!$this->options->bodies()) {
+            return;
+        }
         if ($requestId <= 0 || !isset($this->network[$requestId])) {
             return; // 骨架已被裁掉：不复活半份报文
         }
@@ -765,7 +815,7 @@ final class Recorder
             $requestRaw,
             $responseRaw,
             NetworkBodyRecord::MAX_BYTES,
-            $this->redactBodies,
+            $this->options->redact(),
         );
     }
 
@@ -782,7 +832,7 @@ final class Recorder
      */
     public function redactionEnabled(): bool
     {
-        return $this->redactBodies;
+        return $this->options->redact();
     }
 
     /** 属性查询是否由本会话发号：旧会话的元素带着旧号，不能拿来查本会话的节点。 */
@@ -821,7 +871,7 @@ final class Recorder
         ];
     }
 
-    /** @return array{requests: int, capacity: int, from: int, to: int, bytes: int} */
+    /** @return array{captured: bool, requests: int, capacity: int, from: int, to: int, bytes: int} */
     public function bodyCoverage(): array
     {
         $keys = \array_keys($this->bodies);
@@ -831,6 +881,7 @@ final class Recorder
         }
 
         return [
+            'captured' => $this->options->bodies(),
             'requests' => \count($keys),
             'capacity' => self::BODY_CAPACITY,
             'from' => $keys === [] ? 0 : \min($keys),
@@ -853,7 +904,7 @@ final class Recorder
         return $this->network[$requestId] ?? null;
     }
 
-    /** @return array{requests: int, capacity: int, from: int, to: int, inFlight: int} */
+    /** @return array{captured: bool, requests: int, capacity: int, from: int, to: int, inFlight: int} */
     public function networkCoverage(): array
     {
         $keys = \array_keys($this->network);
@@ -865,6 +916,7 @@ final class Recorder
         }
 
         return [
+            'captured' => $this->options->network(),
             'requests' => \count($keys),
             'capacity' => self::NETWORK_CAPACITY,
             'from' => $keys === [] ? 0 : \min($keys),
@@ -882,7 +934,7 @@ final class Recorder
         return $end === 0 ? '' : \substr($rest, 0, $end);
     }
 
-    /** @return array{frames: int, capacity: int, from: int, to: int, nodes: int} */
+    /** @return array{mode: string, frames: int, capacity: int, from: int, to: int, nodes: int} */
     public function geometryCoverage(): array
     {
         $keys = \array_keys($this->geometry);
@@ -892,6 +944,7 @@ final class Recorder
         }
 
         return [
+            'mode' => $this->options->geometry()->value,
             'frames' => \count($keys),
             'capacity' => self::GEOMETRY_FRAMES,
             'from' => $keys === [] ? 0 : \min($keys),
@@ -914,51 +967,17 @@ final class Recorder
         if ($box === null) {
             $this->boxless[$id] = true;
         }
-        if ($box !== null) {
-            // 采样写在这里而不是 GeometryRecord：Debug 层不得依赖 Layout（lint 的
-            // 依赖方向规则）。$box 的类型由 Element::renderObject() 推断，不需要 import。
-            $size = $box->size();
-            if ($size !== null) {
-                $mods = $box->mods();
-                $style = $mods?->boxStyle();
-                $align = $mods !== null ? $mods->alignment() : null;
-                $record = new GeometryRecord(
-                    $frame,
-                    $id,
-                    $parentBoxId,
-                    GeometryRecord::pack($box->appliedConstraints()),
-                    GeometryRecord::pack($box->constraints()),
-                    ['w' => $size->width, 'h' => $size->height],
-                    ['x' => $box->offsetX(), 'y' => $box->offsetY()],
-                    GeometryRecord::edges(
-                        $mods !== null && $mods->hasPadding() ? $mods->padLeft() : 0.0,
-                        $mods !== null && $mods->hasPadding() ? $mods->padTop() : 0.0,
-                        $mods !== null && $mods->hasPadding() ? $mods->padRight() : 0.0,
-                        $mods !== null && $mods->hasPadding() ? $mods->padBottom() : 0.0,
-                    ),
-                    GeometryRecord::edges(
-                        $mods !== null && $mods->hasInset() ? $mods->insetLeft() : 0.0,
-                        $mods !== null && $mods->hasInset() ? $mods->insetTop() : 0.0,
-                        $mods !== null && $mods->hasInset() ? $mods->insetRight() : 0.0,
-                        $mods !== null && $mods->hasInset() ? $mods->insetBottom() : 0.0,
-                    ),
-                    $mods !== null && ($mods->hasBoxWidth() || $mods->hasBoxHeight())
-                        ? ['w' => $mods !== null && $mods->hasBoxWidth() ? $mods->boxWidth() : null,
-                           'h' => $mods !== null && $mods->hasBoxHeight() ? $mods->boxHeight() : null]
-                        : null,
-                    $mods !== null && $mods->hasAspect() ? $mods->aspect() : null,
-                    $align !== null ? ['x' => $align->x, 'y' => $align->y] : null,
-                    $style !== null && $style->hasBorder(),
-                    $style?->borderWidth ?? 0.0,
-                    ['grow' => $mods?->flexGrow() ?? 0, 'shrink' => $mods?->flexShrink() ?? 0],
-                );
-                $signature = $record->signature();
-                if (($this->geometryDigest[$id] ?? null) !== $signature) {
-                    $this->geometry[$frame][$id] = $record;
-                    $this->geometryDigest[$id] = $signature;
-                }
-                $boxId = $id;
+        if ($box !== null && $box->size() !== null) {
+            // 字段抽取与签名共用 GeometryRecord 的字段表；未变节点不再造记录对象。
+            $fields = GeometryRecord::fieldsOf($box, $frame, $id, $parentBoxId);
+            $signature = GeometryRecord::signatureOf($fields);
+            if ($this->options->geometry() === GeometryCapture::All
+                || ($this->geometryDigest[$id] ?? null) !== $signature
+            ) {
+                $this->geometry[$frame][$id] = GeometryRecord::fromFields($fields);
+                $this->geometryDigest[$id] = $signature;
             }
+            $boxId = $id;
         }
 
         $element->visitChildren(function (Element $child) use ($frame, $boxId): void {
@@ -978,7 +997,8 @@ final class Recorder
      */
     public function idOf(Element $element): int
     {
-        if ($element->debugSession !== $this->tag) {
+        if ($element->debugSession !== $this->tag || !isset($this->nodes[$element->debugId])) {
+            // 本会话的号也可能已被回收：回收只删元数据、不复号，活节点再出现时给新号。
             $element->debugId = ++$this->seq;
             $element->debugSession = $this->tag;
             // 记 **Widget** 名而不是 Element 子类名：面板上要看到 `Table` / `Column`，
@@ -992,10 +1012,12 @@ final class Recorder
                 'p' => -2,
                 'c' => self::shortClass($element->widget()),
                 'x' => $element->widget() instanceof Flex,
+                's' => $this->frameId,
             ];
         }
 
         $meta = $this->nodes[$element->debugId];
+        $meta['s'] = $this->frameId;
         if ($meta['p'] === -2) {
             $parent = $element->parent();
             $meta['p'] = $parent === null ? -1 : $this->idOf($parent);
@@ -1149,7 +1171,7 @@ final class Recorder
         return [
             'frames' => \count($this->frames),
             'nodes' => \count($this->nodes),
-            'capacity' => $this->capacity,
+            'capacity' => $this->options->capacity(),
             'lastCostMs' => $last?->costMs ?? 0.0,
             'lastRebuilt' => $last === null ? 0 : \count($last->rebuilt),
         ];
@@ -1177,6 +1199,7 @@ final class Recorder
         //   上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报，看起来完美。
         $this->geometry = [];
         $this->geometryDigest = [];
+        $this->geometryPrimed = false;
         // 属性是旧会话的活树读数，重开会话后一句都不能留（帧号会从头开始，
         // 残留快照会被读成"这一帧的属性"，且不会报 stale）。
         $this->props = [];
@@ -1187,6 +1210,8 @@ final class Recorder
         //   元素见 `debugSession === tag` 会沿用旧号并撞上已发出的号；只换 tag
         //   不清表，旧号的父指针会指向上一棵树的节点。
         $this->nodes = [];
+        $this->evicted = [];
+        $this->lastRecycleFrame = 0;
         $this->boxless = [];
         $this->seq = 0;
         $this->tag = ++self::$sessionSeq;
@@ -1219,7 +1244,12 @@ final class Recorder
         string $url,
         string $path,
     ): int {
-        return self::$current?->noteNetworkStart($method, $url, $path) ?? 0;
+        $recorder = self::$current;
+        if ($recorder === null || !$recorder->options->network()) {
+            return 0;
+        }
+
+        return $recorder->noteNetworkStart($method, $url, $path);
     }
 
     public static function tapNetworkSettle(
@@ -1244,9 +1274,61 @@ final class Recorder
 
     // ------------------------------------------------------------------ 内部
 
+    /**
+     * 回收长期不出现的节点元数据；id 不复用，回收地址仍可查成 `node-evicted`。
+     *
+     * 窗口内被引用的节点会保住：帧因果、几何行、属性快照与网络落地都算引用。
+     * 否则"旧帧里还有这个节点"会被读成"这个节点从没发过号"。
+     */
+    private function recycleNodes(): void
+    {
+        $retain = [];
+        foreach ($this->frames as $frame) {
+            foreach ($frame->causes as $edge) {
+                if ($edge->fromId !== null) {
+                    $retain[$edge->fromId] = true;
+                }
+                $retain[$edge->toId] = true;
+            }
+            foreach ($frame->rebuilt as $node) {
+                $retain[(int) $node] = true;
+            }
+        }
+        foreach ($this->geometry as $rows) {
+            foreach ($rows as $node => $_) {
+                $retain[(int) $node] = true;
+            }
+        }
+        foreach ($this->props as $node => $_) {
+            $retain[(int) $node] = true;
+        }
+        foreach ($this->network as $record) {
+            foreach ($record->landed as $node) {
+                $retain[(int) $node] = true;
+            }
+        }
+
+        foreach ($this->nodes as $id => $meta) {
+            $seen = (int) ($meta['s'] ?? 0);
+            if (isset($retain[$id]) || $this->frameId - $seen <= self::NODE_TTL_FRAMES) {
+                continue;
+            }
+            $this->evicted[$id] = $seen;
+            unset($this->nodes[$id], $this->boxless[$id], $this->geometryDigest[$id]);
+        }
+
+        while (\count($this->evicted) > self::NETWORK_CAPACITY * 2) {
+            $oldest = \array_key_first($this->evicted);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->evicted[$oldest]);
+        }
+    }
+
     private function trim(): void
     {
-        while (\count($this->frames) > $this->capacity) {
+        while (\count($this->frames) > $this->options->capacity()) {
             $oldest = \array_key_first($this->frames);
             if ($oldest === null) {
                 return;

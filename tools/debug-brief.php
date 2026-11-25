@@ -92,6 +92,7 @@ try {
         at: $at,
         out: $out,
         session: $sessionId,
+        recordOptions: $args->recordOptions(),
     );
     $label = $source->label();
 

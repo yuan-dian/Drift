@@ -55,6 +55,7 @@ final class Evidence
 
     public const string D_NODES = 'nodes';
     public const string D_BOXLESS = 'boxless';
+    public const string D_EVICTED = 'evicted';
     public const string D_FRAMES = 'frames';
     public const string D_GEOMETRY = 'geometry';
     public const string D_NETWORK = 'network';
@@ -76,6 +77,7 @@ final class Evidence
     public const array DEFAULT_DOMAINS = [
         self::D_NODES,
         self::D_BOXLESS,
+        self::D_EVICTED,
         self::D_FRAMES,
         self::D_GEOMETRY,
         self::D_NETWORK,
@@ -87,6 +89,7 @@ final class Evidence
     public const array ALL_DOMAINS = [
         self::D_NODES,
         self::D_BOXLESS,
+        self::D_EVICTED,
         self::D_FRAMES,
         self::D_GEOMETRY,
         self::D_NETWORK,
@@ -98,6 +101,7 @@ final class Evidence
     private const string K_MANIFEST = 'manifest';
     private const string K_NODE = 'node';
     private const string K_BOXLESS = 'boxless';
+    private const string K_EVICTED = 'evicted';
     private const string K_FRAME = 'frame';
     private const string K_GEOMETRY = 'geometry';
     private const string K_NETWORK = 'network';
@@ -119,6 +123,7 @@ final class Evidence
     private const array RECORDS = [
         self::K_NODE => ['domain' => self::D_NODES, 'keys' => ['id', 'p', 'c']],
         self::K_BOXLESS => ['domain' => self::D_BOXLESS, 'keys' => ['node']],
+        self::K_EVICTED => ['domain' => self::D_EVICTED, 'keys' => ['node']],
         self::K_FRAME => ['domain' => self::D_FRAMES, 'keys' => ['id', 't', 'cost', 'rebuilt', 'causes']],
         self::K_GEOMETRY => ['domain' => self::D_GEOMETRY, 'keys' => ['frame', 'node', 'parent']],
         self::K_NETWORK => ['domain' => self::D_NETWORK, 'keys' => ['request', 'method', 'url']],
@@ -162,6 +167,7 @@ final class Evidence
                         'p' => $meta['p'],
                         'c' => $meta['c'],
                         'x' => $meta['x'],
+                        's' => (int) ($meta['s'] ?? 0),
                     ]);
                 }
             }
@@ -171,6 +177,12 @@ final class Evidence
                 // 批量行会让"行数 = 条数"这条规则失效，而计数账正是靠它判截断的。
                 foreach ($recorder->boxlessNodes() as $id) {
                     self::put($handle, ['kind' => self::K_BOXLESS, 'node' => $id]);
+                }
+            }
+
+            if (\in_array(self::D_EVICTED, $domains, true)) {
+                foreach ($recorder->evictedNodes() as $id => $seen) {
+                    self::put($handle, ['kind' => self::K_EVICTED, 'node' => (int) $id, 'seen' => $seen]);
                 }
             }
 
@@ -252,7 +264,7 @@ final class Evidence
      */
     private static function parse($handle, string $path): EvidenceBag
     {
-        /** @var array{domains: list<string>, counts: array<string, int>, capacity: int, redact: bool}|null $manifest */
+        /** @var array{domains: list<string>, counts: array<string, int>, options: array<string, mixed>}|null $manifest */
         $manifest = null;
         /** @var array<string, int> $seen */
         $seen = [];
@@ -270,6 +282,8 @@ final class Evidence
         $props = [];
         /** @var array<int, true> $boxless */
         $boxless = [];
+        /** @var array<int, int> $evicted */
+        $evicted = [];
         $script = null;
         $lineNo = 0;
         $lastFrame = 0;
@@ -323,17 +337,23 @@ final class Evidence
                 }
             }
 
+            // 各 case 用独立变量名：tpc 不按 case 分作用域，复用 $one 会被判成跨类型重赋值。
             switch ($kind) {
                 case self::K_NODE:
                     $nodes[(int) $raw['id']] = [
                         'p' => (int) $raw['p'],
                         'c' => (string) $raw['c'],
                         'x' => (bool) ($raw['x'] ?? false),
+                        's' => (int) ($raw['s'] ?? 0),
                     ];
                     break;
 
                 case self::K_BOXLESS:
                     $boxless[(int) $raw['node']] = true;
+                    break;
+
+                case self::K_EVICTED:
+                    $evicted[(int) $raw['node']] = (int) ($raw['seen'] ?? 0);
                     break;
 
                 case self::K_SCRIPT:
@@ -358,18 +378,18 @@ final class Evidence
                     break;
 
                 case self::K_NETWORK:
-                    $one = NetworkRecord::decode($raw);
-                    $network[$one->requestId] = $one;
+                    $networkRow = NetworkRecord::decode($raw);
+                    $network[$networkRow->requestId] = $networkRow;
                     break;
 
                 case self::K_BODY:
-                    $one = NetworkBodyRecord::decode($raw);
-                    $bodies[$one->requestId] = $one;
+                    $bodyRow = NetworkBodyRecord::decode($raw);
+                    $bodies[$bodyRow->requestId] = $bodyRow;
                     break;
 
                 case self::K_PROP:
-                    $one = PropSnapshot::decode($raw);
-                    $props[$one->node] = $one;
+                    $propRow = PropSnapshot::decode($raw);
+                    $props[$propRow->node] = $propRow;
                     break;
             }
 
@@ -406,16 +426,16 @@ final class Evidence
             bodies: $bodies,
             props: $props,
             boxless: $boxless,
+            evicted: $evicted,
             script: $script,
-            capacity: $manifest['capacity'],
-            redactBodies: $manifest['redact'],
+            options: RecordOptions::fromManifest($manifest['options']),
             domains: $manifest['domains'],
         );
     }
 
     /**
      * @param array<string, mixed> $raw
-     * @return array{domains: list<string>, counts: array<string, int>, capacity: int, redact: bool}
+     * @return array{domains: list<string>, counts: array<string, int>, options: array<string, mixed>}
      */
     private static function acceptManifest(array $raw, string $path): array
     {
@@ -453,12 +473,25 @@ final class Evidence
             $clean[(string) $kind] = (int) $value;
         }
 
+        $optionsRaw = $raw['options'] ?? null;
+        if (!\is_array($optionsRaw)) {
+            // 老包没有 options：按声明的域反推，不把"域不在包里"读成"采了但为空"。
+            $optionsRaw = [
+                'capacity' => $raw['capacity'] ?? Recorder::DEFAULT_CAPACITY,
+                'redact' => $raw['redact'] ?? true,
+                'geometry' => \in_array(self::D_GEOMETRY, $domains, true)
+                    ? GeometryCapture::Changed->value
+                    : GeometryCapture::Off->value,
+                'network' => \in_array(self::D_NETWORK, $domains, true),
+                'bodies' => \in_array(self::D_BODIES, $domains, true),
+            ];
+        }
+
         /** @var list<string> $domains */
         return [
             'domains' => $domains,
             'counts' => $clean,
-            'capacity' => (int) ($raw['capacity'] ?? Recorder::DEFAULT_CAPACITY),
-            'redact' => (bool) ($raw['redact'] ?? true),
+            'options' => RecordOptions::fromManifest($optionsRaw)->toManifest(),
         ];
     }
 
@@ -476,6 +509,7 @@ final class Evidence
         $plan = [
             self::K_NODE => [self::D_NODES, \count($recorder->nodeIndex())],
             self::K_BOXLESS => [self::D_BOXLESS, \count($recorder->boxlessNodes())],
+            self::K_EVICTED => [self::D_EVICTED, \count($recorder->evictedNodes())],
             self::K_SCRIPT => [self::D_SCRIPT, $recorder->script() === null ? 0 : 1],
             self::K_FRAME => [self::D_FRAMES, \count($recorder->frames())],
             self::K_GEOMETRY => [self::D_GEOMETRY, $recorder->geometryCoverage()['nodes']],
@@ -497,8 +531,7 @@ final class Evidence
             'version' => self::VERSION,
             'domains' => $domains,
             'counts' => $counts,
-            'capacity' => $recorder->stats()['capacity'],
-            'redact' => $recorder->redactionEnabled(),
+            'options' => $recorder->options()->toManifest(),
             'digests' => [
                 'drive' => $recorder->script()?->digest() ?? '',
                 'facts' => $facts['digest'],

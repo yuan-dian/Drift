@@ -54,6 +54,78 @@ final readonly class GeometryRecord
     ) {
     }
 
+    /**
+     * 从活盒取一份构造字段，不先造记录。
+     *
+     * 未变几何只需要签名，造 `GeometryRecord` 是白付的分配；字段清单留在这里，
+     * 签名与记录共用同一份，避免两处漏字段却都"看起来正常"。
+     *
+     * @param object $box `Element::renderObject()` 的返回；Debug 层不 import Layout
+     * @return array<string, mixed>
+     */
+    public static function fieldsOf(object $box, int $frame, int $node, int $parent): array
+    {
+        $size = $box->size();
+        $mods = $box->mods();
+        $style = $mods?->boxStyle();
+        $align = $mods !== null ? $mods->alignment() : null;
+
+        return [
+            'frame' => $frame,
+            'node' => $node,
+            'parent' => $parent,
+            'applied' => self::pack($box->appliedConstraints()),
+            'inner' => self::pack($box->constraints()),
+            'size' => ['w' => $size->width, 'h' => $size->height],
+            'offset' => ['x' => $box->offsetX(), 'y' => $box->offsetY()],
+            'pad' => self::edges(
+                $mods !== null && $mods->hasPadding() ? $mods->padLeft() : 0.0,
+                $mods !== null && $mods->hasPadding() ? $mods->padTop() : 0.0,
+                $mods !== null && $mods->hasPadding() ? $mods->padRight() : 0.0,
+                $mods !== null && $mods->hasPadding() ? $mods->padBottom() : 0.0,
+            ),
+            'inset' => self::edges(
+                $mods !== null && $mods->hasInset() ? $mods->insetLeft() : 0.0,
+                $mods !== null && $mods->hasInset() ? $mods->insetTop() : 0.0,
+                $mods !== null && $mods->hasInset() ? $mods->insetRight() : 0.0,
+                $mods !== null && $mods->hasInset() ? $mods->insetBottom() : 0.0,
+            ),
+            'box' => $mods !== null && ($mods->hasBoxWidth() || $mods->hasBoxHeight())
+                ? ['w' => $mods->hasBoxWidth() ? $mods->boxWidth() : null,
+                   'h' => $mods->hasBoxHeight() ? $mods->boxHeight() : null]
+                : null,
+            'aspect' => $mods !== null && $mods->hasAspect() ? $mods->aspect() : null,
+            'align' => $align !== null ? ['x' => $align->x, 'y' => $align->y] : null,
+            'border' => $style !== null && $style->hasBorder(),
+            'borderWidth' => $style?->borderWidth ?? 0.0,
+            'flex' => ['grow' => $mods?->flexGrow() ?? 0, 'shrink' => $mods?->flexShrink() ?? 0],
+        ];
+    }
+
+    /** @param array<string, mixed> $f */
+    public static function fromFields(array $f): self
+    {
+        return new self(
+            (int) $f['frame'], (int) $f['node'], (int) $f['parent'],
+            (array) $f['applied'], (array) $f['inner'], (array) $f['size'], (array) $f['offset'],
+            (array) $f['pad'], (array) $f['inset'],
+            \is_array($f['box']) ? $f['box'] : null,
+            isset($f['aspect']) ? (float) $f['aspect'] : null,
+            \is_array($f['align']) ? $f['align'] : null,
+            (bool) $f['border'], (float) $f['borderWidth'], (array) $f['flex'],
+        );
+    }
+
+    /** @param array<string, mixed> $f */
+    public static function signatureOf(array $f): string
+    {
+        return \json_encode([
+            'a' => $f['applied'], 'i' => $f['inner'], 's' => $f['size'], 'o' => $f['offset'],
+            'p' => $f['pad'], 'n' => $f['inset'], 'b' => $f['box'], 'x' => $f['aspect'] ?? null,
+            'g' => $f['align'], 'd' => $f['border'], 'w' => $f['borderWidth'], 'f' => $f['flex'],
+        ], \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION);
+    }
+
     /** @return array{minW: float|string, maxW: float|string, minH: float|string, maxH: float|string} */
     public static function pack(?BoxConstraints $c): array
     {
@@ -95,11 +167,13 @@ final readonly class GeometryRecord
     /** 不含 frame/node/parent —— 那三个变了不代表几何变了。 */
     public function signature(): string
     {
-        return \json_encode([
-            'a' => $this->applied, 'i' => $this->inner, 's' => $this->size, 'o' => $this->offset,
-            'p' => $this->pad, 'n' => $this->inset, 'b' => $this->box, 'x' => $this->aspect,
-            'g' => $this->align, 'd' => $this->border, 'w' => $this->borderWidth, 'f' => $this->flex,
-        ], \JSON_UNESCAPED_SLASHES | \JSON_PRESERVE_ZERO_FRACTION);
+        return self::signatureOf([
+            'applied' => $this->applied, 'inner' => $this->inner,
+            'size' => $this->size, 'offset' => $this->offset,
+            'pad' => $this->pad, 'inset' => $this->inset,
+            'box' => $this->box, 'aspect' => $this->aspect, 'align' => $this->align,
+            'border' => $this->border, 'borderWidth' => $this->borderWidth, 'flex' => $this->flex,
+        ]);
     }
 
     /** @return array<string, mixed> */

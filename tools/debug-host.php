@@ -19,6 +19,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Host;
 use Drift\Dev\Debug\OutputGuard;
@@ -32,8 +33,8 @@ OutputGuard::start();
 
 try {
     $host = new Host(new SingleServer(StdioTransport::standard()));
-    $host->serve(static function (Script $script): array {
-        return Runner::open($script->target, $script->width, $script->height, $script->meta(), $script);
+    $host->serve(static function (Script $script, ?RecordOptions $options = null): array {
+        return Runner::open($script->target, $script->width, $script->height, $script->meta(), $script, $options);
     });
 } catch (\Throwable $e) {
     OutputGuard::stop();

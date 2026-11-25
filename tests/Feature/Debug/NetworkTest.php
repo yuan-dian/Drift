@@ -9,6 +9,7 @@ use Drift\App\Io\HttpResponse;
 use Drift\App\Io\HttpTransport;
 use Drift\App\TaskDispatch;
 use Drift\Async\Future;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -393,9 +394,39 @@ final class NetworkTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testBodyQueryMissesAreDistinct(): void
+    public function testDefaultBudgetDoesNotCaptureBodies(): void
     {
         $recorder = Recorder::install();
+        try {
+            $transport = new PendingTransport();
+            $http = new AsyncHttp(TaskDispatch::sync(), $transport);
+
+            $recorder->beginFrame(0.0);
+            $http->get('https://api.example.com/x');
+            $recorder->endFrame([], 0.0);
+            $recorder->beginFrame(16.0);
+            $transport->settle(new HttpResponse(200, [], 'secret-body', 'https://api.example.com/x', 1.0));
+            $recorder->endFrame([], 0.0);
+
+            $answer = (new \Drift\Debug\Session\Query($recorder))->networkBody(1);
+            check(
+                '默认没开报文预算时报未采集，不报正文为空',
+                ($answer['found'] ?? true) === false && ($answer['miss'] ?? '') === 'bodies-not-captured',
+                \json_encode($answer),
+            );
+            check('报文窗口自报 captured=false', ($answer['window']['captured'] ?? true) === false,
+                \json_encode($answer['window'] ?? []));
+            check('骨架仍在，省的是正文不是请求事实', \count($recorder->networkRows()) === 1);
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
+    public function testBodyQueryMissesAreDistinct(): void
+    {
+        $recorder = Recorder::install(RecordOptions::of(bodies: true));
         try {
             $query = new \Drift\Debug\Session\Query($recorder);
             $before = $query->networkBody(1);
@@ -432,7 +463,7 @@ final class NetworkTest extends SmokeTestCase
 
     public function testBodyQueryAndViewKeepRequestIdAndRedactSecrets(): void
     {
-        $recorder = Recorder::install();
+        $recorder = Recorder::install(RecordOptions::of(bodies: true));
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);

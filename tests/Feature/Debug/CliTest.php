@@ -72,6 +72,18 @@ final class CliTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testBodyBudgetIsExplicitAndDoesNotChangeTheDriveFingerprint(): void
+    {
+        $base = ['x', '--page=async-table', '--frames=2'];
+        $off = Commands::set('network')->parse($base);
+        $on = Commands::set('network')->parse([...$base, '--bodies']);
+
+        check('默认不抓正文', $off->recordOptions()->bodies() === false);
+        check('--bodies 显式开启', $on->recordOptions()->bodies() === true);
+        check('采集预算不改驱动指纹', $off->script()->digest() === $on->script()->digest());
+        $this->flushChecks();
+    }
+
     public function testBadNumbersAreRejectedButRangesStillClamp(): void
     {
         try {

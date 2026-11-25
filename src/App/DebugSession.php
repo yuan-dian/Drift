@@ -6,6 +6,7 @@ namespace Drift\App;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Session;
 use Drift\Debug\Session\SessionState;
@@ -85,6 +86,7 @@ final class DebugSession implements Session
      * 已有录制器在跑时**拒绝**，不覆盖：那可能是另一个会话或测试夹具的记录，
      * 静默接管会让两边的结论都不可信。
      *
+     * @param RecordOptions|int|null $options 采集预算；整数是旧容量参数的兼容入口
      * @param Script|null $script 脚本骨架（目标名 / 视口 / 环境）。不给则按
      *   `应用类名 + 当前约束` 现建一份 —— 这样"录一份脚本"是默认行为，
      *   不需要调用方记得开。
@@ -92,10 +94,11 @@ final class DebugSession implements Session
     public static function open(
         Application $app,
         BoxConstraints $constraints,
-        int $capacity = Recorder::DEFAULT_CAPACITY,
+        RecordOptions|int|null $options = null,
         ?Script $script = null,
         bool $redactBodies = true,
     ): self {
+        $options = RecordOptions::fromLegacy($options, $script, $redactBodies);
         if (Recorder::installed()) {
             throw new \LogicException('已有录制器在运行：先关闭原会话，避免覆盖它的缓冲');
         }
@@ -103,13 +106,14 @@ final class DebugSession implements Session
             throw new \LogicException('应用还没有挂表面：先 $app->attach($surface, $constraints)');
         }
 
-        $script ??= new Script(
+        $script = $options->script() ?? new Script(
             $app::class,
             \is_finite($constraints->maxWidth) ? $constraints->maxWidth : 0.0,
             \is_finite($constraints->maxHeight) ? $constraints->maxHeight : 0.0,
         );
+        $options = $options->withScript($script);
 
-        $recorder = Recorder::install($capacity, $script, $redactBodies);
+        $recorder = Recorder::install($options);
         $queries = new Query($recorder);
 
         // 令牌每次 open 新生成：帧号与节点号都是每会话重发的，观察者只能靠它

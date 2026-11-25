@@ -8,6 +8,7 @@ use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Evidence;
 use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\SessionQueries;
 
@@ -59,6 +60,7 @@ final class Source
      * @param string|null $out    把这次会话导出成证据包
      * @param string|null $session 多会话时按登记 id 挑一个
      * @param Discovery|null $discovery 只给测试注入；默认按当前目录
+     * @param RecordOptions|null $recordOptions 现场跑的采集预算；离线 / attach 忽略
      *
      * @throws \InvalidArgumentException 参数组合说不通
      * @throws \RuntimeException         跑不起来 / 找不到会话
@@ -72,6 +74,7 @@ final class Source
         ?string $out = null,
         ?string $session = null,
         ?Discovery $discovery = null,
+        ?RecordOptions $recordOptions = null,
     ): self {
         if ($from !== null) {
             // 包里已经有完整的驱动记录，再给驱动参数就是两套说法，不猜以谁为准。
@@ -144,9 +147,16 @@ final class Source
                 \PHP_BINARY,
                 \dirname(__DIR__, 2) . '/tools/debug-host.php',
             ]));
-            $live->open($drive->fork());
+            $live->open($drive->fork(), $recordOptions);
         } else {
-            $opened = Runner::open($drive->target, $drive->width, $drive->height, $drive->meta(), $drive->fork());
+            $opened = Runner::open(
+                $drive->target,
+                $drive->width,
+                $drive->height,
+                $drive->meta(),
+                $drive->fork(),
+                $recordOptions,
+            );
             $live = $opened['session'];
         }
 

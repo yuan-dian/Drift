@@ -16,6 +16,7 @@ use Drift\Debug\Session\NetworkRecord;
 use Drift\Debug\Session\PropSnapshot;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\QueryRouter;
+use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -212,6 +213,12 @@ final class EvidenceTest extends SmokeTestCase
             $manifest = Evidence::write($recorder, $first);
             check('manifest 声明了帧数', ($manifest['counts']['frame'] ?? 0) === 3, \json_encode($manifest['counts'] ?? []));
             check('三指纹都在', \array_keys($manifest['digests'] ?? []) === ['drive', 'facts', 'external'], \json_encode($manifest['digests'] ?? []));
+            check(
+                '采集预算随包走',
+                ($manifest['options']['geometry'] ?? '') === 'changed'
+                    && ($manifest['options']['bodies'] ?? true) === false,
+                \json_encode($manifest['options'] ?? []),
+            );
 
             $rehydrated = Recorder::hydrate(Evidence::read($first));
             Evidence::write($rehydrated, $second);
@@ -225,6 +232,52 @@ final class EvidenceTest extends SmokeTestCase
             @\unlink($first);
             @\unlink($second);
         }
+    }
+
+    /** 常驻档只付帧因果的钱：几何一棵都不采，帧记录照常落账。 */
+    public function testFramesOnlyBudgetSkipsGeometry(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install(RecordOptions::framesOnly());
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            $coverage = $recorder->geometryCoverage();
+
+            check('几何档位自报 off', ($coverage['mode'] ?? '') === 'off', \json_encode($coverage));
+            check('没有几何记录', ($coverage['frames'] ?? -1) === 0 && ($coverage['nodes'] ?? -1) === 0,
+                \json_encode($coverage));
+            check('帧因果仍在', \count($recorder->frames()) === 1, (string) \count($recorder->frames()));
+        } finally {
+            Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
+    /** 回收地址随包走：离线查它仍答 node-evicted，不退回 unknown-node。 */
+    public function testEvictedNodesSurvivePackageRoundTrip(): void
+    {
+        $recorder = Recorder::install();
+        $path = self::tempFile('.evidence');
+
+        try {
+            $property = new \ReflectionProperty(Recorder::class, 'evicted');
+            $property->setValue($recorder, [7 => 42]);
+
+            $manifest = Evidence::write($recorder, $path);
+            check('回收域进了默认包', \in_array(Evidence::D_EVICTED, $manifest['domains'], true));
+            check('回收条数自报', ($manifest['counts']['evicted'] ?? 0) === 1);
+
+            $offline = Recorder::hydrate(Evidence::read($path));
+            check('离线节点状态仍是 evicted', $offline->nodeStatus(7) === 'evicted');
+            check('没发过的号仍是 unknown', $offline->nodeStatus(8) === 'unknown');
+        } finally {
+            Recorder::uninstall();
+            @\unlink($path);
+        }
+
+        $this->flushChecks();
     }
 
     /**
