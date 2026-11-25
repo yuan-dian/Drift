@@ -589,8 +589,14 @@ final class Query
      */
     public function boxes(?int $frame = null): array
     {
-        $frameId = $frame ?? $this->recorder->lastFrameId();
+        // 缺省帧取**几何窗口的最新**，不是帧窗口的最新。
+        //
+        // ★ 两个窗口宽度不同（几何 60、帧 600），且几何按"有变化才落记录"跳帧 ——
+        //   用 `lastFrameId()` 当缺省，静止几十秒后它必然跑出几何覆盖范围，
+        //   于是"打开面板一片空白"而每个环节都自认为正常。缺省值必须落在
+        //   它自己要查的那个窗口里。
         $window = $this->recorder->geometryCoverage();
+        $frameId = $frame ?? (int) ($window['to'] ?? 0);
         if ($frameId < (int) ($window['from'] ?? 0) || $frameId > (int) ($window['to'] ?? 0)) {
             return [
                 'frame' => $frameId,
@@ -872,7 +878,10 @@ final class Query
     public function paint(?int $frame = null): array
     {
         $window = $this->recorder->paintCoverage();
-        $frameId = $frame ?? $this->recorder->lastFrameId();
+        // 同 `boxes()`：缺省帧落在**自己的**覆盖窗口里。绘制窗口比帧窗口窄得多，
+        // 拿帧窗口的最新帧当缺省，静止一会儿就查不到，而页面会把它读成"这帧没画"。
+        $frameId = $frame
+            ?? ((int) ($window['to'] ?? 0) ?: $this->recorder->lastFrameId());
 
         if (($window['captured'] ?? false) !== true) {
             // 未开预算时不能给空集合：那会被读成"这帧什么都没画"，而真相是没采。

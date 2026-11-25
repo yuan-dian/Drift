@@ -135,18 +135,85 @@ h2 {
   position: relative;
   border-right: 1px solid var(--line);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
-#canvas { flex: 1; display: block; min-width: 0; min-height: 0; }
-#hint {
+
+/* 视口：底图与几何共用同一个矩形。两者都绝对定位，位置尺寸由 app.js 每帧写死，
+   所以"框压在图上的哪一块"不需要再算第二遍。 */
+#viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#shot {
   position: absolute;
-  left: 10px;
-  bottom: 8px;
+  z-index: 1;
   pointer-events: none;
-  background: rgba(27, 27, 29, .82);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: ui-monospace, Consolas, monospace;
+  display: none;
+  background: #fff;
+  box-shadow: 0 2px 18px rgba(0, 0, 0, .5);
 }
+
+#canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: default;
+}
+
+/* 没有底图时的占位：棋盘格是"这里没有内容"的通行符号，比一片纯黑诚实。
+   必须压在 canvas 之上 —— 几何层整片填了视口外的暗底，放在下面会被盖掉。 */
+#noshot {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--dim);
+  font-size: 12px;
+  text-align: center;
+  background-color: #101012;
+  background-image:
+    linear-gradient(45deg, #17171a 25%, transparent 25%, transparent 75%, #17171a 75%),
+    linear-gradient(45deg, #17171a 25%, transparent 25%, transparent 75%, #17171a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+/* `display:flex` 会盖掉 `[hidden]` 的 UA 规则 —— 作者样式优先。
+   不补这一条，`hidden=true` 也照样显示，"没有画面"的占位永远压在图上。 */
+#noshot[hidden] { display: none; }
+
+#toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  min-height: 28px;
+  overflow: hidden;
+}
+
+#toolbar button { padding: 1px 8px; font-size: 12px; }
+#toolbar .sep { width: 1px; height: 14px; background: var(--line); }
+#toolbar #hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#zoom { min-width: 40px; }
 
 /* 节点面板 */
 #crumbs { color: var(--dim); margin-bottom: 8px; word-break: break-all; }

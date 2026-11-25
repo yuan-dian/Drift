@@ -97,6 +97,28 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      */
     private ?Recorder $debugRecorder = null;
 
+    /**
+     * 帧出口观察者（`null` = 没人看）。在 `afterPaint` 最末调用，画布尚有效。
+     *
+     * ★ 存在的唯一理由是"给画面一个出口"：像素只有这一刻拿得到（`endFrame()` 之后
+     *   画布就被释放了）。它**不参与任何决策** —— 不标脏、不请求帧、不改 `paintRequested`，
+     *   所以挂上它对被测对象零影响。持 `Canvas` 而不是具体后端类型，是为了不让
+     *   壳认识 Raster / Skia。
+     *
+     * @var null|\Closure(Canvas, int): void
+     */
+    private ?\Closure $frameObserver = null;
+
+    /**
+     * 有人要一张图，但树没变 ⇒ 这一帧本来会整段跳过绘制（`Frame::run()` 的快路）。
+     * 置上它，下一帧强制画一次，画完就清。
+     *
+     * ★ 与"环形重绘"不同：它是**一次性**的，且只由观察者触发。没有它的话，
+     *   一个已经静止的应用永远拍不到第一张图 —— 画面通道对"起来就不动的窗口"
+     *   完全失效，而那恰好是最常见的观察场景。
+     */
+    private bool $paintOnDemand = false;
+
     /** UI 线程 id（`GetCurrentThreadId`，`attach()` 时记；`getmypid()` 区分不了线程）。 */
     private int $uiThreadId = 0;
 
@@ -694,7 +716,8 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         //   闭包根本不跑。这类静默只有把失效信号一起并进来才堵得住。
         $ringBefore = $this->focusRingTarget();
         $highlightBefore = $this->debugHighlight;
-        $paintRequested = $ringBefore !== $this->paintedFocus
+        $paintRequested = $this->paintOnDemand
+            || $ringBefore !== $this->paintedFocus
             || $highlightBefore !== $this->paintedHighlight
             || $this->overlayLayout->panelsLagBehind();
 
@@ -708,6 +731,8 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         if ($painted) {
             $this->paintedFocus = $ringBefore;
             $this->paintedHighlight = $highlightBefore;
+            // 一次性：画成就清。留着不清就成了"每帧都强制重画"，静止的应用空转烧 CPU。
+            $this->paintOnDemand = false;
         }
 
         // ⑤ 迟到挂载补 tick：④ 在 settle 之前跑，而页面挂在 settle 段 ⇒ 新挂上的 State 当帧
@@ -924,7 +949,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      */
     public function wantsFrame(): bool
     {
-        return $this->pipeline->wantsFrame();
+        return $this->paintOnDemand || $this->pipeline->wantsFrame();
     }
 
     /**
@@ -1834,6 +1859,42 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
             // （`noteHighlight()` 记的），而壳不该为了一笔记账去懂节点号。
             $this->devFacts['overlayDrawn'] = true;
         }
+
+        // 帧出口：画布在 `endFrame()` 里就被释放，这里是**唯一**还能取像素的时刻。
+        // 传录制器的帧号（不是 `frameSerial`）—— 观察者要拿它去和 `boxes?frame=N` 配对，
+        // 两个计数器各走一条线，混用就是"图与框差一帧"这种谁也没报错的错位。
+        if ($this->frameObserver !== null) {
+            ($this->frameObserver)($canvas, $this->debugRecorder?->frameId() ?? 0);
+        }
+    }
+
+    /**
+     * 挂/摘帧出口观察者（`null` = 摘）。见 {@see self::$frameObserver}。
+     *
+     * ★ 不写 `paintRequested`：观察者多一个，帧就该多画一帧 —— 那会让"打开调试视图"
+     *   改变应用的帧节奏，而这套系统所有证据都建立在"观察不改变被测对象"上。
+     *   静止的应用画面本来就不变，复用它最后一帧即可。
+     *
+     * @param null|\Closure(Canvas, int): void $observer
+     * @internal 由 `Application::setFrameObserver()` 转发（调试会话专用）
+     */
+    public function setFrameObserver(?\Closure $observer): void
+    {
+        $this->frameObserver = $observer;
+    }
+
+    /**
+     * 请求画一帧（一次性）。给画面通道在"应用已经静止"时补上第一张图。
+     *
+     * ★ 不打破"观察不改变被测对象"：它不改树、不改布局、不产生任何证据，
+     *   只让本来就存在的这一帧真的走一遍绘制。帧**号**会 +1，所以调用方必须在
+     *   取到图之后重新读帧号，不能拿调用前的号去配对。
+     *
+     * @internal 调试观察者专用
+     */
+    public function requestPaint(): void
+    {
+        $this->paintOnDemand = true;
     }
 
     /**

@@ -106,6 +106,7 @@ UI 线程亲和：后台结果不作为回调直接改树，而是以事件形�
 | 量具 · 线程守卫 · 端口 | `frameCostMs()`、`worstFrameMs()`、`overBudget()`、`noteFrameCost()`、`zeroViewportFrames()`、`activeAnimationCount()`、`animationVisits()`、`metrics()`、`assertUiThread()`、`uiThreadId()`、`clipboard()` |
 | 调试叠加 | `setDebugHighlight()` |
 | 调试录制 | `setDebugRecorder()`、`debugRecorder()` |
+| 调试画面 | `setFrameObserver()`、`requestPaint()` |
 
 ## 相关
 

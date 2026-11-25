@@ -47,6 +47,7 @@ final class Web
         private readonly string $root,
         private readonly ?\Closure $control = null,
         ?RuleSelection $selection = null,
+        private readonly ?string $evidenceDir = null,
     ) {
         $this->selection = $selection ?? RuleSelection::all();
     }
@@ -121,6 +122,11 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
             ])),
             '/api/node' => $this->node($query),
+            // 画面与证据是两条通道：`/api/shot` 吐的是宿主拍的真机像素（PNG），
+            // 只用于垫底。`/api/shot/ping` 是心跳 + 问"最新那张是哪一帧"，
+            // 前端靠它决定要不要换图 —— 拿不到新图就不换，而不是换成空。
+            '/api/shot' => $this->shot($query),
+            '/api/shot/ping' => $this->shotPing(),
             // 搜索与节点卡是同一个循环的两半：先按文本拿到地址，再按地址取事实。
             // 页面不自己过滤 `/api/boxes` 的结果 —— 那会在前端重写一遍匹配规则，
             // 而"同一次搜索三种实现"正是这一层要避免的。
@@ -316,6 +322,88 @@ final class Web
         }
 
         return $this->json($result);
+    }
+
+    /**
+     * 宿主拍的真机像素（PNG）—— web 的底图。
+     *
+     * 命中顺序是「请求的那一帧 → 最新一张 → 没有」。**不往回调成"最近的可用帧"**：
+     * 图形与几何必须同一帧，凑一张旧图上去会让"框画在 A、图是 B"这种错位看起来
+     * 像布局错误。没有就空着，页面自己说"还没截到"。
+     *
+     * @param array<string, mixed> $query
+     * @return array{status: int, type: string, body: string}
+     */
+    private function shot(array $query): array
+    {
+        $dir = $this->shotRoot();
+        if ($dir === null) {
+            return $this->error(404, 'no_shot', '这个会话没有画面通道（离线读包 / 从属宿主）');
+        }
+
+        $frame = (int) ($query['frame'] ?? 0);
+        $file = $frame > 0 ? $dir . '/f' . $frame . '.png' : $dir . '/latest.png';
+        if (!\is_file($file)) {
+            $file = $dir . '/latest.png';
+        }
+        if (!\is_file($file)) {
+            return $this->error(404, 'no_shot', '还没截到帧：宿主没有在拍（或还没画过一帧）');
+        }
+
+        $body = @\file_get_contents($file);
+        if ($body === false) {
+            return $this->error(500, 'shot_read_failed', '读图失败');
+        }
+
+        return ['status' => 200, 'type' => 'image/png', 'body' => $body];
+    }
+
+    /**
+     * 心跳 + 「最新那张是哪一帧」。
+     *
+     * 心跳走这里而不是靠 `/api/shot` 自己被请求：页面只在帧变了才换图，静止的应用
+     * 没有新帧 ⇒ 不请求图 ⇒ 心跳断 ⇒ 宿主以为没人看，把画面通道关了。那时候用户
+     * 一动窗口就"图不更新"，而它本来是活的。
+     *
+     * @return array{status: int, type: string, body: string}
+     */
+    private function shotPing(): array
+    {
+        $dir = $this->shotRoot();
+        if ($dir === null) {
+            return $this->json(['shot' => null, 'at' => null, 'channel' => false]);
+        }
+
+        // 撑开心跳窗口（宿主按 mtime + TTL 判断有没有人看）。
+        @\touch($dir . '/want');
+
+        $frame = null;
+        $at = null;
+        $meta = @\file_get_contents($dir . '/shot.json');
+        if ($meta !== false) {
+            $decoded = \json_decode($meta, true);
+            if (\is_array($decoded)) {
+                $frame = $decoded['frame'] ?? null;
+                $at = $decoded['at'] ?? null;
+            }
+        }
+
+        return $this->json(['shot' => $frame, 'at' => $at, 'channel' => true]);
+    }
+
+    /** `.drift/shot`（不存在就建）—— 与宿主 `Shot` 用的是同一个约定路径。 */
+    private function shotRoot(): ?string
+    {
+        if ($this->evidenceDir === null) {
+            return null;
+        }
+
+        $dir = $this->evidenceDir . '/shot';
+        if (!\is_dir($dir)) {
+            @\mkdir($dir, 0775, true);
+        }
+
+        return \is_dir($dir) ? $dir : null;
     }
 
     /**

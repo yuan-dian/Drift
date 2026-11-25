@@ -33,8 +33,23 @@
   </section>
 
   <section id="stage">
-    <canvas id="canvas"></canvas>
-    <div id="hint" class="dim small"></div>
+    <!-- 画面：底图是真机像素，上面叠几何。两层共用同一个矩形（left/top/width/height
+         由 app.js 按 scale/offset 写成像素），所以框永远压在图上的同一个位置。 -->
+    <div id="viewport">
+      <img id="shot" alt="" draggable="false">
+      <canvas id="canvas"></canvas>
+      <div id="noshot" hidden>这一帧没有画面<span class="small">（宿主未拍帧，或画面通道未开）</span></div>
+    </div>
+    <div id="toolbar">
+      <button id="fit" title="缩放至适应窗口（快捷键 0）">适应</button>
+      <button id="actual" title="1:1 真机像素（快捷键 1）">1:1</button>
+      <span id="zoom" class="mono dim">100%</span>
+      <span id="viewsize" class="mono dim small"></span>
+      <span class="sep"></span>
+      <span id="hint" class="dim small"></span>
+      <span class="spacer"></span>
+      <span id="shotinfo" class="mono dim small"></span>
+    </div>
   </section>
 
   <section id="side">

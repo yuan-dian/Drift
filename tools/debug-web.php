@@ -37,6 +37,7 @@ use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Rules\RuleSelection;
 use Drift\Dev\Debug\View\Rules\Severity;
 use Drift\Dev\Debug\Cli\Commands;
+use Drift\Dev\Debug\Discovery;
 use Drift\Dev\Debug\HttpServer;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Web;
@@ -106,7 +107,11 @@ try {
         return $live->resume(\is_int($frames) ? $frames : null);
     };
 
-    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection);
+    // 画面通道：只有接活会话才可能有像素（离线包/自己跑的会话都没有宿主进程在拍）。
+    // 目录约定与宿主 `Shot` 一致：`<cwd>/.drift`。
+    $evidenceDir = $attach ? \dirname(Discovery::inDirectory((string) \getcwd())->path()) : null;
+
+    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection, $evidenceDir);
     $server = new HttpServer($host, $port);
 
     \fwrite(\STDERR, \sprintf(

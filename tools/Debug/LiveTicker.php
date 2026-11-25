@@ -8,6 +8,7 @@ use Drift\App\DebugInputInterceptor;
 use Drift\App\DebugSession;
 use Drift\App\DebugTicker;
 use Drift\Debug\Protocol\Server;
+use Drift\Debug\Session\GeometryCapture;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Geometry\BoxConstraints;
@@ -52,6 +53,20 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
     private bool $pickSwallowing = false;
 
     private readonly Discovery $discovery;
+
+    /**
+     * 帧出口：把画布拍成 PNG 给 web 看。
+     *
+     * ★ 只在"有人订阅"时才真的取像素（`Shot` 自己节流 + 每 500 ms 问一次标记文件）。
+     *   挂载本身零成本：闭包里第一个判断就是标记，没有订阅者时连画布都不碰。
+     */
+    private ?Shot $shot = null;
+
+    /** 摘 observer 用：`close()` 之后这条闭包不该再往 `.drift/` 写。 */
+    private ?Application $bound = null;
+
+    /** 上次为"还没有第一张图"请求重绘的时刻（节流：不能每轮都强制画）。 */
+    private float $lastStarveAt = -1e9;
 
     /**
      * @param Server                    $server socket 监听（dev-only，不进 AOT）
@@ -101,7 +116,13 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         $this->session = DebugSession::open(
             $app,
             $constraints,
-            RecordOptions::default()->withScript($script),
+            // 几何走 `All` 而不是默认的 `Changed`：live 的用途是"看着画面读结构"，
+            // 而几何是**按帧**配对画面的。Changed 会在静止时一帧都不采，于是
+            // `boxes?frame=<底图那一帧>` 回 `frame-out-of-window`，屏幕上只剩底图没有框。
+            // 省这一份几何换来的是"画面和结构永远对不上"，这个交换不成立。
+            RecordOptions::default()
+                ->withGeometry(GeometryCapture::All)
+                ->withScript($script),
         );
         $this->drive = new LiveDrive($script);
         // A58：宿主只翻译协议，拾取状态留在这里独占 —— 两边各存一个布尔必然漂开。
@@ -114,6 +135,12 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         );
         $this->host->adopt($this->session);
         $this->entryId = $this->discovery->register($this->target, $this->token, $this->port);
+
+        // 画面通道：与证据通道并列，互不依赖。截图失败（后端读不回像素）只意味着
+        // web 上没底图，几何照旧 —— 不报错、不降级会话。
+        $this->shot = new Shot(\dirname($this->discovery->path()));
+        $this->bound = $app;
+        $app->setFrameObserver(\Closure::fromCallable([$this, 'onPainted']));
 
         $this->report?->__invoke(\sprintf(
             'live attach 已就绪：%s（port %d）；连上去看：drift debug brief --attach',
@@ -131,6 +158,17 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
     {
         // `0`：EventLoop 已经为 socket 留过等待上界，这里再等就是两次睡。
         $this->host?->pollOnce(0);
+
+        // 画面通道的"第一张图"：树没变时 `Frame::run()` 整段跳过绘制，静止的应用
+        // 永远拍不到。这里主动要一帧 —— 但只在**还没拍到过**的时候要，且节流，
+        // 否则就是每轮都强制重绘，把空闲 CPU 打回满格。
+        if ($this->shot !== null && $this->bound !== null) {
+            $nowMs = \hrtime(true) / 1e6;
+            if ($this->shot->starving($nowMs) && $nowMs - $this->lastStarveAt > 500.0) {
+                $this->lastStarveAt = $nowMs;
+                $this->bound->requestPaint();
+            }
+        }
     }
 
     public function canAdvance(): bool
@@ -158,6 +196,9 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         $this->session = null;
         $this->host = null;
         $this->drive = null;
+        $this->bound?->setFrameObserver(null);
+        $this->bound = null;
+        $this->shot = null;
         $this->pickArmed = false;
         $this->pickSwallowing = false;
         if ($this->entryId !== null) {
@@ -165,6 +206,24 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
             $this->entryId = null;
         }
         $this->server->close();
+    }
+
+    /**
+     * 帧出口回调（`AppShell::paintOverlay()` 末尾调）。
+     *
+     * ★ 时间用 `hrtime` 而不是注入的帧时间戳：拍多密是**观察策略**，不是被测行为。
+     *   拿注入时钟去限流，暂停 / 单步时时钟不走，画面反而全拍下来了。
+     *
+     * @internal 只由帧出口调用
+     */
+    public function onPainted(\Drift\Rendering\Canvas $canvas, int $frame): void
+    {
+        // 图挂在"几何实际覆盖到的帧"上：文件名、去重键、`boxes?frame=N` 三处必须是
+        // 同一个数，否则页面会出现"有图无框"或"图永远停在第一张"。
+        $recorder = $this->bound?->debugRecorder();
+        $anchor = $recorder === null ? 0 : (int) ($recorder->geometryCoverage()['to'] ?? 0);
+
+        $this->shot?->capture($canvas, $anchor > 0 ? $anchor : $frame, \hrtime(true) / 1e6);
     }
 
     /**

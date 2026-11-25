@@ -370,6 +370,31 @@ abstract class Application
     }
 
     /**
+     * 挂/摘帧出口观察者（`null` = 摘）—— 每帧画完之后拿到画布与帧号。
+     *
+     * ★ 与 {@see self::setDebugRecorder()} 是两件事：录制器记**事实**（几何、重画、因果），
+     *   观察者拿**画面**。事实是证据，画面只能看 —— 所以它不参与任何判据，
+     *   也不进包（见 `docs/concepts/evidence-model.md`）。
+     *
+     * @param null|\Closure(\Drift\Rendering\Canvas, int): void $observer
+     * @internal 调试会话专用（live 宿主取帧给 web）
+     */
+    public function setFrameObserver(?\Closure $observer): void
+    {
+        $this->shell->setFrameObserver($observer);
+    }
+
+    /**
+     * 请求画一帧（一次性）—— 画面通道用它给静止的应用补上第一张图。
+     *
+     * @internal 调试会话专用
+     */
+    public function requestPaint(): void
+    {
+        $this->shell->requestPaint();
+    }
+
+    /**
      * 这个窗口**绑定**的录制器（`null` = 没在录）。
      *
      * 与 {@see self::frame()} 实际用的那一份不同：帧里还可能借用无主的录制器

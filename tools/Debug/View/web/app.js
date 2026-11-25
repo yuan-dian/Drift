@@ -10,12 +10,24 @@ const state = {
   boxes: [],
   paint: null,
   selected: 0,
+  hover: 0,
+  // 视图：`scale` 是最终像素/逻辑单位（= 适配比例 × 用户缩放），`offset` 是视口原点在画布里的位置。
   scale: 0,
+  fit: 0,
+  zoom: 1,
   offset: { x: 0, y: 0 },
   view: { w: 0, h: 0 },
   lastFrame: -1,
   hintBase: '',
   hidden: 0,
+  // 底图：宿主拍的那一帧。`shotFrame` 与 `state.frame` 不同就说明图和几何错开了，
+  // 这必须显示出来 —— 一张旧图配新框，看起来像布局错了。
+  shotFrame: null,
+  shotUrl: '',
+  shotSize: { w: 0, h: 0 },
+  // 用户是否动过视图。没动过时 `layout()` 每次重新居中（窗口尺寸变了也不跑偏）；
+  // 一旦拖过或缩放过就尊重用户的视点，直到点"适配"。
+  panned: false,
 };
 
 const colorCache = new Map();
@@ -29,6 +41,14 @@ function colorOf(type) {
   c = `hsl(${h}, 62%, 62%)`;
   colorCache.set(key, c);
   return c;
+}
+
+/** 给不透明的 hsl() 加 alpha。有底图时框要退到"辅助线"，同一套颜色只改透明度。 */
+function withAlpha(css, alpha) {
+  if (css.startsWith('hsl(')) {
+    return `${css.slice(0, -1).replace('hsl(', 'hsla(')}, ${alpha})`;
+  }
+  return css;
 }
 
 async function get(path) {
@@ -63,16 +83,75 @@ async function boot() {
   });
   window.addEventListener('resize', () => scheduleDraw());
 
+  // 只监听 window.resize 不够：首屏 flex 算完、右面板内容撑开、字号加载完成
+  // 都会改变画布的客户区尺寸，而这些都不发 window 事件。漏掉的表现是
+  // "第一屏按小尺寸定了比例，之后一直缩在角落"——在无头浏览器里尤其明显。
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => scheduleDraw()).observe(document.getElementById('viewport'));
+  }
+
   for (const btn of document.querySelectorAll('#ctl button')) {
     btn.onclick = () => act(btn.dataset.act, btn);
   }
 
   const cv = document.getElementById('canvas');
-  cv.addEventListener('mousemove', (e) => hover(e));
-  cv.addEventListener('mouseleave', () => restoreHint());
-  cv.addEventListener('click', (e) => {
+
+  // ── 交互：DevTools 那套手感（滚轮缩放 / 拖拽平移 / 单击选中）────────────
+  // ★ 点选与拖拽共用左键：按下先记起点，移动超过阈值才算拖 —— 否则"想把图挪一下"
+  //   会变成"选中了一个框"，而用户以为自己在平移。
+  let drag = null;
+
+  cv.addEventListener('mousedown', (e) => {
+    if (e.button !== 0 && e.button !== 1) return;
+    drag = { x: e.clientX, y: e.clientY, ox: state.offset.x, oy: state.offset.y, moved: false };
+    if (e.button === 1) e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!drag) {
+      hover(e);
+      return;
+    }
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    drag.moved = true;
+    state.offset = { x: drag.ox + dx, y: drag.oy + dy };
+    cv.style.cursor = 'grabbing';
+    scheduleDraw();
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (!drag) return;
+    const wasDrag = drag.moved;
+    drag = null;
+    cv.style.cursor = '';
+    if (wasDrag) return;
     const node = hitTest(e);
-    if (node) select(node);
+    select(node);   // 点空白 = 取消选中（DevTools 同款）
+  });
+
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = cv.getBoundingClientRect();
+    zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+  }, { passive: false });
+
+  cv.addEventListener('mouseleave', () => {
+    if (state.hover) {
+      state.hover = 0;
+      scheduleDraw();
+    }
+    restoreHint();
+  });
+
+  document.getElementById('fit').onclick = () => resetView();
+  document.getElementById('actual').onclick = () => actualSize();
+  document.addEventListener('keydown', (e) => {
+    if (e.target === document.getElementById('q')) return;
+    if (e.key === '0') { resetView(); return; }
+    if (e.key === '1') { actualSize(); return; }
+    if (e.key === 'Escape') { select(0); return; }
   });
 
   const q = document.getElementById('q');
@@ -86,22 +165,37 @@ async function boot() {
 
   await Promise.all([loadScript(), loadBrief()]);
 
+  // 第一屏取哪一帧：有底图就跟底图那一帧，没有才退回"最值得看的一帧"。
+  // 顺序反了就会看到"图是新的、框是旧帧的"——而错位看起来像布局 bug。
+  const ping = await get('/api/shot/ping').catch(() => null);
+  const shotFrame = ping && ping.shot ? Number(ping.shot) : 0;
+
   // `?node=32&frame=1` 直接开到那个节点的卡片。发现里的地址能贴进聊天窗口，
   // 收的人点开就是同一帧同一个盒 —— 否则"你看 node:32"要靠对方自己找。
   const params = new URLSearchParams(location.search);
-  await loadFrame(Number(params.get('frame') || 0));
+  await loadFrame(Number(params.get('frame') || shotFrame || 0));
+  // `?zoom=1` 直接开 1:1：贴给别人"看这个像素"时，比让他自己滚轮找更靠谱。
+  state.applyActual = params.get('zoom') === '1';
   const node = Number(params.get('node') || 0);
   if (node) await select(node);
 
   document.title = `drift · 帧 #${state.frame} · ${state.boxes.length} 盒` + (state.selected ? ` · node:${state.selected}` : '');
+  resetView();   // 显式归一：不依赖之前任何一次 draw 留下的 zoom / offset
   setInterval(poll, 1000);
+  pollShot();
 }
 
 async function loadScript() {
   try {
     const script = await get('/api/script');
-    if (script && script.width > 0) state.view.w = Number(script.width);
-    if (script && script.height > 0) state.view.h = Number(script.height);
+    // 视口是 `viewport: [w, h]`（与 `Script` 的 `Script::width/height` 同名但**不扁平**）。
+    // 早先这里读 `script.width`，字段根本不存在 ⇒ 视口退化成"几何里最靠外的边"，
+    // 而那个数比真实窗口窄 ⇒ 底图被横向压扁，谁看都觉得"和真机不像"。
+    const vp = script && script.viewport;
+    if (Array.isArray(vp) && vp.length >= 2) {
+      if (Number(vp[0]) > 0) state.view.w = Number(vp[0]);
+      if (Number(vp[1]) > 0) state.view.h = Number(vp[1]);
+    }
   } catch (e) {
     // 离线包可能没有驱动脚本：视口尺寸退化到"几何里最靠外的边"。
   }
@@ -247,68 +341,240 @@ function scheduleDraw() {
   });
 }
 
+/**
+ * 以画布内 (mx,my) 为锚缩放：锚点处的**逻辑坐标**在缩放前后不动。
+ * 不做这一步的话，滚轮会永远把图往左上拽，放大十次后目标就找不回来了。
+ */
+function zoomAt(mx, my, factor) {
+  const next = Math.min(8, Math.max(0.2, state.zoom * factor));
+  if (next === state.zoom || !state.scale) return;
+  const k = next / state.zoom;
+  state.offset = {
+    x: mx - (mx - state.offset.x) * k,
+    y: my - (my - state.offset.y) * k,
+  };
+  state.zoom = next;
+  state.panned = true;
+  scheduleDraw();
+}
+
+function resetView() {
+  state.zoom = 1;
+  state.panned = false;
+  scheduleDraw();
+}
+
+/**
+ * 1:1 真机像素：一个逻辑点占一个 CSS 像素。
+ *
+ * 1920 宽的窗口塞进 560 宽的面板，`fit` 只有 0.28 —— 整体看得见，字全糊。
+ * 想看"这个像素到底是什么颜色"就必须回到 1:1，代价是要拖着看（DevTools 同款取舍）。
+ */
+function actualSize() {
+  if (!state.fit) return;
+  state.zoom = 1 / state.fit;
+  state.panned = false;   // 先居中，用户再拖
+  scheduleDraw();
+}
+
+/** 算 scale 与 offset。`panned=false` 时居中（首次 / 适配 / 窗口尺寸变了）。 */
+function layout(cw, ch) {
+  const pad = 16;
+  const fit = Math.min((cw - pad * 2) / state.view.w, (ch - pad * 2) / state.view.h);
+  if (!isFinite(fit) || fit <= 0) return false;
+
+  state.fit = fit;
+  state.scale = fit * state.zoom;
+  if (!state.panned) {
+    state.offset = {
+      x: (cw - state.view.w * state.scale) / 2,
+      y: (ch - state.view.h * state.scale) / 2,
+    };
+  }
+
+  return true;
+}
+
 function draw() {
   const cv = document.getElementById('canvas');
   const dpr = window.devicePixelRatio || 1;
   const cw = Math.max(1, cv.clientWidth);
   const ch = Math.max(1, cv.clientHeight);
-  cv.width = Math.round(cw * dpr);
-  cv.height = Math.round(ch * dpr);
+  if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) {
+    cv.width = Math.round(cw * dpr);
+    cv.height = Math.round(ch * dpr);
+  }
 
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
 
-  const pad = 18;
-  const scale = Math.min((cw - pad * 2) / state.view.w, (ch - pad * 2) / state.view.h);
-  if (!isFinite(scale) || scale <= 0) return;
-  state.scale = scale;
-  state.offset = {
-    x: (cw - state.view.w * scale) / 2,
-    y: (ch - state.view.h * scale) / 2,
-  };
+  if (!layout(cw, ch)) return;
 
-  ctx.strokeStyle = '#3a3a42';
+  if (state.applyActual) {
+    state.applyActual = false;
+    actualSize();
+
+    return;
+  }
+
+  const { scale, offset, view } = state;
+  const vx = offset.x;
+  const vy = offset.y;
+  const vw = view.w * scale;
+  const vh = view.h * scale;
+
+  // 视口外的底：比面板深一档，图与面板之间才有"这是应用窗口"的边界感。
+  // ★ 视口**内**必须留空（clear 掉）：底图是 canvas 下层的一张 `<img>`，
+  //   这里填满整片就等于把图盖死 —— 而盖住之后图上只剩几何框，看起来像"渲染没生效"。
+  ctx.fillStyle = '#141416';
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.clearRect(vx, vy, vw, vh);
+
+  placeShot(vx, vy, vw, vh);
+
+  // 视口边框：1 物理像素（不要跟着 dpr 变粗）。
+  ctx.strokeStyle = '#4a4a52';
   ctx.lineWidth = 1;
-  ctx.strokeRect(state.offset.x, state.offset.y, state.view.w * scale, state.view.h * scale);
+  ctx.strokeRect(Math.round(vx) + 0.5, Math.round(vy) + 0.5, Math.round(vw), Math.round(vh));
 
   // 裁到视口里。表格页的盒会排到 600 以下，不裁就会画出视口外框之外的矩形，
   // 而读者会以为"这些东西看得见"——那正好是这一层唯一不能犯的错。
   let hidden = 0;
   ctx.save();
   ctx.beginPath();
-  ctx.rect(state.offset.x, state.offset.y, state.view.w * scale, state.view.h * scale);
+  ctx.rect(vx, vy, vw, vh);
   ctx.clip();
+
+  const hit = state.hover;
+  const sel = state.selected;
 
   for (const row of state.boxes) {
     const b = row.rect;
-    const x = state.offset.x + b.x * scale;
-    const y = state.offset.y + b.y * scale;
-    const w = Math.max(0.6, b.w * scale);
-    const h = Math.max(0.6, b.h * scale);
+    const isSel = row.node === sel;
+    const isHover = row.node === hit && !isSel;
+    const x = vx + b.x * scale;
+    const y = vy + b.y * scale;
+    const w = Math.max(0.75, b.w * scale);
+    const h = Math.max(0.75, b.h * scale);
 
-    if (row.node === state.selected) {
-      ctx.fillStyle = 'rgba(78,201,176,0.20)';
+    if (isSel) {
+      ctx.fillStyle = 'rgba(78,201,176,0.16)';
       ctx.fillRect(x, y, w, h);
       ctx.strokeStyle = '#4ec9b0';
       ctx.lineWidth = 2;
+    } else if (isHover) {
+      ctx.fillStyle = 'rgba(120,170,255,0.14)';
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = '#7aa7ff';
+      ctx.lineWidth = 1.5;
     } else {
-      ctx.strokeStyle = colorOf(row.type);
+      // 有底图时线框退到"辅助线"的位置：图是主角，框只回答"这是哪块"。
+      // 缩得太小时（整窗塞进面板）再淡一档：否则 100+ 条彩线会把内容盖成一张网。
+      const base = state.shotUrl ? 0.34 : 0.75;
+      ctx.strokeStyle = withAlpha(colorOf(row.type), scale < 0.5 ? base * 0.55 : base);
       ctx.lineWidth = 1;
     }
     ctx.strokeRect(x, y, w, h);
 
-    if (b.y < 0 || b.y + b.h > state.view.h || b.x < 0 || b.x + b.w > state.view.w) hidden++;
+    if (b.y < 0 || b.y + b.h > view.h || b.x < 0 || b.x + b.w > view.w) hidden++;
   }
+
+  if (sel) annotate(ctx, sel, vx, vy, scale, vw, vh);
   ctx.restore();
 
   state.hidden = hidden;
+  updateZoom();
   restoreHint();
+}
+
+/** 底图是 DOM `<img>`：跟着同一个矩形走，不重绘进 canvas（更快也更清晰）。 */
+function placeShot(x, y, w, h) {
+  const img = document.getElementById('shot');
+  const none = document.getElementById('noshot');
+
+  if (!state.shotUrl) {
+    img.style.display = 'none';
+    none.hidden = false;
+    none.style.left = `${x}px`;
+    none.style.top = `${y}px`;
+    none.style.width = `${w}px`;
+    none.style.height = `${h}px`;
+    return;
+  }
+
+  none.hidden = true;
+  img.style.display = 'block';
+  img.style.left = `${x}px`;
+  img.style.top = `${y}px`;
+  img.style.width = `${w}px`;
+  img.style.height = `${h}px`;
+  // 放大到能看见单个像素时用最近邻 —— 调试时要看的是"这一像素是什么颜色"，
+  // 不是"它插值之后好看"。缩小时用平滑，否则文字会碎。
+  img.style.imageRendering = state.scale >= 1.5 ? 'pixelated' : 'auto';
+}
+
+/** 选中框的尺寸标注：DevTools 式的黑底小白字，贴在上边框外侧。 */
+function annotate(ctx, node, vx, vy, scale, vw, vh) {
+  const row = state.boxes.find((r) => r.node === node);
+  if (!row) return;
+
+  const b = row.rect;
+  const x = vx + b.x * scale;
+  const y = vy + b.y * scale;
+  const w = Math.max(0.75, b.w * scale);
+  const h = Math.max(0.75, b.h * scale);
+
+  // 四角标记：框压在图上时，纯描边容易和界面元素自身的边混在一起。
+  const c = 4;
+  ctx.strokeStyle = '#4ec9b0';
+  ctx.lineWidth = 2;
+  for (const [px, py, sx, sy] of [
+    [x, y, 1, 1], [x + w, y, -1, 1], [x, y + h, 1, -1], [x + w, y + h, -1, -1],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(px, py + sy * c);
+    ctx.lineTo(px, py);
+    ctx.lineTo(px + sx * c, py);
+    ctx.stroke();
+  }
+
+  const label = `${Math.round(b.w)}×${Math.round(b.h)}`;
+  ctx.font = '11px ui-monospace, Consolas, monospace';
+  const tw = ctx.measureText(label).width;
+  let lx = x;
+  let ly = y - 18;
+  if (ly < vy) ly = y + h + 4;                    // 顶到视口上沿就落到框下方
+  lx = Math.min(Math.max(lx, vx), vx + vw - tw - 10);
+
+  ctx.fillStyle = 'rgba(20,20,22,0.9)';
+  ctx.fillRect(lx, ly, tw + 10, 16);
+  ctx.fillStyle = '#4ec9b0';
+  ctx.fillText(label, lx + 5, ly + 12);
+}
+
+function updateZoom() {
+  // 显示**相对真机像素**的比例。显示"相对适应"的倍数会在 28% 适应时说 100%，
+  // 而用户看到的是缩小的图 —— 那个数字就成了假的。
+  document.getElementById('zoom').textContent = `${Math.round(state.scale * 100)}%`;
+  // 视口尺寸常显：底图被压扁时第一眼要看的就是这两个数对不对得上真机窗口。
+  document.getElementById('viewsize').textContent =
+    `${Math.round(state.view.w)}×${Math.round(state.view.h)}`;
 }
 
 function restoreHint() {
   const hint = document.getElementById('hint');
   hint.textContent = state.hintBase + (state.hidden ? ` · ${state.hidden} 个盒在视口外` : '');
+
+  const info = document.getElementById('shotinfo');
+  if (!state.shotUrl) {
+    info.textContent = '';
+  } else if (state.shotFrame === state.frame) {
+    info.textContent = `底图 #${state.shotFrame}`;
+  } else {
+    // 图和几何不是一帧：不藏起来。藏了就会有人拿着错位图去论证布局。
+    info.textContent = `底图 #${state.shotFrame} · 几何 #${state.frame}`;
+  }
 }
 
 function hitTest(event) {
@@ -339,10 +605,22 @@ function hitTest(event) {
 }
 
 function hover(event) {
+  const cv = document.getElementById('canvas');
+  const rect = cv.getBoundingClientRect();
+  if (event.clientX < rect.left || event.clientX > rect.right
+    || event.clientY < rect.top || event.clientY > rect.bottom) {
+    return;
+  }
+
   const node = hitTest(event);
+  if (node !== state.hover) {
+    state.hover = node;
+    scheduleDraw();   // hover 也要重绘：高亮就画在这层画布上，不重绘等于没高亮
+  }
+
   const hint = document.getElementById('hint');
   if (!node) {
-    hint.textContent = '';
+    restoreHint();
     return;
   }
   const row = state.boxes.find((r) => r.node === node);
@@ -498,6 +776,55 @@ async function poll() {
     }
   } catch (e) {
     document.getElementById('state').textContent = 'offline';
+  }
+
+  await pollShot();
+}
+
+/**
+ * 底图的一次轮询：先报心跳（宿主据此决定要不要拍），再问最新那张是哪一帧。
+ *
+ * ★ 只在帧号变了才换 `src`：静止的应用每秒都换一次 URL 会让浏览器反复解码同一张
+ *   图，看起来像"画面在闪"。
+ */
+async function pollShot() {
+  let ping;
+  try {
+    ping = await get('/api/shot/ping');
+  } catch (e) {
+    return;
+  }
+
+  if (!ping || !ping.channel || !ping.shot) {
+    if (state.shotUrl) {
+      state.shotUrl = '';
+      state.shotFrame = null;
+      scheduleDraw();
+    }
+    return;
+  }
+
+  const frame = Number(ping.shot);
+  if (frame === state.shotFrame && state.shotUrl) return;
+
+  // 是否"跟着最新帧走"：只有当前几何就在底图那一帧上才跟。用户选了历史帧
+  // （或点了发现里的 `frame:N`）就停在那一帧，不能被后台的轮询拽走。
+  const following = state.shotFrame === null || state.frame === state.shotFrame;
+
+  const img = document.getElementById('shot');
+  img.onload = () => scheduleDraw();
+  img.onerror = () => {
+    state.shotUrl = '';
+    state.shotFrame = null;
+    scheduleDraw();
+  };
+  state.shotFrame = frame;
+  state.shotUrl = `/api/shot?frame=${frame}&t=${Date.now()}`;
+  img.src = state.shotUrl;
+  scheduleDraw();
+
+  if (following && state.frame !== frame) {
+    await loadFrame(frame, true);
   }
 }
 
