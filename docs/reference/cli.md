@@ -47,6 +47,48 @@
 
 以下命令不进验证计划、不进 CI，需要时手动跑：
 
+<!-- drift-cli-reference:start -->
+下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
+
+### 调试出口
+
+| 动词 | 脚本 | 类别 | 摘要 | 特有参数 |
+|---|---|---|---|---|
+| `brief` | `debug-brief.php` | driver | 预算内的证据简报：哪里不对、为什么、下一步查哪 | `--budget` `--text-width` `--from` `--out` `--session` `--attach` `--slow` `--fanout` `--repeat` |
+| `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
+| `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
+| `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` |
+| `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` |
+| `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` |
+| `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` |
+| `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
+| `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` |
+| `ctl` | `debug-ctl.php` | protocol | 控制面：让自走的宿主停一下 / 走一步 / 接着跑 | — |
+| `web` | `debug-web.php` | driver | 浏览器视图：同一份证据的第三个消费者（几何画布 + 发现） | `--from` `--attach` `--session` `--port` `--host` `--slow` `--fanout` `--repeat` |
+| `loop` | `debug-loop.php` | driver | 重开 N 次：证明关掉这一页再打开是等价的 | `--runs` `--out` `--assert` |
+
+### 共用驱动词
+
+| 参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `--page` | string | `null` | 页面路由 id（与位置参数同义） |
+| `--frames` | int | `1` | 驱动几帧 |
+| `--rows` | int | `0` | 取数替身参数 |
+| `--hold` | int | `1` | 动作后再推几帧 |
+| `--at` | int | `0` | 只重放到第 N 帧（查询侧的选帧，不改脚本） |
+| `--view-width`（别名 `--width`） | float | `800` | 视口宽度 |
+| `--height` | float | `600` | 视口高度 |
+| `--key` | append | `[]` | 按键，可重复 |
+| `--text` | append | `[]` | 输入文本，可重复 |
+| `--click` | append | `[]` | 点击 x,y[,键]，可重复 |
+| `--wheel` | append | `[]` | 滚轮 x,y,格[,h]，可重复 |
+| `--resolve` | flag | `false` | 结算一次异步取数 |
+
+> 每个出口的完整参数以 `php bin/drift debug <动词> --help` 为准；两级 help 与这张表同源。
+<!-- drift-cli-reference:end -->
+
+`network` 看网络骨架与报文，`node` 把一个节点的因果 / 几何 / 网络三域对齐，`pick` 按视口坐标给出命中链，`props` 读 Widget / State 配置，`loop` 用重开同一页来证明等价；这五个出口的参数见上表与各自的 `--help`。
+
 | composer 脚本 | 作用 |
 |---|---|
 | `composer codegen` | T1 的 tpc 翻译层门，秒级、不编译，需要源码树里的 `bin/tpc.php` |
@@ -59,10 +101,11 @@
 | `composer debug -- serve …` | **常驻宿主**：自己按脚本推帧（`--speed=0` 尽快 / `1` 实时 / `N` 倍速；`--at=N` 跑到第 N 帧停下，状态记 `paused` + `reason=at`，与「跑完了」的 `finished` 分开），把「怎么连上我」（端口 / 令牌 / pid）写进 `.drift/session.json`，然后阻塞等人来看 —— 跑完也不退进程。另一个终端用 `composer debug -- brief --attach` 连上去读（同目录有多个会话时 `--session=<id>` 点名），观察者只读不驱动、退出只断开，不会结束别人正在看的会话。**每推一步都会回头看一眼有没有人说话**，所以 `--speed=0` 也能被叫停（它表示"不按实时节奏等待"，不表示不考虑响应性） |
 | `composer debug -- ctl …` | **控制面**：让一个自走的宿主停一下 / 走一步 / 接着跑。`pause`、`resume`、`state`（省略动作 = `state`），`--session=<id>` 点名，`--json` 结构化。`resume --frames=1` 是**单步**——推进的是脚本自己的下一帧，命令会等到真的停下来才打印结果（`paused` + `reason=step`）。`--at` 停住的会话 `resume` 后能接着跑（观察点只生效一次）。从属宿主（`--remote` 起的那个）上这些动作回 `not_applicable`：那里客户端停手就是暂停 |
 | `composer debug -- web …` | **浏览器视图**：起一个本机 HTTP 服务（默认 `127.0.0.1`，`--port=0` 让系统挑，`--host=0.0.0.0` 会警告），页面把该帧所有盒按几何画出来、左边列发现。数据与 `brief --json` 同源（`/api/brief` 与它共用一份投影），页面不重算任何数字；`--slow` / `--fanout` / `--repeat` 与 `brief` 同义。来源与 `brief` 一样支持 `--page` / `--attach` / `--from`；接自走宿主时页面上有暂停 / 单步 / 继续按钮 |
-| `composer panel -- <AppClass｜路由id>` | 在**同一次运行**里反复追问：时间轴 + 因果树 + 原因浮层（`Tab` 切换）。驱动参数与 `composer debug` 同一套（目标 / `--page=` / `--frames=` / `--rows=` / `--hold=` / `--key=` / `--text=` / `--click=` / `--wheel=` / `--resolve` / `--replay=` / `--at=`），`--remote` 让它对着宿主子进程问。`--frame=N` 直接落在某一帧（默认落在最慢的**有重建**的帧上）；`--screen=WxH` 设终端尺寸，默认取 `COLUMNS` / `LINES`——它与 `--width` / `--height` 的页面视口是两件事。键：`j/k` 移动、`J/K` 翻页、`g/G` 首尾、`⏎` 展开 / 下钻、`w` 原因、`n/N` 推 1 帧 / 10 帧、`[` `]` 换帧、`Tab` 切换、`?` 帮助、`q` 退出。**`--keys=j,j,enter,w,q`** 是非交互模式：按键依次施加，只打印最后一屏（`--shots` 每步一屏，`--json` 出结构化结果）—— 交互本身也要有判据，否则"能点"只是手测过。光标按行键（树行 `t:<节点id>`、帧行 `f:<帧号>`）记而不是按下标：展开、换帧、树重算都不会把它挪到别的节点上；选中的那行消失时退回最近的活着的祖先，并在状态栏说明 |
+| `composer panel -- <AppClass｜路由id>` | 在**同一次运行**里反复追问：时间轴 + 因果树 + 原因浮层（`Tab` 切换）。驱动参数与 `composer debug` 同一套（目标 / `--page=` / `--frames=` / `--rows=` / `--hold=` / `--key=` / `--text=` / `--click=` / `--wheel=` / `--resolve` / `--replay=` / `--at=`），`--remote` 让它对着宿主子进程问。`--frame=N` 直接落在某一帧（默认落在最慢的**有重建**的帧上）；`--screen=WxH` 设终端尺寸，默认取 `COLUMNS` / `LINES`——它与 `--view-width`（别名 `--width`） / `--height` 的页面视口是两件事。键：`j/k` 移动、`J/K` 翻页、`g/G` 首尾、`⏎` 展开 / 下钻、`w` 原因、`n/N` 推 1 帧 / 10 帧、`[` `]` 换帧、`Tab` 切换、`?` 帮助、`q` 退出。**`--keys=j,j,enter,w,q`** 是非交互模式：按键依次施加，只打印最后一屏（`--shots` 每步一屏，`--json` 出结构化结果）—— 交互本身也要有判据，否则"能点"只是手测过。光标按行键（树行 `t:<节点id>`、帧行 `f:<帧号>`）记而不是按下标：展开、换帧、树重算都不会把它挪到别的节点上；选中的那行消失时退回最近的活着的祖先，并在状态栏说明 |
 | `composer font-scan` | 扫描字面量里的非 ASCII 字符，生成字模资产输入 |
 | `composer golden-report` | 把 golden 检查的失败现场渲染成自包含 HTML |
 | `php tools/gen-route-manifest.php <app>` | 按应用参数从 `#[Route]` 重生成 AOT 页清单；`--check` 只查是否过期 |
+| `php tools/gen-cli-doc.php [--check]` | 从出口注册表 / 参数 schema 重写本页生成块；`--check` 只核对不改 |
 | `composer grab` | 用 `cl.exe` 重建真机抓像素工具，需要 MSVC |
 
 ## 环境与依赖脚本

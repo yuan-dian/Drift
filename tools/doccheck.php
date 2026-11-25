@@ -95,6 +95,7 @@ function lineAnchors(string $src): array
 }
 
 $root = dirname(__DIR__);
+require_once $root . '/tools/autoload.php';
 $docs = $root . '/docs';
 $files = collectDocs($docs);
 $errors = [];
@@ -165,6 +166,10 @@ foreach (explode("\n", $decisions) as $line) {
     if ($expiry === '' || $expiry === '-') {
         $errors[] = 'docs/decisions/README.md: 裁决缺少失效条件 ' . trim($cells[1] ?? '');
     }
+}
+
+foreach (\Drift\Dev\Debug\Cli\Doc::problems((string) file_get_contents($docs . '/reference/cli.md')) as $problem) {
+    $errors[] = 'docs/reference/cli.md: ' . $problem;
 }
 
 fwrite(STDOUT, sprintf("文档检查：%d 篇 / %d 条链接 / %d 条裁决\n", count($files), $linkCount, $decisionCount));

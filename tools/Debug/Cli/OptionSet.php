@@ -152,6 +152,12 @@ final class OptionSet
         return $names;
     }
 
+    /** @return list<string> 规范名 + 别名，给文档闭合校验用 */
+    public function words(): array
+    {
+        return \array_values(\array_unique([...\array_keys($this->options), ...\array_keys($this->aliases)]));
+    }
+
     private function cast(Opt $opt, string $name, string $raw): mixed
     {
         if ($opt->type === Opt::STRING || $opt->type === Opt::APPEND) {
@@ -199,7 +205,7 @@ final class OptionSet
         return \implode("\n", $lines) . "\n";
     }
 
-    private static function show(mixed $value): string
+    public static function show(mixed $value): string
     {
         if (\is_array($value)) {
             return '[]';
