@@ -62,6 +62,31 @@ final class Parsed
         return \is_array($value) ? \array_values(\array_map('strval', $value)) : [];
     }
 
+    /**
+     * 可逗号分隔的列表：`--rule=a,b` 与 `--rule=a --rule=b` 同义。
+     *
+     * 两种写法都要支持的理由不同：逗号便于从文档里复制一行，重复开关便于
+     * 脚本拼接（拼的时候不必知道前一个值有没有逗号）。解析只做一次、
+     * 只在 `Parsed` 里做 —— 出口各写一遍的话，总有一个只认其中一种写法，
+     * 而读者看到的是"这条规则没触发"。
+     *
+     * @return list<string>
+     */
+    public function strings(string $name): array
+    {
+        $out = [];
+        foreach ($this->list($name) as $one) {
+            foreach (\explode(',', $one) as $piece) {
+                $piece = \trim($piece);
+                if ($piece !== '') {
+                    $out[] = $piece;
+                }
+            }
+        }
+
+        return \array_values(\array_unique($out));
+    }
+
     public function at(): ?int
     {
         return $this->has('at') ? $this->int('at') : null;

@@ -6,6 +6,8 @@ namespace Drift\Dev\Debug\View;
 use Drift\Debug\Protocol\ProtocolError;
 use Drift\Debug\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
+use Drift\Dev\Debug\View\Rules\RuleSelection;
+use Drift\Dev\Debug\View\Rules\Severity;
 
 /**
  * Web 视图的服务端：路由 + JSON 应答。**不含 HTML / CSS / JS**（在 `web/` 下）。
@@ -30,6 +32,9 @@ use Drift\Debug\Session\Thresholds;
  */
 final class Web
 {
+    /** 启动时定下的规则选择；查询串可以再覆盖（见 {@see selectionWith()}）。 */
+    private readonly RuleSelection $selection;
+
     /**
      * @param null|\Closure(string, array<string, mixed>): array<string, mixed> $control
      *   `pause` / `resume` 的落地：`(动作, 参数)` 进，回执数组出。`null` = 这个会话
@@ -41,7 +46,9 @@ final class Web
         private readonly Thresholds $thresholds,
         private readonly string $root,
         private readonly ?\Closure $control = null,
+        ?RuleSelection $selection = null,
     ) {
+        $this->selection = $selection ?? RuleSelection::all();
     }
 
     /**
@@ -51,7 +58,7 @@ final class Web
      * 比到"差不多"。
      *
      * @param array<string, mixed> $facts
-     * @param array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>} $projection
+     * @param array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>, selection?: array<string, mixed>} $projection
      * @return array<string, mixed>
      */
     public static function brief(string $label, array $facts, array $projection): array
@@ -64,6 +71,9 @@ final class Web
             // 找了就是第二份"哪一帧最值得看"的判据，而它与 findings 的口径不一定一致。
             'worst' => (int) ($facts['explain']['id'] ?? 0),
             'thresholds' => $projection['thresholds'],
+            // 页面要显示"这份报告只跑了两条规则"，否则 `--rule=` 的报告
+            // 与完整报告在页面上长得一模一样。
+            'selection' => $projection['selection'] ?? [],
             'coverage' => $projection['coverage'],
             'findings' => \array_map(
                 static fn(Finding $one): array => $one->toArray(),
@@ -91,7 +101,7 @@ final class Web
             '/', '/index.html' => $this->asset('index.html', 'text/html; charset=utf-8'),
             '/app.js' => $this->asset('app.js', 'text/javascript; charset=utf-8'),
             '/style.css' => $this->asset('style.css', 'text/css; charset=utf-8'),
-            '/api/brief' => $this->briefResponse(),
+            '/api/brief' => $this->briefResponse($query),
             '/api/state' => $this->json($this->queries->query('state')),
             '/api/script' => $this->json($this->queries->query('script')),
             '/api/frames' => $this->json($this->queries->query('frames', [
@@ -116,11 +126,74 @@ final class Web
     }
 
     /** @return array{status: int, type: string, body: string} */
-    private function briefResponse(): array
+    private function briefResponse(array $query): array
     {
+        $selection = $this->selectionWith($query);
+        if ($selection === null) {
+            $raw = (string) ($query['minSeverity'] ?? '');
+
+            return $this->error(400, 'bad_request', "未知严重度：{$raw}；可用：info / warning / error");
+        }
+
         $facts = Facts::gather($this->queries, $this->label);
 
-        return $this->json(self::brief($this->label, $facts, Brief::project($facts, $this->thresholds)));
+        return $this->json(self::brief(
+            $this->label,
+            $facts,
+            Brief::project($facts, $this->thresholds, $selection),
+        ));
+    }
+
+    /**
+     * 查询串覆盖启动时的规则选择：`?rule=slow-frame,fanout&minSeverity=warning`。
+     *
+     * 返回 `null` 表示严重度拼错了。不在 `Severity::parse()` 里抛异常，是因为
+     * 同一个函数也服务于命令行 —— 那里 `exit(2)` 才是对的，而这里要 400。
+     *
+     * @param array<string, mixed> $query
+     */
+    private function selectionWith(array $query): ?RuleSelection
+    {
+        $minRaw = $query['minSeverity'] ?? null;
+        $min = null;
+        if (\is_string($minRaw) && $minRaw !== '') {
+            $min = Severity::parse($minRaw);
+            if ($min === null) {
+                return null;
+            }
+        }
+
+        $only = self::csv($query['rule'] ?? null);
+        $without = self::csv($query['without'] ?? null);
+        if ($only === [] && $without === [] && $min === null) {
+            return $this->selection;
+        }
+
+        return new RuleSelection($only, $without, $min);
+    }
+
+    /**
+     * `rule=a,b` 与 `rule[]=a&rule[]=b` 都接受。
+     *
+     * @return list<string>
+     */
+    private static function csv(mixed $raw): array
+    {
+        $items = \is_array($raw) ? $raw : ($raw === null ? [] : [$raw]);
+        $out = [];
+        foreach ($items as $one) {
+            if (!\is_string($one)) {
+                continue;
+            }
+            foreach (\explode(',', $one) as $piece) {
+                $piece = \trim($piece);
+                if ($piece !== '') {
+                    $out[] = $piece;
+                }
+            }
+        }
+
+        return \array_values(\array_unique($out));
     }
 
     /**

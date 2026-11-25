@@ -9,8 +9,8 @@
 但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
 
 1. **生产可用线**：录制开销已有量具与数字，但 AOT 常驻黑匣子、崩溃取证与多窗口隔离仍未验。
-2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加，没有绘制归因，Web 只是几何画布。
-3. **生态线**：发现规则硬编码、无严重度、无开关、无基线回归；协议与文档存在多处漂移。
+2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），但 Web 仍缺树 / 时间轴 / 搜索。
+3. **生态线**：发现规则已注册表化并带严重度与开关，但无基线回归、无插件式外部规则；协议与文档存在多处漂移。
 
 所以下一阶段的中心不是“再加几个视图”，而是**先把采集预算、生命周期与生产可用补齐，再让视图消费同一份证据**。任何新域如果没有预算、没有判据、没有独立消费者，就不进入主线。
 
@@ -26,16 +26,16 @@
 | 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
 | 属性（Widget / State） | 切片：dev 反射、按需快照、脱敏 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev |
 | 网络 | 切片：骨架 + 发起者 + 落地帧 + 报文 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
-| 确定性发现 | 切片：7 条规则、阈值可配三项 | Lighthouse audits、Flutter perf | 缺规则开关、严重度、基线回归 |
+| 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖 | Lighthouse audits、Flutter perf | 缺基线回归、规则权重 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 | Chrome/Flutter 多标签 | 缺树、时间轴、网络、搜索 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
 | 多窗口 / 多 target | 未做：第二个会话直接拒绝 | 成熟 DevTools 多 target | S2 的前置 |
-| 绘制 / layer / GPU | 未做：只有 `paint` 段总耗时 | Chrome Layers、Flutter Raster、Unity Frame Debugger | **核心性能缺口** |
+| 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
 | 内存 / 泄漏 | 未做 | Chrome Memory、Flutter Memory、Tracy | 长跑应用必需 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
 | 崩溃 / 生产黑匣子 | 未做 | Sentry breadcrumb、Chrome trace | S2 的核心价值 |
-| 规则扩展 / 插件 | 未做：规则硬编码在 `Brief` | ESLint、Lighthouse、Flutter lint | 生态门槛 |
+| 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
 | 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
 
@@ -149,12 +149,23 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 **设计**：
 
-- `FindingRule` 接口：`id()` / `version()` / `evaluate(Facts, Thresholds): list<Finding>`；`RuleRegistry` 唯一声明。
-- `Finding` 增加 `severity`（info / warn / error）与 `suppressed` 理由；规则可 `--rules=...` 启用、`--disable=...` 关闭；未知规则名报错，不静默。
+- `Rule` 抽象类（原计划的 `FindingRule` 接口）：`id()` / `ids()` / `version()` / `severity()` / `summary()` / `evaluate(Facts, Thresholds): list<Finding>`；`RuleRegistry` 唯一声明，顺序即输出顺序。
+- `Finding` 增加 `severity`（info / warning / error）；`--rule=` 启用、`--without=` 关闭、`--min-severity=` 过滤呈现；未知规则名报错并列出可用编号。
 - `--baseline=<evidence>`：按同一组规则比较两份证据的发现与关键度量；回归进 CI 退出码，而不是只打印。
 - `Thresholds` 的全部字段都要有 CLI 入口；当前只有 slow / fanout / repeat 三项。
 
-**判据**：新增规则不修改 `Brief`；关闭规则后该条发现消失且其他发现不变；基线回归能红在“同一规则、同一地址的度量变差”上。
+**已落地**（规则注册表 + 严重度 + 开关）：
+
+- 九个规则类住在 `tools/Debug/View/Rules/`，`Brief` 从 852 行降到约 330 行，只剩编排、覆盖度与兜底。`RuleRegistry::verify()` 在**运行时**校验"规则声明的编号 ↔ `Finding::RULE_VERSIONS`"双向闭合 —— 此前靠单元测试守，测试不跑就不守。
+- `--rules` 打印目录（编号 / 严重度 / 版本 / 说明），由注册表生成，不另写一份文档。
+- 三处与计划不同的取舍：
+  1. **抽象类而非接口**：`ids()` / `version()` / `finding()` 需要默认实现，PHP 接口给不了。`finding()` 让严重度由规则盖章，不靠每条 `new Finding()` 各写一遍 —— 两边不一致时报告看不出来，只有 `--min-severity` 会漏行。
+  2. **`--rule` / `--without` 而非 `--rules` / `--disable`**：`--rules` 被"列目录"占用了；`--rule` / `--without` 与 `find --include/--exclude` 的习惯一致，也避免"带 s 的开关做选择"这种容易记反的形状。
+  3. **过滤发生在判据之后，并新增 `suppressed` 兜底**：`--min-severity` 只少看几行，判据照跑。发现被过滤光时报告说"N 条被过滤掉了"而不是"没问题" —— 这两者在实现上都表现为"发现列表为空"，结论却相反，是本域最容易写错的一条。
+- `Thresholds` 的 CLI 入口仍只有三项，这是**有意不做**：那三项是表头显示、直接影响"这算不算慢"的判断；其余七项改变的是规则内部的敏感度，用 `--rule=` 把范围缩小到一条规则之后，读者要的是"这条规则说了什么"，不是"把它的阈值调到刚好不报"。`with()` 在库层已支持全部十项，证据包也带着它们。
+- **未做**：`--baseline` 基线回归（依赖规则 id 稳定，现在有了）、七项阈值的 CLI flag、插件式加载外部规则（需要先定 `Rule` 的跨包契约）。
+
+**判据**（`tests/Unit/Debug/BriefTest.php`）：注册表声明的编号集合 == 真实产出的集合；每条发现的 severity == 所属规则的 severity；`--rule=` 只跑一条且兜底自报"只跑了 1/9"；`--without` 关掉一个变体不连带关掉兄弟；`--min-severity` 只去掉低级别；过滤光了报 `suppressed` 而不是 `clean`；未知编号抛错并列出可用编号；`--rules` 目录与注册表同源。
 
 ### 7. 后续域：内存、异步、无障碍
 
@@ -184,7 +195,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P3** | 多窗口隔离 | 会话按应用/窗口命名空间；`Discovery` 多条目生效；第二窗口独立或明确拒绝 | P3 | L |
 | **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
 | **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |
-| **P5** | 规则注册表 | `FindingRule` + `RuleRegistry`；severity；启用/关闭；未知规则报错 | P2 | M |
+| **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
 | **P5** | 基线回归 | `--baseline` 比较两份证据；CI 退出码；回归能红在度量变差 | P5 | M |
 | **P6** | 内存域 | 节点 / State / 订阅 / 图片缓存计数；泄漏趋势；独立窗口与查询 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |

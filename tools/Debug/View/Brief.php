@@ -4,6 +4,10 @@ declare(strict_types=1);
 namespace Drift\Dev\Debug\View;
 
 use Drift\Debug\Session\Thresholds;
+use Drift\Dev\Debug\View\Rules\Rule;
+use Drift\Dev\Debug\View\Rules\RuleRegistry;
+use Drift\Dev\Debug\View\Rules\RuleSelection;
+use Drift\Dev\Debug\View\Rules\Severity;
 
 /**
  * 证据简报：把已经记下来的事实压成"预算内可读、且自报裁剪"的一段文本。
@@ -11,8 +15,16 @@ use Drift\Debug\Session\Thresholds;
  * ## 它不采集任何东西
  *
  * 全部输入来自查询面（`frames` / `explain` / `hotspots` / `nodes` / `cascade` /
- * `digest` / `stats`）。这不是省事，是这一层存在的意义：如果简报要新开采集，
- * 它就成了第二份真相，"同一份证据不同消费者结论一致"立刻不成立。
+ * `digest` / `stats` / `boxes` / `paint` / `repaints`）。这不是省事，是这一层存在
+ * 的意义：如果简报要新开采集，它就成了第二份真相，"同一份证据不同消费者结论一致"
+ * 立刻不成立。
+ *
+ * ## 它也不实现判据
+ *
+ * 十条规则住在 `Rules\`，每条一个类，各自声明编号、严重度与判据；本类只做三件事：
+ * **按表顺序跑、把兜底说清楚、算覆盖度**。这么切是因为规则是会一直加的东西，
+ * 而"加一条规则"与"改投影纪律"是两种完全不同的改动频率 —— 混在一个 850 行的
+ * 类里，前者每加一次都要重读后者。
  *
  * ## 三条纪律，缺一条就不再是证据
  *
@@ -29,7 +41,7 @@ use Drift\Debug\Session\Thresholds;
  * 预算不够时先丢明细、再丢发现，而不是相反：明细可以按地址重新取回，发现不能
  * ——它是"要去查什么"的入口，丢了就不知道该查哪。
  *
- * @internal 证据层原型；`tools/debug-brief.php` 是它唯一的调用方
+ * @internal 证据层投影；`tools/debug-brief.php` 与 `View\Web` 是它的调用方
  */
 final class Brief
 {
@@ -37,94 +49,40 @@ final class Brief
     // 见 {@see Thresholds}。常量只有一份，换个刷新率或换类项目就只能改代码。
 
     /**
-     * 从事实里算出发现（确定性规则，按固定顺序）。
+     * 从事实里算出发现（确定性规则，按注册表顺序）。
      *
      * @param array<string, mixed> $facts
      * @return list<Finding>
      */
-    public static function findings(array $facts, ?Thresholds $t = null): array
+    public static function findings(array $facts, ?Thresholds $t = null, ?RuleSelection $selection = null): array
     {
         $t ??= Thresholds::default();
+        $selection ??= RuleSelection::all();
+
+        $ran = RuleRegistry::select($selection);
         $found = [];
+        // 过滤前产出过几条。它决定"报告为空"该说哪句话：
+        // 判据跑过但被过滤，与判据跑过且没触发，是两件完全不同的事。
+        $evaluated = 0;
 
-        foreach (self::slowFindings($facts, $t) as $one) {
-            $found[] = $one;
+        foreach ($ran as $rule) {
+            $severity = $rule->severity();
+            foreach ($rule->evaluate($facts, $t) as $one) {
+                ++$evaluated;
+                // 两条过滤都在产出之后：`--min-severity` 只少看几行，不改变
+                // "判据跑过没有"这个事实 —— 否则兜底会把"我没看"说成"没问题"。
+                if (!$selection->accepts($one->rule) || !$selection->acceptsSeverity($severity)) {
+                    continue;
+                }
+                $found[] = $one;
+            }
         }
 
-        $stage = self::stageFinding($facts);
-        if ($stage !== null) {
-            $found[] = $stage;
+        if ($found !== []) {
+            return $found;
         }
 
-        foreach (self::fanoutFindings($facts, $t) as $one) {
-            $found[] = $one;
-        }
-
-        $group = self::groupFinding($facts, $t);
-        if ($group !== null) {
-            $found[] = $group;
-        }
-
-        $repeat = self::repeatFindings($facts, $t);
-        foreach ($repeat as $one) {
-            $found[] = $one;
-        }
-
-        foreach (self::repaintFindings($facts, $t) as $one) {
-            $found[] = $one;
-        }
-
-        foreach (self::layerMissFindings($facts, $t) as $one) {
-            $found[] = $one;
-        }
-
-        foreach (self::reshapeFindings($facts, $t) as $one) {
-            $found[] = $one;
-        }
-
-        // 几何没覆盖到目标帧时，"没有布局发现"不是结论，而是没看见。
-        $gap = self::geometryGapFinding($facts);
-        if ($gap !== null) {
-            $found[] = $gap;
-        }
-
-        if ($found === []) {
-            $window = Facts::mapOf($facts, 'window');
-            $cov = self::coverage($facts);
-            $address = \sprintf('window:%d-%d', (int) ($window['from'] ?? 0), (int) ($window['to'] ?? 0));
-
-            // "没触发规则"与"没问题"是两句话。树被截断时只能说前者 —— 后者是
-            // 把"我没看到"当成"不存在"，而这恰好是这类报告最容易犯、最难发现的错。
-            $found[] = $cov['complete']
-                ? new Finding(
-                    'clean',
-                    \sprintf(
-                        '窗口内没有触发任何规则（慢帧 %.1fms / 扇出 %d / 重复 %d%%）',
-                        $t->slowMs,
-                        $t->fanoutNodes,
-                        $t->repeatPercent,
-                    ),
-                    $address,
-                    '0 条',
-                    '—',
-                    '换更长的窗口或降低阈值再看一次',
-                )
-                : new Finding(
-                    'inconclusive',
-                    \sprintf(
-                        '扫过的那部分没有触发规则，但因果树不完整：展开到第 %d 层、%d 处深度截断、%d 支同层分支被折叠',
-                        $cov['seen'],
-                        $cov['cut'],
-                        (int) ($cov['nested'] ?? 0),
-                    ),
-                    $address,
-                    \sprintf('%d 处未展开', $cov['cut'] + (int) ($cov['nested'] ?? 0)),
-                    '扫描完整度 = 100%',
-                    '调大 cascade 的 maxDepth / maxChildren 重取一次，或直接 cascade(' . (int) ($window['to'] ?? 0) . ')',
-                );
-        }
-
-        return $found;
+        return [self::fallback($facts, $t, $selection, $ran, $evaluated)];
     }
 
     /**
@@ -137,578 +95,146 @@ final class Brief
      * `coverage` 一并给出。裁剪账要写"规则看全了没有"，而那是投影算的统计；
      * 呈现层自己再算一遍必然漂，漂的表现是"报告说扫全了，其实是猜的"。
      *
+     * `selection` 也一并给出：读者看到"只有 2 条发现"，需要知道这是全部规则的
+     * 结论还是只跑了两条。少这一项，`--rule=` 的报告与完整报告长得一模一样。
+     *
      * @param array<string, mixed> $facts
-     * @return array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>}
+     * @return array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>, selection: array<string, mixed>}
      */
-    public static function project(array $facts, ?Thresholds $t = null): array
+    public static function project(array $facts, ?Thresholds $t = null, ?RuleSelection $selection = null): array
     {
         $t ??= Thresholds::default();
+        $selection ??= RuleSelection::all();
 
         return [
-            'findings' => self::findings($facts, $t),
+            'findings' => self::findings($facts, $t, $selection),
             'coverage' => self::coverage($facts),
             'thresholds' => $t->toArray(),
+            'selection' => self::selectionOf($selection),
         ];
     }
 
-    // ------------------------------------------------------------ 规则
+    // ------------------------------------------------------------ 兜底
 
     /**
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function slowFindings(array $facts, Thresholds $t): array
-    {
-        $slow = [];
-        foreach (Facts::listOf($facts, 'frames') as $frame) {
-            if ((float) ($frame['cost'] ?? 0.0) > $t->slowMs) {
-                $slow[] = $frame;
-            }
-        }
-        // 耗时降序 → 帧号升序：同耗时也要有确定次序，否则两次投影不同。
-        \usort($slow, static fn(array $a, array $b): int => ((float) $b['cost'] <=> (float) $a['cost'])
-            ?: ((int) $a['id'] <=> (int) $b['id']));
-
-        $out = [];
-        foreach (\array_slice($slow, 0, 3) as $frame) {
-            $id = (int) $frame['id'];
-            $cost = (float) $frame['cost'];
-            $out[] = new Finding(
-                'slow-frame',
-                \sprintf('慢帧 #%d %.2fms，超预算 %.1f×', $id, $cost, $cost / $t->slowMs),
-                'frame:' . $id,
-                \sprintf('%.2fms', $cost),
-                \sprintf('%.1fms', $t->slowMs),
-                \sprintf('explain(%d).cost 应给出同一数值', $id),
-            );
-        }
-
-        return $out;
-    }
-
-    /** @param array<string, mixed> $facts */
-    private static function stageFinding(array $facts): ?Finding
-    {
-        $explain = Facts::mapOf($facts, 'explain');
-        $frameId = (int) ($explain['id'] ?? 0);
-        $cost = (float) ($explain['cost'] ?? 0.0);
-        if ($frameId <= 0 || $cost <= 0.0) {
-            return null;
-        }
-
-        // `stageMs` 已按耗时降序（记录层做的），取第一段就是最大段。
-        $name = '';
-        $ms = 0.0;
-        foreach (Facts::mapOf($explain, 'stageMs') as $stage => $value) {
-            $name = (string) $stage;
-            $ms = (float) $value;
-            break;
-        }
-        if ($name === '') {
-            return null;
-        }
-
-        $share = $ms / $cost;
-        if ($share < 0.6 || $ms < 2.0) {
-            return null;
-        }
-
-        return new Finding(
-            'stage-dominance',
-            \sprintf('#%d 的 %.0f%% 花在 %s（%.2fms / %.2fms）', $frameId, $share * 100, $name, $ms, $cost),
-            \sprintf('frame:%d stage:%s', $frameId, $name),
-            \sprintf('%.2fms', $ms),
-            '占比 ≥ 60% 且 ≥ 2.00ms',
-            \sprintf('explain(%d).stageMs.%s', $frameId, $name),
-        );
-    }
-
-    /**
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function fanoutFindings(array $facts, Thresholds $t): array
-    {
-        $cascade = Facts::mapOf($facts, 'cascade');
-        $rebuilt = (int) ($cascade['rebuilt'] ?? 0);
-        if ($rebuilt < $t->fanoutNodes) {
-            return [];
-        }
-
-        $roots = Facts::listOf($cascade, 'roots');
-        if ($roots === []) {
-            return [];
-        }
-
-        // 第一大支：组内每份子树 × 份数（`cascade` 的口径就是"每实例"）。
-        // ★ `ids` 只在 `count > 1` 时存在（单个节点不给，免得同一件事两种写法），
-        //   所以代表 id 与份数要分别从 `id` / `count` 取 —— 直接读 `ids[0]` 会拿到 0，
-        //   而 0 不在有效 id 域里，错误会静默地印进报告。
-        $top = $roots[0];
-        $topId = (int) ($top['id'] ?? 0);
-        $topCount = \max(1, (int) ($top['count'] ?? 1));
-        $subtree = (int) ($top['subtree'] ?? 1) * $topCount;
-        $share = (int) \round($subtree * 100 / $rebuilt);
-        if ($share < $t->fanoutShare) {
-            return [];
-        }
-
-        $frameId = (int) ($cascade['frame'] ?? 0);
-        return [new Finding(
-            'fanout',
-            \sprintf(
-                '#%d 重建 %d 个，其中 %d 落在一个 %s 根（%d%%）',
-                $frameId,
-                $rebuilt,
-                $subtree,
-                (string) ($top['type'] ?? '?'),
-                $share,
-            ),
-            self::addressOf($frameId, $topId),
-            (string) $rebuilt,
-            '≥ ' . $t->fanoutNodes . ' 且单支 ≥ ' . $t->fanoutShare . '%',
-            \sprintf('cascade(%d).roots[0] 与 rebuilt', $frameId),
-        )];
-    }
-
-    /**
-     * 同形兄弟：一个容器底下 N 个一模一样的子树一起重建，基本就是"该虚拟化却没虚拟化"。
+     * 一条发现都没有时，报告仍然必须说一句话 —— 而且要说对是哪一句。
      *
-     * 要**往下走**，不能只看根：表格页的根是整棵 `PageShell`（份数 1），
-     * 真正重复的是它内部某个容器底下的 12 个同形兄弟 —— 只扫根这条规则永远不触发，
-     * 而它恰恰是最常见、最容易改的一类问题。
+     * 三种空报告，三种修法：
+     * - `clean`：全部规则跑过、都没触发、树是完整的。这时"没问题"是结论。
+     * - `inconclusive`：规则没触发，但树被截断 / 帧不完整。"扫过的地方没问题"
+     *   不等于"没问题"，读者该去把树取全再问一次。
+     * - `suppressed`：规则**触发了**，但被 `--rule` / `--without` / `--min-severity`
+     *   挡掉了。这是最容易写成"没问题"的一种 —— 实现上它和 clean 都表现为
+     *   "发现列表为空"，而结论完全相反。
      *
      * @param array<string, mixed> $facts
+     * @param list<Rule> $ran
      */
-    private static function groupFinding(array $facts, Thresholds $t): ?Finding
-    {
-        $cascade = Facts::mapOf($facts, 'cascade');
-        $roots = Facts::listOf($cascade, 'roots');
-        if ($roots === []) {
-            return null;
-        }
-
-        $group = self::biggestGroup($roots, $t);
-        if ($group === []) {
-            return null;
-        }
-
-        $count = (int) ($group['count'] ?? 1);
-        $type = (string) ($group['type'] ?? '?');
-        $frameId = (int) ($cascade['frame'] ?? 0);
-
-        return new Finding(
-            'unvirtualized-group',
-            \sprintf(
-                '一个 %s 底下有 %d 个同形兄弟一起重建（每个 %d 个节点）',
-                $type,
-                $count,
-                (int) ($group['subtree'] ?? 1),
-            ),
-            self::addressOf($frameId, (int) ($group['id'] ?? 0)),
-            (string) $count,
-            '≥ ' . $t->groupSame,
-            \sprintf('cascade(%d).roots[].count 沿 children 往下找', $frameId),
-        );
-    }
-
-    /**
-     * 树上份数最大的同形组。
-     *
-     * 深度上限只是**防环的保险**，不负责裁剪：树本身已经被 `cascade` 的 `maxDepth`
-     * 截过，并且截断处带 `cut` / `omitted`。这里再按"看起来够深了"另设一个上限，
-     * 就会与查询层的深度打架 —— 第一次写的时候限成 4，而表格页的 12 个同形兄弟
-     * 在第 8 层，规则于是永远不触发，报告看起来"没问题"。
-     *
-     * @param list<array<string, mixed>> $nodes
-     * @return array<string, mixed>
-     */
-    private static function biggestGroup(array $nodes, Thresholds $t, int $depth = 0): array
-    {
-        if ($depth > 32) {
-            return [];
-        }
-
-        $best = [];
-        $bestCount = 0;
-        foreach ($nodes as $node) {
-            $count = (int) ($node['count'] ?? 1);
-            if ($count >= $t->groupSame && $count > $bestCount) {
-                $best = $node;
-                $bestCount = $count;
-            }
-            $kids = Facts::listOf($node, 'children');
-            if ($kids === []) {
-                continue;
-            }
-            $deep = self::biggestGroup($kids, $t, $depth + 1);
-            $deepCount = (int) ($deep['count'] ?? 0);
-            if ($deepCount > $bestCount) {
-                $best = $deep;
-                $bestCount = $deepCount;
-            }
-        }
-
-        return $best;
-    }
-
-    /**
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function repeatFindings(array $facts, Thresholds $t): array
-    {
+    private static function fallback(
+        array $facts,
+        Thresholds $t,
+        RuleSelection $selection,
+        array $ran,
+        int $evaluated,
+    ): Finding {
         $window = Facts::mapOf($facts, 'window');
-        $count = (int) ($window['count'] ?? 0);
-        if ($count < 5) {
-            return [];
-        }
+        $address = \sprintf('window:%d-%d', (int) ($window['from'] ?? 0), (int) ($window['to'] ?? 0));
 
-        $need = (int) \ceil($count * $t->repeatPercent / 100);
-        $out = [];
-        foreach (Facts::listOf($facts, 'nodes') as $node) {
-            $rebuilds = (int) ($node['rebuilds'] ?? 0);
-            if ($rebuilds < $need) {
-                continue;
-            }
-            $out[] = new Finding(
-                'repeat-rebuild',
-                \sprintf(
-                    '%s 在 %d/%d 帧都重建（自写 %d 次）',
-                    Fit::tailPath((string) ($node['path'] ?? ('#' . $node['id'])), 48),
-                    $rebuilds,
-                    $count,
-                    (int) ($node['self'] ?? 0),
-                ),
-                \sprintf('node:%d', (int) ($node['id'] ?? 0)),
-                \sprintf('%d/%d', $rebuilds, $count),
-                \sprintf('≥ %d', $need),
-                'nodes(window).rebuilds ÷ window.count',
+        if ($evaluated > 0) {
+            return new Finding(
+                'suppressed',
+                \sprintf('%d 条发现被过滤掉了，不是没有问题', $evaluated),
+                $address,
+                \sprintf('%d 条', $evaluated),
+                self::filterText($selection),
+                '去掉过滤条件重跑：不加 --rule / --without / --min-severity',
+                // 有发现被藏起来，比"什么都没触发"更值得看一眼 —— 它不是干净的结论。
+                Severity::Warning,
             );
-            if (\count($out) >= 2) {
-                break;
-            }
         }
 
-        return $out;
+        $cov = self::coverage($facts);
+        $scope = self::scopeText($t, $ran);
+
+        // "没触发规则"与"没问题"是两句话。树被截断时只能说前者 —— 后者是
+        // 把"我没看到"当成"不存在"，而这恰好是这类报告最容易犯、最难发现的错。
+        if ($cov['complete']) {
+            return new Finding(
+                'clean',
+                \sprintf('窗口内没有触发任何规则（%s）', $scope),
+                $address,
+                '0 条',
+                '—',
+                '换更长的窗口或降低阈值再看一次',
+            );
+        }
+
+        return new Finding(
+            'inconclusive',
+            \sprintf(
+                '扫过的那部分没有触发规则，但因果树不完整：展开到第 %d 层、%d 处深度截断、%d 支同层分支被折叠（%s）',
+                $cov['seen'],
+                $cov['cut'],
+                (int) ($cov['nested'] ?? 0),
+                $scope,
+            ),
+            $address,
+            \sprintf('%d 处未展开', $cov['cut'] + (int) ($cov['nested'] ?? 0)),
+            '扫描完整度 = 100%',
+            '调大 cascade 的 maxDepth / maxChildren 重取一次，或直接 cascade(' . (int) ($window['to'] ?? 0) . ')',
+        );
     }
 
-    // ------------------------------------------------------------ 绘制
-
-    /**
-     * 重画风暴：同一节点在窗口里几乎每帧都被重画。
-     *
-     * ## 为什么这条比"这一帧画得多"有用
-     *
-     * 单帧画 400 个节点不一定是问题（首帧、整页切换都这样）。**每帧**都画同一批
-     * 节点才是问题：说明包住它们的重绘边界没起作用，或者根本没有边界。
-     *
-     * 判据是"该节点被画的帧数 ÷ 窗口帧数"，两个数都来自同一次 `repaints()` ——
-     * 分母不另取，否则"扫过的帧"与"节点的帧"会各算一遍而悄悄分家。
-     *
-     * 优先报**自己就是边界**的节点（`misses > 0`）：它们是"要不要画"的决策点，
-     * 修法落在它们身上（挪边界、拆子树）。没有边界候选时才退回报普通节点，
-     * 那时结论是"这一片都没有边界"，而不是"这几个节点各自有问题"。
-     *
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function repaintFindings(array $facts, Thresholds $t): array
+    /** 这次跑了哪些规则、按什么级别过滤 —— 报告头部与 `--json` 都用它。 */
+    private static function selectionOf(RuleSelection $selection): array
     {
-        $agg = Facts::mapOf($facts, 'repaints');
-        $frames = (int) ($agg['frames'] ?? 0);
-        // 窗口太短时"每帧都画"是必然：2 帧里画 2 帧不构成任何结论。
-        if (($agg['captured'] ?? false) !== true || $frames < 5) {
-            return [];
+        $ids = [];
+        foreach (RuleRegistry::select($selection) as $rule) {
+            $ids[] = $rule->id();
         }
-
-        $need = (int) \ceil($frames * $t->repaintPercent / 100);
-        $hot = [];
-        $plain = [];
-        foreach (Facts::listOf($agg, 'nodes') as $row) {
-            if ((int) ($row['frames'] ?? 0) < $need) {
-                continue;
-            }
-            if ((int) ($row['misses'] ?? 0) > 0) {
-                $hot[] = $row;
-            } else {
-                $plain[] = $row;
-            }
-        }
-
-        $pick = $hot !== [] ? $hot : $plain;
-        $note = $hot === [] ? '（窗口里没有重绘边界）' : '';
-        $out = [];
-        foreach ($pick as $row) {
-            $painted = (int) ($row['frames'] ?? 0);
-            $out[] = new Finding(
-                'repaint-storm',
-                \sprintf(
-                    '%s 在 %d/%d 帧都被重画%s',
-                    Fit::tailPath((string) ($row['path'] ?? ('#' . $row['node'])), 48),
-                    $painted,
-                    $frames,
-                    $note,
-                ),
-                \sprintf('node:%d', (int) ($row['node'] ?? 0)),
-                \sprintf('%d/%d', $painted, $frames),
-                \sprintf('≥ %d', $need),
-                'repaints(window).nodes[].frames ÷ repaints.frames',
-            );
-            if (\count($out) >= 2) {
-                break;
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * 层缓存失效：某个重绘边界在窗口里反复重录。
-     *
-     * ## 为什么这条必须单独有
-     *
-     * 边界存在的意义是"子树没变就重放命令流"。它每帧都重录，等于边界白放 ——
-     * 而这件事**看不见**：帧耗时正常、重建数正常，只是每帧多画几百个节点。
-     * 只有把命中 / 未命中记下来，这类"结构性浪费"才第一次可检。
-     *
-     * 报**原因**而不只报次数：四种原因的修法完全不同 —— `invalidated` 要查谁在
-     * 主动丢缓存，`resized` 要查布局抖动，`capabilities` 要查跨端回放，
-     * `first` 只是新边界。只给次数等于让读者自己去猜是哪一种。
-     *
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function layerMissFindings(array $facts, Thresholds $t): array
-    {
-        $agg = Facts::mapOf($facts, 'repaints');
-        if (($agg['captured'] ?? false) !== true) {
-            return [];
-        }
-
-        $frames = (int) ($agg['frames'] ?? 0);
-        $rate = (int) \round((float) ($agg['hitRate'] ?? 0.0) * 100);
-
-        $out = [];
-        foreach (Facts::listOf($agg, 'nodes') as $row) {
-            $misses = (int) ($row['misses'] ?? 0);
-            if ($misses < $t->layerMissCount) {
-                continue;
-            }
-            $out[] = new Finding(
-                'layer-miss',
-                \sprintf(
-                    '%s 的层缓存重录 %d/%d 帧（最近原因 %s，窗口命中率 %d%%）',
-                    Fit::tailPath((string) ($row['path'] ?? ('#' . $row['node'])), 48),
-                    $misses,
-                    $frames,
-                    (string) ($row['reason'] ?? '?'),
-                    $rate,
-                ),
-                \sprintf('node:%d', (int) ($row['node'] ?? 0)),
-                \sprintf('%d 次', $misses),
-                \sprintf('≥ %d', $t->layerMissCount),
-                'repaints(window).nodes[].misses ÷ byReason',
-            );
-            if (\count($out) >= 2) {
-                break;
-            }
-        }
-
-        return $out;
-    }
-
-    // ------------------------------------------------------------ 几何
-
-    /**
-     * 父子约束改写：子盒收到的宽度上限与父内容盒给出的上限不同。
-     *
-     * 这是"这个表格为什么只有 240 宽"那类问题的机器版答案：不说"看起来不对"，
-     * 只说在哪两跳之间、从多少变成多少、由什么改的（宽度修饰或自定义布局），
-     * 并给出 `constraints(node, frame)` 这个可复算地址。
-     *
-     * 两个方向各最多报一条，并按键（父类型 → 子类型 → 改变量 → 原因）去重：
-     * 表格 12 行同形单元格会给出同一条事实 12 次，列 12 遍不是 12 条发现。
-     * 排序按绝对量降序、node id 升序；同量时给小 id，读者追问时地址稳定。
-     *
-     * @param array<string, mixed> $facts
-     * @return list<Finding>
-     */
-    private static function reshapeFindings(array $facts, Thresholds $t): array
-    {
-        $geometry = Facts::mapOf($facts, 'geometry');
-        $rows = Facts::listOf($geometry, 'rows');
-        if ($rows === []) {
-            return [];
-        }
-
-        $byNode = [];
-        foreach ($rows as $row) {
-            $byNode[(int) ($row['node'] ?? 0)] = $row;
-        }
-
-        $candidates = [];
-        foreach ($rows as $row) {
-            $node = (int) ($row['node'] ?? 0);
-            $parentId = (int) ($row['parent'] ?? 0);
-            if ($node <= 0 || $parentId <= 0 || !isset($byNode[$parentId])) {
-                continue;
-            }
-            $parent = $byNode[$parentId];
-            // 两个轴各算一次。只比宽度会漏掉"行高被压到 12"那一类 —— 高度改写
-            // 与宽度改写是同一个问题在不同轴上的表现，规则却只看了宽度。
-            foreach (['w', 'h'] as $axis) {
-                $one = self::reshapeAxis($parent, $row, $axis, $t);
-                if ($one !== null) {
-                    $candidates[] = $one;
-                }
-            }
-        }
-        \usort($candidates, static fn(array $a, array $b): int => (\abs($b['delta']) <=> \abs($a['delta']))
-            ?: ($a['node'] <=> $b['node'])
-            ?: \strcmp((string) $a['axis'], (string) $b['axis']));
-
-        $frame = (int) ($geometry['frame'] ?? 0);
-        $out = [];
-        $seen = [];
-        foreach ($candidates as $candidate) {
-            $wide = $candidate['delta'] > 0;
-            $axisName = $candidate['axis'] === 'w' ? '宽' : '高';
-            // 去重按"轴 + 方向"：宽放宽 / 宽收紧 / 高放宽 / 高收紧各最多一条。
-            // 只看方向会把"高收紧"和"宽收紧"当成同一条，后者被丢掉。
-            $key = $candidate['axis'] . ':' . ($wide ? 'wide' : 'tight');
-            if (isset($seen[$key])) {
-                continue;
-            }
-            $seen[$key] = true;
-
-            $out[] = new Finding(
-                $wide ? 'constraint-widened' : 'constraint-tightened',
-                \sprintf(
-                    '%s → %s %s被%s到 %.0f（父内容%s %.0f，%+.0fpx，%s）',
-                    $candidate['from'],
-                    $candidate['to'],
-                    $axisName,
-                    $wide ? '放宽' : '收紧',
-                    $candidate['received'],
-                    $axisName,
-                    $candidate['offered'],
-                    $candidate['delta'],
-                    $candidate['cause'],
-                ),
-                self::addressOf($frame, (int) $candidate['node']),
-                \sprintf(
-                    '%s %.0f → %.0f（%+.0fpx）',
-                    $axisName,
-                    $candidate['offered'],
-                    $candidate['received'],
-                    $candidate['delta'],
-                ),
-                \sprintf('≥ %.0fpx 且 ≥ 父内容%s %.0f%%', $t->reshapePx, $axisName, $t->reshapePercent),
-                \sprintf(
-                    'constraints(%d, %d).chain 的 %s → %s 跳；boxModel(%d, %d)',
-                    (int) $candidate['node'], $frame, $candidate['from'], $candidate['to'],
-                    (int) $candidate['node'], $frame,
-                ),
-            );
-            if (\count($out) >= 4) {
-                break;
-            }
-        }
-
-        return $out;
-    }
-
-    /**
-     * 一个轴上的约束改写候选（宽度或高度）。
-     *
-     * 两轴共用同一组阈值：`RESHAPE_MIN_SIZE` 挡的是"盒子太小，相对百分比没有意义"，
-     * 对高度同样成立 —— 12px 的行报"收紧 8px"只是噪音。
-     *
-     * @param array<string, mixed> $parent
-     * @param array<string, mixed> $row
-     * @return array<string, mixed>|null
-     */
-    private static function reshapeAxis(array $parent, array $row, string $axis, Thresholds $t): ?array
-    {
-        $key = $axis === 'w' ? 'maxW' : 'maxH';
-        $sizeKey = $axis === 'w' ? 'w' : 'h';
-
-        $offered = self::finiteMax(Facts::mapOf($parent, 'inner'), $key);
-        $received = self::finiteMax(Facts::mapOf($row, 'applied'), $key);
-        $actual = self::finiteMax(Facts::mapOf($row, 'size'), $sizeKey);
-        if ($offered === null || $received === null || $actual === null
-            || $offered <= 0.0 || $actual < $t->reshapeMinSize) {
-            return null;
-        }
-        // `INF` 不参与比较：父允许任意尺寸时，"子比它小"不是改写。
-        $delta = $received - $offered;
-        if (\abs($delta) < $t->reshapePx
-            || \abs($delta) * 100.0 < $t->reshapePercent * $offered) {
-            return null;
-        }
-        $box = self::finiteMax(Facts::mapOf($row, 'box'), $sizeKey);
 
         return [
-            'node' => (int) ($row['node'] ?? 0),
-            'axis' => $axis,
-            'delta' => $delta,
-            'offered' => $offered,
-            'received' => $received,
-            'from' => (string) ($parent['type'] ?? '?'),
-            'to' => (string) ($row['type'] ?? '?'),
-            'cause' => $box !== null
-                ? \sprintf('%s修饰 %.0f', $axis === 'w' ? '宽度' : '高度', $box)
-                : '自定义布局',
+            'rules' => $ids,
+            'total' => \count(RuleRegistry::all()),
+            'minSeverity' => $selection->min?->value,
+            'filtered' => !$selection->isEverything(),
         ];
     }
 
     /**
-     * 几何没覆盖目标帧时，必须说"没看见"。
+     * 兜底文案里的"看了什么"。
      *
-     * 几何窗口比帧窗口短（60 对 600），而"几何没变"本来就不记新行 —— 所以
-     * `window.to < frame` 是正常情况，不是缺口；只有一整帧都没有任何盒、或
-     * 请求的帧早于窗口起点，才算规则没有看到几何。
+     * 全跑时列阈值（读者据此判断要不要调低），只跑一部分时列条数 ——
+     * 只跑一条规则的报告说"慢帧 16.7ms / 扇出 100 / 重复 50%"会让人以为
+     * 那三条都看过了。
      *
-     * @param array<string, mixed> $facts
+     * @param list<Rule> $ran
      */
-    private static function geometryGapFinding(array $facts): ?Finding
+    private static function scopeText(Thresholds $t, array $ran): string
     {
-        $geometry = Facts::mapOf($facts, 'geometry');
-        $rows = Facts::listOf($geometry, 'rows');
-        $frame = (int) ($geometry['frame'] ?? 0);
-        $window = Facts::mapOf($geometry, 'window');
-        $from = (int) ($window['from'] ?? 0);
-        $to = (int) ($window['to'] ?? 0);
-        if ($rows !== [] && ($from === 0 || $frame === 0 || $from <= $frame)) {
-            return null;
+        $total = \count(RuleRegistry::all());
+        if (\count($ran) < $total) {
+            return \sprintf('只跑了 %d/%d 条规则', \count($ran), $total);
         }
 
-        $address = $frame > 0
-            ? 'frame:' . $frame
-            : \sprintf('window:%d-%d', $from, $to);
-
-        return new Finding(
-            'geometry-inconclusive',
-            $frame > 0 && $from > $frame
-                ? \sprintf('几何窗口从 #%d 开始，#%d 不在其中，布局规则没有看到任何盒', $from, $frame)
-                : '没有几何事实，布局规则一条也没有看',
-            $address,
-            '0 个盒',
-            '至少 1 个盒',
-            'boxes(frame).window 看窗口范围；换一帧或加大几何窗口',
-        );
+        return \sprintf('慢帧 %.1fms / 扇出 %d / 重复 %d%%', $t->slowMs, $t->fanoutNodes, $t->repeatPercent);
     }
 
-    /** `'INF'` 是字符串，不能当有限数参与比较。 */
-    private static function finiteMax(array $constraints, string $key): ?float
+    /** 过滤条件写成一行，`suppressed` 的"阈值"栏用它。 */
+    private static function filterText(RuleSelection $selection): string
     {
-        $value = $constraints[$key] ?? null;
-        if (!\is_int($value) && !\is_float($value)) {
-            return null;
+        $parts = [];
+        if ($selection->only !== []) {
+            $parts[] = '--rule=' . \implode(',', $selection->only);
+        }
+        if ($selection->without !== []) {
+            $parts[] = '--without=' . \implode(',', $selection->without);
+        }
+        if ($selection->min !== null) {
+            $parts[] = '--min-severity=' . $selection->min->value;
         }
 
-        return \is_finite((float) $value) ? (float) $value : null;
+        return $parts === [] ? '—' : \implode(' ', $parts);
     }
 
     // ------------------------------------------------------------ 覆盖
@@ -725,7 +251,7 @@ final class Brief
      * 就是这个 bug，表格页的同形兄弟在第 8 层，扫描器却停在 4 层。
      *
      * @param array<string, mixed> $facts
-     * @return array{seen: int, cut: int, requested: int, complete: bool}
+     * @return array{seen: int, cut: int, nested: int, requested: int, broken: list<string>, complete: bool}
      */
     private static function coverage(array $facts): array
     {
@@ -831,22 +357,5 @@ final class Brief
         }
 
         return $deepest;
-    }
-
-    // ------------------------------------------------------------ 取值
-
-    /**
-     * 证据地址：帧 + 节点。
-     *
-     * 节点 id 为 0 时**不给 `node:` 段**。0 不在有效 id 域里，印出来既指不到东西，
-     * 又长得像一个正常地址 —— 原型第一版从 `ids[0]`（那份数组只在 `count > 1` 时
-     * 存在）读出了 0，报告里照印 `node:0`，没有任何一处报错。
-     * 缺 id 就说缺 id，让读者回到 `frame:` 这一层重取。
-     */
-    private static function addressOf(int $frameId, int $nodeId): string
-    {
-        return $nodeId > 0
-            ? \sprintf('frame:%d node:%d', $frameId, $nodeId)
-            : \sprintf('frame:%d', $frameId);
     }
 }

@@ -34,6 +34,8 @@ declare(strict_types=1);
 require __DIR__ . '/autoload.php';
 
 use Drift\Debug\Session\Thresholds;
+use Drift\Dev\Debug\View\Rules\RuleSelection;
+use Drift\Dev\Debug\View\Rules\Severity;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\HttpServer;
 use Drift\Dev\Debug\Source;
@@ -51,6 +53,18 @@ $thresholds = Thresholds::default()
     ->with(['slowMs' => $args->float('slow')])
     ->with(['fanoutNodes' => $args->int('fanout')])
     ->with(['repeatPercent' => $args->int('repeat')]);
+$minRaw = $args->str('min-severity');
+$min = $minRaw === null ? null : Severity::parse($minRaw);
+if ($minRaw !== null && $min === null) {
+    \fwrite(\STDERR, "未知严重度：{$minRaw}；可用：info / warning / error\n");
+    exit(2);
+}
+// 启动时的默认选择；页面还能用 `?rule=…&minSeverity=…` 逐次覆盖。
+$selection = new RuleSelection(
+    only: $args->strings('rule'),
+    without: $args->strings('without'),
+    min: $min,
+);
 $label = $args->label();
 
 $source = null;
@@ -92,7 +106,7 @@ try {
         return $live->resume(\is_int($frames) ? $frames : null);
     };
 
-    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control);
+    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection);
     $server = new HttpServer($host, $port);
 
     \fwrite(\STDERR, \sprintf(

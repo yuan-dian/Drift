@@ -54,7 +54,7 @@
 
 | 动词 | 脚本 | 类别 | 摘要 | 特有参数 |
 |---|---|---|---|---|
-| `brief` | `debug-brief.php` | driver | 预算内的证据简报：哪里不对、为什么、下一步查哪 | `--budget` `--text-width` `--from` `--out` `--session` `--attach` `--slow` `--fanout` `--repeat` |
+| `brief` | `debug-brief.php` | driver | 预算内的证据简报：哪里不对、为什么、下一步查哪 | `--budget` `--text-width` `--from` `--out` `--session` `--attach` `--rules` `--slow` `--fanout` `--repeat` `--rule` `--without` `--min-severity` |
 | `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` |
@@ -64,7 +64,7 @@
 | `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
 | `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` |
 | `ctl` | `debug-ctl.php` | protocol | 控制面：让自走的宿主停一下 / 走一步 / 接着跑 | — |
-| `web` | `debug-web.php` | driver | 浏览器视图：同一份证据的第三个消费者（几何画布 + 发现） | `--from` `--attach` `--session` `--port` `--host` `--slow` `--fanout` `--repeat` |
+| `web` | `debug-web.php` | driver | 浏览器视图：同一份证据的第三个消费者（几何画布 + 发现） | `--from` `--attach` `--session` `--port` `--host` `--slow` `--fanout` `--repeat` `--rule` `--without` `--min-severity` |
 | `loop` | `debug-loop.php` | driver | 重开 N 次：证明关掉这一页再打开是等价的 | `--runs` `--out` `--assert` |
 
 ### 共用驱动词

@@ -17,6 +17,13 @@ final class Commands
         $slow = static fn(): Opt => Opt::float('slow', 16.7, 0.0, null, '慢帧阈值 ms');
         $fanout = static fn(): Opt => Opt::int('fanout', 100, 1, null, '扇出节点阈值');
         $repeat = static fn(): Opt => Opt::int('repeat', 50, 0, null, '重复重建阈值 %');
+        // 规则选择三个词在 brief 与 web 上同义：两个出口都走 `Brief::project()`，
+        // 一处能筛、一处不能筛，同一份证据就有两种看法。
+        $rules = static fn(): array => [
+            Opt::append('rule', '只跑这些规则（可重复，或逗号分隔）'),
+            Opt::append('without', '跳过这些规则（可重复，或逗号分隔）'),
+            Opt::str('min-severity', null, 'info|warning|error：低于它的发现不呈现'),
+        ];
 
         return [
             'brief' => [
@@ -26,7 +33,8 @@ final class Commands
                 Opt::str('out', null, '导出证据包'),
                 Opt::str('session', null, '点名一个常驻会话'),
                 Opt::flag('attach', '接一个已经在跑的会话'),
-                $slow(), $fanout(), $repeat(),
+                Opt::flag('rules', '列出全部规则（编号 / 严重度 / 说明）后退出'),
+                $slow(), $fanout(), $repeat(), ...$rules(),
             ],
             'network' => [
                 Opt::int('request', 0, 1, null, '按 requestId 取报文'),
@@ -45,7 +53,7 @@ final class Commands
                 Opt::str('session', null, '点名一个常驻会话'),
                 Opt::int('port', 0, 0, null, '监听端口，0=系统挑'),
                 Opt::str('host', '127.0.0.1', '监听地址'),
-                $slow(), $fanout(), $repeat(),
+                $slow(), $fanout(), $repeat(), ...$rules(),
             ],
             'loop' => [
                 Opt::int('runs', 3, 1, null, '重开几次'),

@@ -35,9 +35,13 @@ declare(strict_types=1);
  *   --width=N / --view-width=N  视口宽度（默认 800；十个出口只有一个意思）
  *   --text-width=N    排版宽度（默认 100；与视口宽度是两件事）
  *   --height=N        视口高度（默认 600）
- *   --slow=<ms>       慢帧阈值（默认 16.7；表头显示的三项都可配）
+ *   --slow=<ms>       慢帧阈值（默认 16.7）
  *   --fanout=<节点数> 扇出阈值（默认 100）
  *   --repeat=<百分比> 重复重建阈值（默认 50）
+ *   --rule=<编号>     只跑这些规则（可重复，或逗号分隔）
+ *   --without=<编号>  跳过这些规则（可重复，或逗号分隔）
+ *   --min-severity=<级别>   info|warning|error；低于它的发现不呈现（判据照跑）
+ *   --rules           列出全部规则（编号 / 严重度 / 说明）后退出
  *   --json            输出结构化结果（发现 + 裁剪账 + 指纹；不含排版行）
  *
  * @internal 未进 VerifyPlan：规则阈值还在定，进 CI 会变成"改阈值就红一片"
@@ -51,16 +55,42 @@ use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Brief;
 use Drift\Dev\Debug\View\BriefText;
 use Drift\Dev\Debug\View\Facts;
+use Drift\Dev\Debug\View\Rules\RuleSelection;
+use Drift\Dev\Debug\View\Rules\Severity;
+use Drift\Dev\Debug\View\RulesText;
 use Drift\Dev\Debug\View\Web;
 
 $args = Commands::parseOrExit('brief', $argv);
+$json = $args->bool('json');
+
+// `--rules` 不跑会话：它问的是"这个工具能判什么"，与哪一页无关。
+// 放在 resolve 之前，是为了让它在没有页面参数时也能用。
+if ($args->bool('rules')) {
+    \fwrite(\STDOUT, $json
+        ? (string) \json_encode(RulesText::toArray(), \JSON_UNESCAPED_UNICODE | \JSON_PRETTY_PRINT) . "\n"
+        : RulesText::render());
+    exit(0);
+}
+
+$minRaw = $args->str('min-severity');
+$min = $minRaw === null ? null : Severity::parse($minRaw);
+if ($minRaw !== null && $min === null) {
+    // 拼错级别与"这条规则没触发"在报告里长得一样，所以在这里就挡住。
+    \fwrite(\STDERR, "未知严重度：{$minRaw}；可用：info / warning / error\n");
+    exit(2);
+}
+$selection = new RuleSelection(
+    only: $args->strings('rule'),
+    without: $args->strings('without'),
+    min: $min,
+);
+
 $from = $args->str('from');
 $out = $args->str('out');
 $attach = $args->bool('attach');
 $sessionId = $args->str('session');
 $at = $args->at();
 $remote = $args->bool('remote');
-$json = $args->bool('json');
 $budget = $args->int('budget');
 $textWidth = $args->int('text-width');
 // 只开放表头显示的那三项：表头写什么，就该能配什么。
@@ -101,7 +131,7 @@ try {
     // 导出放在取事实之后：几何是帧末采的，早于最后一帧导出会少一段。
     $source->export();
 
-    $projection = Brief::project($facts, $thresholds);
+    $projection = Brief::project($facts, $thresholds, $selection);
     $brief = BriefText::render($facts, $projection, $budget, $textWidth);
 
     if ($json) {

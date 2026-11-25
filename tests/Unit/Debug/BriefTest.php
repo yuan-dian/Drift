@@ -7,6 +7,10 @@ use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Brief;
 use Drift\Dev\Debug\View\BriefText;
 use Drift\Dev\Debug\View\Finding;
+use Drift\Dev\Debug\View\Rules\RuleRegistry;
+use Drift\Dev\Debug\View\Rules\RuleSelection;
+use Drift\Dev\Debug\View\Rules\Severity;
+use Drift\Dev\Debug\View\RulesText;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -118,9 +122,9 @@ final class BriefTest extends TestCase
     }
 
     /** @return list<Finding> */
-    private static function findings(array $facts): array
+    private static function findings(array $facts, ?RuleSelection $selection = null): array
     {
-        return Brief::findings($facts);
+        return Brief::findings($facts, null, $selection);
     }
 
     /**
@@ -669,17 +673,180 @@ final class BriefTest extends TestCase
             }
         }
 
-        $inUse = \array_keys($seen);
-        $registered = \array_keys(Finding::RULE_VERSIONS);
+        $inUse = [];
+        foreach (\array_keys($seen) as $id) {
+            // 兜底结论不是规则：它们由 `Brief::fallback()` 产出，没有 `Rule` 实现，
+            // 所以不能要求注册表里有它们。三条兜底各自有单独判据咬。
+            if (!\in_array($id, RuleRegistry::FALLBACK_IDS, true)) {
+                $inUse[] = $id;
+            }
+        }
+        $declared = RuleRegistry::ids();
         \sort($inUse);
-        \sort($registered);
-        self::assertSame($registered, $inUse, '登记表与实际产出的规则集合必须双向闭合');
+        \sort($declared);
+        // 比较对象从 `Finding::RULE_VERSIONS` 换成注册表：版本表还可能留着
+        // 已经删掉的规则的 id（那是 `RuleRegistry::verify()` 在启动时咬的事），
+        // 而这条判据要问的是"注册表声明的每一条都真能产出"。
+        self::assertSame($declared, $inUse, '注册表声明的规则集合与实际产出的集合必须一致');
     }
 
     /** @param list<Finding> $findings @return list<string> */
     private static function rulesOf(array $findings): array
     {
         return \array_map(static fn(Finding $one): string => $one->rule, $findings);
+    }
+
+    // ------------------------------------------------------------ 规则选择
+
+    /** 触发 `fanout`（Warning）的一份事实；`geometry` 缺省时还会带出 `geometry-inconclusive`（Info）。 */
+    private static function fanoutFacts(): array
+    {
+        return self::facts([
+            'frames' => [['id' => 1, 'cost' => 1.0, 'rebuilt' => 200]],
+            'cascade' => self::cascade([
+                self::node(1, 'PageShell', [], ['subtree' => 200, 'count' => 1]),
+            ], 200),
+            'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 0],
+        ]);
+    }
+
+    /** 同一父底下两个子盒：一个被收紧到 320，一个被放宽到 1200。 */
+    private static function constraintFacts(): array
+    {
+        return self::facts(['geometry' => self::geometry([
+            self::row(1, -1, 'PageShell'),
+            self::row(2, 1, 'Text', ['applied' => ['minW' => 0.0, 'maxW' => 320.0, 'minH' => 0.0, 'maxH' => 600.0]]),
+            self::row(3, 1, 'Text', ['applied' => ['minW' => 0.0, 'maxW' => 1200.0, 'minH' => 0.0, 'maxH' => 600.0]]),
+        ])]);
+    }
+
+    /**
+     * `--rule=` 只跑点名的那条，其余不跑 —— 不是"跑了再筛掉"。
+     *
+     * 两者在输出上看起来一样，但代价不同：全部跑再筛，`--rule=slow-frame`
+     * 在 4000 节点的树上仍要把十条规则走一遍。更重要的是兜底文案要说对：
+     * 只跑一条时报"慢帧 16.7ms / 扇出 100 / 重复 50%"会让人以为那三条都看过了。
+     */
+    public function testOnlyRunsJustThatRule(): void
+    {
+        $found = self::findings(self::fanoutFacts(), new RuleSelection(only: ['slow-frame']));
+
+        self::assertSame(['clean'], self::rulesOf($found), '只跑 slow-frame 时不该出现 fanout');
+        self::assertStringContainsString('只跑了 1/', $found[0]->title, '兜底必须自报只跑了一部分');
+    }
+
+    /**
+     * `--without` 关掉的是一条**发现**，不是整条规则 —— 除非它把该规则的全部变体都关了。
+     *
+     * `constraint-widened` 与 `constraint-tightened` 共用一个规则类。若按"有交集
+     * 就跳过整条规则"，关掉放宽会连收紧一起关掉，读者会以为应用里没有收紧。
+     */
+    public function testWithoutRemovesOneVariantButKeepsItsSibling(): void
+    {
+        $all = self::rulesOf(self::findings(self::constraintFacts()));
+        self::assertContains('constraint-widened', $all);
+        self::assertContains('constraint-tightened', $all);
+
+        $kept = self::rulesOf(self::findings(self::constraintFacts(), new RuleSelection(without: ['constraint-widened'])));
+        self::assertNotContains('constraint-widened', $kept);
+        self::assertContains('constraint-tightened', $kept, '关掉放宽不该连带关掉收紧');
+    }
+
+    /** 同一份事实里同时有 `fanout`（Warning）与 `constraint-tightened`（Info）。 */
+    private static function mixedFacts(): array
+    {
+        return self::facts([
+            'frames' => [['id' => 1, 'cost' => 1.0, 'rebuilt' => 200]],
+            'cascade' => self::cascade([
+                self::node(1, 'PageShell', [], ['subtree' => 200, 'count' => 1]),
+            ], 200),
+            'cascadeQuery' => ['frame' => 1, 'maxDepth' => 12, 'maxChildren' => 0],
+            'geometry' => self::geometry([
+                self::row(1, -1, 'PageShell'),
+                self::row(2, 1, 'Text', ['applied' => ['minW' => 0.0, 'maxW' => 320.0, 'minH' => 0.0, 'maxH' => 600.0]]),
+            ]),
+        ]);
+    }
+
+    /** `--min-severity` 只少看几行：警告留下、提示去掉。 */
+    public function testMinSeverityFiltersLowerLevelsOnly(): void
+    {
+        $all = self::rulesOf(self::findings(self::mixedFacts()));
+        self::assertContains('fanout', $all);
+        self::assertContains('constraint-tightened', $all);
+
+        $kept = self::rulesOf(self::findings(self::mixedFacts(), new RuleSelection(min: Severity::Warning)));
+        self::assertContains('fanout', $kept);
+        self::assertNotContains('constraint-tightened', $kept);
+    }
+
+    /**
+     * 发现被过滤光了，报告必须说"被过滤了"，不能说"没问题"。
+     *
+     * 这是这一整套过滤里最容易写错的一条：`suppressed` 与 `clean` 在实现上都
+     * 表现为"发现列表为空"，而结论完全相反 —— 前者是"有东西，我没显示"，
+     * 后者是"我全看了，没有东西"。
+     */
+    public function testFilteredEverythingIsSuppressedNotClean(): void
+    {
+        $found = self::findings(self::fanoutFacts(), new RuleSelection(min: Severity::Error));
+
+        self::assertSame(['suppressed'], self::rulesOf($found));
+        self::assertStringContainsString('被过滤掉了', $found[0]->title);
+        self::assertStringContainsString('--min-severity=error', $found[0]->threshold, '要说清是被哪个条件挡掉的');
+        self::assertSame(Severity::Warning, $found[0]->severity, '被藏起来的发现比"干净"更该被看一眼');
+    }
+
+    /**
+     * 拼错的规则名当场报错，并列出可用编号。
+     *
+     * 静默忽略的表现是"这条规则没触发" —— 读者会去查应用，而不是查自己少打了个连字符。
+     */
+    public function testUnknownRuleIdIsRejectedWithTheAvailableList(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('slow-frame');
+
+        self::findings(self::fanoutFacts(), new RuleSelection(only: ['slowframe']));
+    }
+
+    /** 目录与注册表同源：`--rules` 打印的编号必须就是能用的编号。 */
+    public function testRuleCatalogMatchesTheRegistry(): void
+    {
+        $ids = [];
+        foreach (RulesText::toArray()['rules'] as $row) {
+            // 一条规则可以产多种发现（约束改写同时给放宽与收紧），目录必须把
+            // `ids` 全列出来 —— 只列主 id 的话，`--rule=constraint-tightened`
+            // 能用但目录里查不到，读者会以为它不存在。
+            foreach ($row['ids'] as $id) {
+                $ids[] = $id;
+            }
+        }
+        \sort($ids);
+        $declared = RuleRegistry::ids();
+        \sort($declared);
+
+        self::assertSame($declared, $ids);
+        self::assertStringContainsString('slow-frame', RulesText::render());
+    }
+
+    /**
+     * 严重度由规则盖，不由每条 `new Finding()` 各写一遍。
+     *
+     * 两边不一致时报告看不出来，只有 `--min-severity` 会漏行 —— 而漏行的那一侧
+     * 恰好是读者以为自己已经看过的那一侧。
+     */
+    public function testEveryFindingCarriesItsRulesSeverity(): void
+    {
+        foreach ([self::fanoutFacts(), self::constraintFacts(), self::facts()] as $facts) {
+            foreach (self::findings($facts) as $one) {
+                $owner = RuleRegistry::ownerOf($one->rule);
+                if ($owner === null) {
+                    continue; // 兜底结论：severity 由 Brief 直接给
+                }
+                self::assertSame($owner->severity(), $one->severity, "{$one->rule} 的级别与规则声明不一致");
+            }
+        }
     }
 
     /**

@@ -40,7 +40,7 @@ final class BriefText
 {
     /**
      * @param array<string, mixed> $facts
-     * @param array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>} $projection
+     * @param array{findings: list<Finding>, coverage: array<string, mixed>, thresholds: array<string, float|int>, selection?: array<string, mixed>} $projection
      * @return array{lines: list<string>, omitted: array<string, int>}
      */
     public static function render(array $facts, array $projection, int $budget = 40, int $width = 100): array
@@ -49,7 +49,7 @@ final class BriefText
         $findings = $projection['findings'] ?? [];
         $cov = $projection['coverage'] ?? [];
 
-        $head = self::header($facts, $width, $t);
+        $head = self::header($facts, $width, $t, $projection['selection'] ?? []);
         $detail = self::detail($facts, $width);
 
         // 固定开销：表头三行 + "发现 N 条" + 空行 + 裁剪账一行。
@@ -98,9 +98,10 @@ final class BriefText
 
     /**
      * @param array<string, mixed> $facts
+     * @param array<string, mixed> $selection
      * @return list<string>
      */
-    private static function header(array $facts, int $width, Thresholds $t): array
+    private static function header(array $facts, int $width, Thresholds $t, array $selection = []): array
     {
         $stats = Facts::mapOf($facts, 'stats');
         $window = Facts::mapOf($facts, 'window');
@@ -117,13 +118,25 @@ final class BriefText
         );
 
         $finger = (string) ($digest['digest'] ?? '');
-        $line = \sprintf(
-            '指纹 %s · 规则 慢帧 %.1fms / 扇出 %d / 重复 %d%%',
-            $finger === '' ? '—' : \substr($finger, 0, 12),
-            $t->slowMs,
-            $t->fanoutNodes,
-            $t->repeatPercent,
-        );
+        // 过滤过就报"跑了几条"，不报阈值：三个阈值在只跑一条规则时是**假信息**
+        // —— 读者会以为那三条也看过，而它们连跑都没跑。
+        $line = ($selection['filtered'] ?? false) === true
+            ? \sprintf(
+                '指纹 %s · 规则 %d/%d 条%s',
+                $finger === '' ? '—' : \substr($finger, 0, 12),
+                \count($selection['rules'] ?? []),
+                (int) ($selection['total'] ?? 0),
+                isset($selection['minSeverity']) && $selection['minSeverity'] !== null
+                    ? ' · ≥' . $selection['minSeverity']
+                    : '',
+            )
+            : \sprintf(
+                '指纹 %s · 规则 慢帧 %.1fms / 扇出 %d / 重复 %d%%',
+                $finger === '' ? '—' : \substr($finger, 0, 12),
+                $t->slowMs,
+                $t->fanoutNodes,
+                $t->repeatPercent,
+            );
 
         return [
             Fit::clip($title, $width),
