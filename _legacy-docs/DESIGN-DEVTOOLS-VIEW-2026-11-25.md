@@ -2,6 +2,7 @@
 
 > 裁决稿。回答一个问题：为什么证据这么精确，用起来却不像 DevTools。
 > 结论不是"再加几个面板"，而是**补上成熟 GUI DevTools 的第一性要素——同一份渲染结果**。
+> 同时解释一件容易被误读的事：`main` 分支只有 316 行检查器，为什么反而比本分支的 15 个出口"直观"。
 > 机制细节见 [debug-model](../docs/concepts/debug-model.md) / [evidence-model](../docs/concepts/evidence-model.md)；
 > 本文只回答形态与顺序。
 
@@ -52,7 +53,52 @@ Drift 现在有第二角（`boxes` 平铺带 `parent`，能拼树）、有第三
 
 这两件事必须同时成立。只承认前半句会污染基线（像素噪声让 `--assert` 天天红）；只承认后半句就是今天这样（画面进不了系统）。
 
-## 四、目标形态
+## 四、main 分支的对照：316 行 vs 15 个出口
+
+上面是推理，这里是实证。`main` 在分叉点 `7c8923a` 上有 `src/Inspect/`，6 文件 1149 行；本分支把它整个移除了（`src/App/` 里连 `use Drift\Inspect\Inspector` 都没有）。两边都"能点选"，用起来的差别是：
+
+| 维度 | main（`Inspector.php` 316 行 + 10 处接线） | exp/debugger |
+|---|---|---|
+| 触发 | 指针移动即时命中 | `pick-live` 布防后点一次 |
+| 反馈位置 | **屏上**：黄框跟随 + 钉住蓝框 + 祖先链淡框 + 左上 HUD | **终端**：一行文本回执 |
+| 信息 | Widget 短名 / 结构路径 / 几何 / 约束 / 语义角色 / 帧耗时 | node / type / path / drawnFrame |
+| 钉住 | 有（点一下保持，点空白解除） | 无 |
+| 开关 | `Ctrl+Shift+I` | 重跑命令 |
+| 记录成本 | 零 | 全量录制 + 会话文件 + 协议往返 |
+
+main 的实现（`git show main:src/Inspect/Inspector.php`）要点：`hover()` 做一次盒树 DFS 命中、`press()` 钉住并要求调用方**吞掉这次事件**、`paint()` 按「祖先链淡蓝 alpha 70 → hover 黄 `#FFC400` 1.5px → pinned 蓝 `#2E9BFF` 2.0px → HUD」由浅入深地画。
+
+结论很直白：**本分支在"人眼看"这一维是主动退化**。为了让证据可跨进程、可导出、可断言，把人机界面换成了机器接口。这在证据工程上是对的取舍，但**用户不是机器**。
+
+这也解释了用户的每一句抱怨都指向同一处：不是嫌证据不准，是**屏上什么都没有**。
+
+### main 已验证的五条，搬回时必须继承
+
+1. **不能做成 Widget**：做成 Widget 会被快照、语义树、布局看见 ⇒ 打开检查器本身就改变了被测对象（多一层节点、多一次几何传递、读屏多一堆无语义节点）。所以画在 `afterPaint`——树与浮层画完、`endFrame` 之前。
+2. **检查器要自己标脏**（`needsPaint()` 并入 `paintRequested` 判据）。hover 变化不改树、不改布局纪元，`Frame::run()` 会整段跳过绘制，高亮就停在第一次的位置。
+3. **`press` 必须吞事件**，否则"检查这个按钮"会顺手把按钮的业务执行了。
+4. **钉住目标每帧验 `isActive()`**，否则页面切走后会画出上辈子的几何。
+5. **命中逻辑只许一份**。
+
+第 5 条现在**已经被违反**：main 是 `TreeProbe::pickElement()` 一份；本分支 `Query::pick` 走记录、`TreeProbe` 那份随 `src/Inspect/` 一起没了，等于另起了一套。两套命中在浮层原点、裁剪、z 序上稍有不同就会给出不同答案，而没人会发现——这正是 `LayerCache` docblock 说的"某一条路坏了而测试全绿"。
+
+### 搬回的成本，以及一处不能照抄
+
+底层 API 都还在：`RenderBox::absoluteOrigin()`（`src/Layout/RenderBox.php:296`）、`Element::effectiveBox()`（`src/Widget/Element.php:294`）、`semanticsRole()`（`src/Widget/Traits/WidgetSemantics.php:123`），`Frame::run()` 的 `afterPaint` 参数也还在（`src/App/Frame.php:143`）。真正要搬的是 3 个文件 662 行：`Inspector.php` 316 + `TreeProbe.php` 304 + `FrameStats.php` 42。
+
+同目录另两个文件**不该搬**：`InputTrace.php` 90 行不被 `Inspector` 引用（由 `AppShell::installInputTrace()` 单独持有），本分支已有 `InputScript` 这条线；`Snapshot.php` 351 行与本分支 `tools/Inspect/Snapshot.php` **不同源**（diff 376 行，后者是给确定性 golden 重写的 headless 快照），搬过来会变成第二份快照口径。
+
+但**不能照抄**。main 的 `ignore:` 只有一条 `build`（`git show main:build/base.yml`），所以 `src/Inspect/` 整份进了 AOT 产物。本分支的 A54 纪律不允许这样——`build/base.yml:156-185` 已经排掉约 7,900 行查询/证据代码。而直接把 `Inspector.php` 加进 `ignore` 又会炸编译：`AppShell::installInspector(Inspector $inspector)` 的签名引用了它，类没了就是悬空引用——和 `build/base.yml:167-169` 记的 `Session.php` 那类问题同源。
+
+所以搬回要先做**端口分离**（main 没这一层）：
+
+- `src/App/InspectorPort.php`（接口，约 40 行，进产物）：`toggle / visible / needsPaint / hover / press / paint / markPainted / target`
+- `src/Inspect/*`（`Inspector` / `TreeProbe` / `FrameStats` 三文件 662 行，加进 `ignore` 与 `tools/check-debug-scope.php` 白名单）
+- `AppShell` 只依赖端口，不出现 `Inspector` 类型名
+
+这样开发期有检查器，发布产物零调试代码，两条纪律同时成立。
+
+## 五、目标形态
 
 单页四区，共用同一个 `frame` 号：
 
@@ -77,7 +123,7 @@ Drift 现在有第二角（`boxes` 平铺带 `parent`，能拼树）、有第三
 
 第 4 条是这套设计区别于普通"预览窗口"的地方——它把已有的证据面和新的画面面**互相钉死**。
 
-## 五、分层与边界纪律
+## 六、分层与边界纪律
 
 新增一层，与 L1 证据**并列、不交叉**：
 
@@ -124,7 +170,7 @@ L1 证据       FrameStore / GeometryStore / NetworkStore / ...（不动）
 
 这条边界写死：**golden 归 Raster，视面归 SVG。**
 
-## 六、对标矩阵
+## 七、对标矩阵
 
 | 能力 | Chrome | Flutter | Android LI | **Drift 现状** |
 |---|---|---|---|---|
@@ -144,7 +190,7 @@ L1 证据       FrameStore / GeometryStore / NetworkStore / ...（不动）
 
 读法：右三行（因果、约束、基线）是**领先**，左四行（画面、树、点选、时间轴）是**结构性缺失**。所以重设计的重点不在补深度，在补浅层——**把已经领先的证据接到一个看得见的表面上**。
 
-## 七、分期与判据
+## 八、分期与判据
 
 每期都有可证伪判据，按项目惯例配源码级变异自检（改坏一处，判据必须咬红）。
 
@@ -156,6 +202,15 @@ L1 证据       FrameStore / GeometryStore / NetworkStore / ...（不动）
 - `--attach` 上提到 `OptionSet` 的公共段（与 `--from` / `--session` 同处），18 个出口一次全覆盖——`Source::resolve()` 已经实现了唯一一份逻辑，缺的只是声明。
 - 判据：① 一个不在白名单的测试应用能被 `debug web` 驱动；② 一条命令扫全表，18 个出口对 `--attach` 的接受数 = 18（现在是 2）。
 - 变异：故意让一个出口不声明 `--attach`，扫描判据红。
+
+### P0.5 合回运行时检查器（最快见效的一步）
+
+main 的 662 行是现成的，缺的只有端口分离（见第四节）。做完这一步，"应用启动就能点一下看到信息"当天成立，不必等 P1 的 IR→SVG。
+
+- `src/App/InspectorPort.php` + 搬 4 个文件 + `AppShell` 10 处接线 + `Application::enableInspector()`。
+- 顺手把两套命中合成一套：`Query::pick` 保留（要能 attach），`TreeProbe::pickElement()` 作为活树路径的实现，两边共用同一份命中判据（浮层原点、裁剪、z 序的处理必须逐条对齐，否则又是一次双轨）。
+- 判据：① 真窗口 `Ctrl+Shift+I` 后 hover 出黄框、点击钉住蓝框、祖先链出淡框、HUD 显示 widget 短名与路径；② 发布态产物里不含 `Inspector` 实现（`check-debug-scope` 绿，且产物字符串搜不到）；③ 同一点坐标，活树命中与记录命中给出同一个 node。
+- 变异：① 把 `afterPaint` 里的 `paint()` 摘掉 ⇒ 框不出现，判据红；② 端口改成直接引用实现类 ⇒ 编译炸 / 守门器红；③ 让两条命中路径对浮层原点各减/不加偏移 ⇒ 判据 ③ 红。
 
 ### P1 画面：IR → SVG 进 web
 
@@ -183,14 +238,14 @@ L1 证据       FrameStore / GeometryStore / NetworkStore / ...（不动）
 - 检查器接上已有查询：`boxModel` / `constraints` / `paint` / `props`。
 - 判据：画布上量到的内边距像素宽 = `boxModel` 的 padding 值（允许 1px 取整误差）；检查器显示的每个数与对应查询的 JSON 逐字段一致（不允许前端自己算派生值）。
 
-## 八、不做
+## 九、不做
 
 - **编辑热改**：AOT 编译 + 不可变树，实时改属性的成本收益比极差，且会让调试器变成第二个真相源。`eval` 已是逃生门。
 - **像素保真承诺**：视面与真机必然有抗锯齿/字体差异。承诺"一模一样"就必然失信。golden 仍走 Raster。
 - **在浏览器里实现渲染后端**：要自己复刻 clip 栈、layer 语义、预乘 alpha、抗锯齿近似，两份实现必然漂移。SVG 映射能拿到 90% 的收益，成本低一个数量级。
 - **堆转储**：PHP 无此 API，已由 `memory` 的存活跨度定格（A55）。
 
-## 九、与现有路线图的关系
+## 十、与现有路线图的关系
 
 `docs/concepts/debugger-roadmap.md` 把 Web 视图记为「切片：缺树、时间轴」。本稿修正这个判断的两处：
 
@@ -199,6 +254,8 @@ L1 证据       FrameStore / GeometryStore / NetworkStore / ...（不动）
 
 其余判断（采集预算、编译归属、内省归 PHP）不变，本稿不推翻它们。
 
+再补一条与 `main` 的关系：**本稿不是要恢复 main，也不是要否定本分支**。main 的 316 行换来「屏上有东西」，本分支的 15 个出口换来「证据能导出、能断言、能跨进程」。两者是不同维度，正确答案是让它们并存——真窗口直绘 HUD 当「手边的放大镜」（零成本、即时、无浏览器），web 矢量画布当「工作台」（可缩放、可翻帧、可查树）。丢掉任何一边都会退回用户抱怨过的那种状态。
+
 ## 附：一句话
 
-成熟 DevTools 的共性是「树在某处、画面在某处、两者用坐标绑定」。Drift 已经有两角且都比同行精确，缺的只是第三角——而它恰好是被证据纪律排除在外的那一角。
+成熟 DevTools 的共性是「树在某处、画面在某处、两者用坐标绑定」。本分支已经把后两角做到比同行精确，第三角被证据纪律排除在外；`main` 恰好有第三角的一半（真窗口直绘），另一半（可缩放、可翻帧的工作台）还没人做。**合起来才是完整的三角。**
