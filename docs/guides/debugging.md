@@ -88,6 +88,8 @@ php tools/debug-web.php            # 不用参数：自动接当前目录那个�
 
 边界要记住：**画面不进证据**。它不参与指纹、不进基线、`--assert` 不看它。像素是"给人看的"，断言仍然只认 `boxes` / `cascade` / `repaint` 那些数字。
 
+接着追问也不用换目标：当前目录只有一个活会话时，`debug-props --node=N`、`debug-node --node=N --frame=N`、`debug-find --pattern=…`、`debug-network` 和 `debug-brief` 都直接接它，不必再写应用类名或路由。`debug-pick-live` 点中节点后打印的 `debug-props --node=N` 就是这条路径。多个会话时要 `--session=<id>` 点名——挑错了会让人对着另一个应用的结构找问题。
+
 ## 什么时候必须上真机
 
 解释器里桥函数都是替身，跑通不等于真机跑通。只有真机（T2）能覆盖这些：AOT 生成物的类型 / 签名问题（`C2440` 等）、闭包 arity 的 `expects exactly N arguments`、继承字段 `private` 的错值、`?->` 静默读空、整数除法截断、DPI 感知级别、窗口关闭与退出码、UIA provider 的树导航与事件、`PostMessageW` 唤醒、`WM_CLOSE` 守卫链。解释器里的桥都是替身，跑通不等于真机跑通。

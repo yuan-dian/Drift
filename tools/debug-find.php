@@ -51,6 +51,14 @@ $domain = $args->str('domain') ?? 'all';
 $limit = $args->int('limit');
 $caseSensitive = $args->bool('case-sensitive');
 $label = $args->label();
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+try {
+    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
+}
 
 if ($pattern === null || \trim($pattern) === '') {
     \fwrite(\STDERR, "用法：debug-find <AppClass|路由id> --pattern=<文本> [--domain=all|node|request] [--limit=N] [--json]\n");
@@ -64,8 +72,10 @@ $source = null;
 try {
     $source = Source::resolve(
         from: $from,
+        attach: $attach,
+        session: $sessionId,
         remote: $remote,
-        drive: $from === null ? $args->script() : null,
+        drive: $from === null && !$attach ? $args->script() : null,
         at: $args->at(),
         out: null,
         recordOptions: $args->recordOptions(),

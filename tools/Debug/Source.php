@@ -164,6 +164,44 @@ final class Source
     }
 
     /**
+     * 没点名任何来源时，当前目录正好有一个活会话 ⇒ 自动接它。
+     *
+     * 真实业务的常态是"应用先跑着，再开一个出口看"，没人记得在命令行里写目标类名。
+     * 会话文件就是这一步发现：宿主比观察者先起，环境变量只能在启动时读一次，做不到。
+     * 多个不猜 —— 挑错了会让人对着另一个应用的结构找问题。
+     *
+     * @throws \RuntimeException 多个会话且没点名；消息里列出候选，出口原样打印
+     */
+    public static function autoAttach(
+        bool $attach,
+        ?string $from,
+        ?string $label,
+        ?string $session,
+        ?Discovery $discovery = null,
+    ): bool {
+        if ($attach || $from !== null || $label !== null || $session !== null) {
+            return $attach;
+        }
+
+        $running = ($discovery ?? Discovery::inDirectory((string) \getcwd()))->live();
+        if (\count($running) === 1) {
+            return true;
+        }
+        if ($running === []) {
+            return false;
+        }
+
+        throw new \RuntimeException(\sprintf(
+            "当前目录有 %d 个活会话，不猜：用 --session=<id> 点名\n%s",
+            \count($running),
+            \implode("\n", \array_map(
+                static fn(array $e): string => \sprintf('  %s  %s  pid=%d', $e['id'], $e['target'], $e['pid']),
+                $running,
+            )),
+        ));
+    }
+
+    /**
      * 连一个已经在跑的会话。`resolve()` 的互斥检查不在这里 —— 那是"四种来源选
      * 一种"的纪律，不是连接的纪律。
      *

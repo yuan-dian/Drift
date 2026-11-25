@@ -60,9 +60,18 @@ $part = $args->str('part') ?? 'both';
 $limit = $args->int('limit');
 $maxBytes = $args->int('maxBytes');
 $label = $args->label();
-if ($label === null) {
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+if ($label === null && $from === null && !$attach) {
     \fwrite(\STDERR, "用法：debug-network <AppClass|路由id> [--page=<路由id>] [--frames=N] [--request=N] [--json]\n");
     \fwrite(\STDERR, "      debug-network --from=<证据包> [--request=N] [--json]\n");
+    \fwrite(\STDERR, "      debug-network --request=N   # 当前目录只有一个活会话时自动接上\n");
+    exit(2);
+}
+try {
+    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);
 }
 
@@ -73,12 +82,14 @@ $session = null;
 $source = null;
 try {
     $drive = null;
-    if ($from === null) {
+    if ($from === null && !$attach) {
         $drive = $args->script();
     }
 
     $source = Source::resolve(
         from: $from,
+        attach: $attach,
+        session: $sessionId,
         remote: $remote,
         drive: $drive,
         at: $at,

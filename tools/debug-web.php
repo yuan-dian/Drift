@@ -68,24 +68,13 @@ $selection = new RuleSelection(
 );
 $label = $args->label();
 
-// 真实应用的常态是「应用先跑着，再开 web 看」，不是先想起 --page。所以没点名
-// 任何来源时，当前目录正好有一个活会话就接它；`--page` 降级成"我要跑示例台"。
-// 有多个不猜 —— 挑错了会让人对着另一个应用的结构找问题。
-if ($from === null && !$attach && $label === null && $sessionId === null) {
-    $running = Discovery::inDirectory((string) \getcwd())->live();
-    if (\count($running) === 1) {
-        $attach = true;
-    } elseif ($running !== []) {
-        \fwrite(\STDERR, \sprintf(
-            "当前目录有 %d 个活会话，不猜：用 --session=<id> 点名\n%s\n",
-            \count($running),
-            \implode("\n", \array_map(
-                static fn(array $e): string => \sprintf('  %s  %s  pid=%d', $e['id'], $e['target'], $e['pid']),
-                $running,
-            )),
-        ));
-        exit(2);
-    }
+// 真实应用的常态是「应用先跑着，再开 web 看」，不是先想起 --page。发现规则与
+// 其余出口共用一份（Source::autoAttach），否则每个出口的"不猜"条件都不一样。
+try {
+    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
 }
 
 $source = null;

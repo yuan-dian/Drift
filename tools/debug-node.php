@@ -26,46 +26,48 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
 use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\ProcessTransport;
-use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Align;
 
 $args = Commands::parseOrExit('node', $argv);
-$width = $args->float('view-width');
-$height = $args->float('height');
-$meta = $args->meta();
 $node = $args->int('node');
 $frame = $args->int('frame');
 $at = $args->at();
 $remote = $args->bool('remote');
 $json = $args->bool('json');
 $label = $args->label();
-if ($label === null || $node <= 0 || $frame <= 0) {
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+if ($node <= 0 || $frame <= 0) {
     \fwrite(\STDERR, "用法：debug-node <AppClass|路由id> --page=<路由id> --node=N --frame=N [--json] [--remote]\n");
     exit(2);
 }
-
-$drive = $args->script();
-
-$session = null;
 try {
-    if ($remote) {
-        $session = new RemoteSession(ProcessTransport::spawn([
-            \PHP_BINARY,
-            \dirname(__DIR__) . '/tools/debug-host.php',
-        ]));
-        $session->open($drive->fork());
-    } else {
-        $opened = Runner::open((string) $label, (float) $width, (float) $height, $meta, $drive->fork());
-        $session = $opened['session'];
-    }
-    Replay::apply($session, $drive, [], $at, static function (int $id, float $ms): void {
-    });
+    $attach = Source::autoAttach($attach, null, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
+}
+if (!$attach && $label === null) {
+    \fwrite(\STDERR, "用法：debug-node <AppClass|路由id> --node=N --frame=N [--json] [--remote]\n"
+        . "      debug-node --node=N --frame=N   # 当前目录只有一个活会话时自动接上\n");
+    exit(2);
+}
 
-    $answer = $session->query('align', ['node' => $node, 'frame' => $frame]);
+$source = null;
+try {
+    $source = Source::resolve(
+        attach: $attach,
+        remote: $remote,
+        drive: $attach ? null : $args->script(),
+        at: $at,
+        session: $sessionId,
+        recordOptions: $args->recordOptions(),
+    );
+    $label = $source->label();
+
+    $answer = $source->queries()->query('align', ['node' => $node, 'frame' => $frame]);
     if ($json) {
         \fwrite(\STDOUT, (string) \json_encode(
             ['label' => $label] + $answer,
@@ -80,7 +82,5 @@ try {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);
 } finally {
-    if ($session !== null) {
-        $session->close();
-    }
+    $source?->close();
 }

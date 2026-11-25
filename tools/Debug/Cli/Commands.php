@@ -24,6 +24,13 @@ final class Commands
             Opt::append('without', '跳过这些规则（可重复，或逗号分隔）'),
             Opt::str('min-severity', null, 'info|warning|error：低于它的发现不呈现'),
         ];
+        // 每个"看证据"的出口都要能接活会话。真实业务的应用先跑着，观察者后到，
+        // 少一个出口就少一种"零改动接进去"的路径。当前目录只有一个会话时也不用给
+        // `--attach`（见 Source::autoAttach），这里只是显式点名用的。
+        $live = static fn(): array => [
+            Opt::flag('attach', '接当前目录正在跑的会话'),
+            Opt::str('session', null, '多个会话时点名'),
+        ];
 
         return [
             'brief' => [
@@ -47,6 +54,7 @@ final class Commands
                 Opt::int('maxBytes', 8192, 0, null, '单条 body 上限，0=不截断'),
                 Opt::str('from', null, '读证据包'),
                 Opt::str('out', null, '导出证据包'),
+                ...$live(),
             ],
             'serve' => [
                 Opt::float('speed', 0.0, 0.0, null, '两次推进之间等多久（0=尽快）'),
@@ -69,6 +77,7 @@ final class Commands
             'node' => [
                 Opt::int('node', 0, 0, null, '节点 id（必填）'),
                 Opt::int('frame', 0, 0, null, '帧号（必填）'),
+                ...$live(),
             ],
             // `--pattern` 不叫 `--text`：后者已经是驱动词表里的"输入文本"，
             // 同名同形会让 `debug find --text=x` 有两种解释。
@@ -78,27 +87,32 @@ final class Commands
                 Opt::int('limit', 50, 1, null, '最多给多少条命中'),
                 Opt::flag('case-sensitive', '区分大小写（默认不区分）'),
                 Opt::str('from', null, '读证据包，不再驱动'),
+                ...$live(),
             ],
             'pick' => [
                 Opt::float('x', 0.0, null, null, '触点 x'),
                 Opt::float('y', 0.0, null, null, '触点 y'),
                 Opt::int('node', 0, 0, null, '节点 id'),
+                ...$live(),
             ],
             'props' => [
                 Opt::int('node', 0, 0, null, '节点 id'),
                 Opt::int('frame', 0, 0, null, '帧号'),
                 Opt::int('maxDepth', 3, 0, null, '属性树深度'),
                 Opt::int('maxFields', 120, 1, null, '每层字段数'),
+                ...$live(),
             ],
             'probe' => [
                 Opt::str('what', 'memory', 'memory|source：看内存存活跨度还是源码位置'),
                 Opt::str('source', null, 'source 视图的调用点字符串（file:line）'),
                 Opt::int('limit', 40, 1, null, 'memory 视图最多列几个类型'),
+                ...$live(),
             ],
             'highlight' => [
                 // 必填由出口自己判：`0` 是合法值（清除），缺省值没法同时表达"没给"。
                 // `--remote` / `--json` 不在这里 —— 它们是驱动词表里的通用词。
                 Opt::int('node', 0, 0, null, '节点 id（0 = 清除）'),
+                ...$live(),
             ],
             'report' => [
                 Opt::flag('verify', '验证模式'),

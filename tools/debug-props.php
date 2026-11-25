@@ -29,17 +29,11 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
 use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\ProcessTransport;
-use Drift\Dev\Debug\Runner;
+use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Props;
 
 $args = Commands::parseOrExit('props', $argv);
-$width = $args->float('view-width');
-$height = $args->float('height');
-$meta = $args->meta();
 $node = $args->int('node');
 $maxDepth = $args->int('maxDepth');
 $maxFields = $args->int('maxFields');
@@ -47,29 +41,37 @@ $at = $args->at();
 $remote = $args->bool('remote');
 $json = $args->bool('json');
 $label = $args->label();
-if ($label === null || $node <= 0) {
+$attach = $args->bool('attach');
+$sessionId = $args->str('session');
+if ($node <= 0) {
     \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--page=<路由id>] [--json] [--remote]\n");
     exit(2);
 }
-
-$drive = $args->script();
-
-$session = null;
 try {
-    if ($remote) {
-        $session = new RemoteSession(ProcessTransport::spawn([
-            \PHP_BINARY,
-            \dirname(__DIR__) . '/tools/debug-host.php',
-        ]));
-        $session->open($drive->fork());
-    } else {
-        $opened = Runner::open((string) $label, (float) $width, (float) $height, $meta, $drive->fork());
-        $session = $opened['session'];
-    }
-    Replay::apply($session, $drive, [], $at, static function (int $id, float $ms): void {
-    });
+    $attach = Source::autoAttach($attach, null, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
+}
+if (!$attach && $label === null) {
+    \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--json] [--remote]\n"
+        . "      debug-props --node=N   # 当前目录只有一个活会话时自动接上\n");
+    exit(2);
+}
 
-    $answer = $session->query('props', [
+$source = null;
+try {
+    $source = Source::resolve(
+        attach: $attach,
+        remote: $remote,
+        drive: $attach ? null : $args->script(),
+        at: $at,
+        session: $sessionId,
+        recordOptions: $args->recordOptions(),
+    );
+    $label = $source->label();
+
+    $answer = $source->queries()->query('props', [
         'node' => $node,
         'maxDepth' => $maxDepth,
         'maxFields' => $maxFields,
@@ -88,7 +90,5 @@ try {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);
 } finally {
-    if ($session !== null) {
-        $session->close();
-    }
+    $source?->close();
 }

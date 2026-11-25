@@ -66,15 +66,15 @@
 | `targets` | `debug-targets.php` | protocol | 把当前目录所有活会话并列成一份视图（不跨窗口 join） | — |
 | `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
-| `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` |
-| `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` |
-| `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` |
+| `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` `--attach` `--session` |
+| `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` `--attach` `--session` |
+| `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` `--attach` `--session` |
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |
-| `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` |
+| `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` `--attach` `--session` |
 | `pick-live` | `debug-pick-live.php` | protocol | 布防后到真窗口点一下，回命中节点的身份与路径（live attach） | — |
-| `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` |
-| `probe` | `debug-probe.php` | driver | dev 轻量内省：内存存活跨度 / 源码位置（不是证据） | `--what` `--source` `--limit` |
-| `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` |
+| `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` `--attach` `--session` |
+| `probe` | `debug-probe.php` | driver | dev 轻量内省：内存存活跨度 / 源码位置（不是证据） | `--what` `--source` `--limit` `--attach` `--session` |
+| `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` `--attach` `--session` |
 | `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
 | `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` `--allow-eval` |
 | `ctl` | `debug-ctl.php` | protocol | 控制面：让自走的宿主停一下 / 走一步 / 接着跑 | — |

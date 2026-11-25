@@ -122,6 +122,14 @@ $thresholds = Thresholds::default()
     ->with(['fanoutNodes' => $args->int('fanout')])
     ->with(['repeatPercent' => $args->int('repeat')]);
 $label = $args->label();
+// 真实应用先跑着、观察者后到：没点名来源时当前目录恰有一个活会话就直接接。
+// 规则只有一份（Source::autoAttach），否则 web 能接、brief 不能接，用户只觉得随机。
+try {
+    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
+} catch (\RuntimeException $e) {
+    \fwrite(\STDERR, $e->getMessage() . "\n");
+    exit(2);
+}
 
 $source = null;
 $code = 0;
