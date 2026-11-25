@@ -24,6 +24,16 @@ char *putStr(char *p, char *end, const char *s)
     return p;
 }
 
+/** 文件名是 ASCII；超出 ASCII 的字节换成 '?'，日志不能被编码赌运气。 */
+char *putAscii(char *p, char *end, const WCHAR *s)
+{
+    while (*s != L'\0' && p < end) {
+        *p++ = (*s <= 0x7F) ? (char) *s : '?';
+        ++s;
+    }
+    return p;
+}
+
 char *putHex(char *p, char *end, unsigned long long v)
 {
     p = putStr(p, end, "0x");
@@ -183,6 +193,94 @@ void writeAll(const WCHAR *path, const char *text, DWORD len)
     ::CloseHandle(h);
 }
 
+void appendBytes(HANDLE h, const char *text, DWORD len)
+{
+    while (len > 0) {
+        DWORD written = 0;
+        if (!::WriteFile(h, text, len, &written, NULL) || written == 0) {
+            return;
+        }
+        text += written;
+        len -= written;
+    }
+}
+
+/**
+ * 把 PHP 黑匣子的 sidecar 原样附到崩溃日志后面（不解析、不碰堆）。
+ *
+ * ★ 读的是 `cwd/.drift/blackbox-*.json`，与 `Pipeline::blackBox()` 的落点同口径；
+ *   exe 的 cwd 约定见诊断手册。枚举失败或单个文件读不动都跳过 —— 原生日志本身
+ *   已经写完了，调试设施绝不能覆盖第一现场。
+ * ★ sidecar 由 PHP 原子替换，过滤器读到的要么完整要么没有；读的时候正赶上替换
+ *   也只是看到旧文件句柄，Windows 的删除挂起会等句柄关闭。
+ */
+void appendBlackboxContext(const WCHAR *logPath)
+{
+    HANDLE out = ::CreateFileW(
+        logPath,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+    if (out == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    static const char head[] = "\n--- PHP blackbox sidecar (.drift/blackbox-*.json) ---\n";
+    appendBytes(out, head, (DWORD)(sizeof(head) - 1));
+
+    WIN32_FIND_DATAW fd;
+    HANDLE find = ::FindFirstFileW(L".drift\\blackbox-*.json", &fd);
+    if (find == INVALID_HANDLE_VALUE) {
+        static const char none[] = "  <none or unreadable>\n";
+        appendBytes(out, none, (DWORD)(sizeof(none) - 1));
+        ::CloseHandle(out);
+        return;
+    }
+
+    do {
+        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            continue;
+        }
+        WCHAR path[600];
+        if (!joinPath(path, 600, L".drift", fd.cFileName)) {
+            continue;
+        }
+        HANDLE in = ::CreateFileW(
+            path,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            NULL,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            NULL);
+        if (in == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+
+        char line[700];
+        char *p = line;
+        char *end = line + sizeof(line) - 1;
+        p = putStr(p, end, "file=");
+        p = putAscii(p, end, fd.cFileName);
+        p = putStr(p, end, "\n");
+        appendBytes(out, line, (DWORD)(p - line));
+
+        char chunk[1024];
+        DWORD got = 0;
+        while (::ReadFile(in, chunk, (DWORD)sizeof(chunk), &got, NULL) && got > 0) {
+            appendBytes(out, chunk, got);
+        }
+        appendBytes(out, "\n", 1);
+        ::CloseHandle(in);
+    } while (::FindNextFileW(find, &fd));
+
+    ::FindClose(find);
+    ::CloseHandle(out);
+}
+
 LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
 {
     // 重入 / 二次崩溃：直接放行，别把现场盖掉。
@@ -285,6 +383,7 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
             WCHAR path[520];
             if (joinPath(path, 520, sub, L"crash-latest.log")) {
                 writeAll(path, buf, len);
+                appendBlackboxContext(path);
             }
             // crash-<pid>-<tick>.log
             WCHAR name[64];
@@ -326,6 +425,7 @@ LONG WINAPI crashFilter(EXCEPTION_POINTERS *ep)
             *q = L'\0';
             if (joinPath(path, 520, sub, name)) {
                 writeAll(path, buf, len);
+                appendBlackboxContext(path);
             }
         }
     }

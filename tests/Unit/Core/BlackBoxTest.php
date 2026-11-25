@@ -83,7 +83,7 @@ final class BlackBoxTest extends TestCase
 
         $snapshot = $box->snapshot();
 
-        self::assertSame(2, $snapshot['protocol']);
+        self::assertSame(3, $snapshot['protocol']);
         self::assertSame('settle', $snapshot['failure']['stage']);
         self::assertSame('真现场', $snapshot['failure']['message']);
         self::assertSame([['frame' => 1, 'message' => '先来的告警']], $snapshot['recoverables']['items']);
@@ -122,6 +122,39 @@ final class BlackBoxTest extends TestCase
             'paint' => $row['paint'],
         ]);
         self::assertTrue($row['skipped']);
+    }
+
+    public function testPeriodicFlushLeavesAnAtomicSidecarForNativeCrash(): void
+    {
+        $file = $this->dir . '/blackbox.json';
+        $box = new BlackBox(64, $file);
+
+        for ($i = 1; $i < BlackBox::FLUSH_EVERY_FRAMES; ++$i) {
+            $box->record($i, 1.0, 0, 0, 0, false);
+        }
+        self::assertFileDoesNotExist($file);
+
+        $box->record(BlackBox::FLUSH_EVERY_FRAMES, 1.0, 0, 0, 0, false);
+
+        self::assertFileExists($file);
+        $raw = file_get_contents($file);
+        self::assertIsString($raw);
+        self::assertSame(BlackBox::FLUSH_EVERY_FRAMES, json_decode($raw, true)['lastFlushFrame']);
+        self::assertSame([], glob($file . '.tmp-*') ?: []);
+    }
+
+    public function testFailedFlushDoesNotLieAboutLastFlushFrame(): void
+    {
+        $target = $this->dir . '/blackbox.json';
+        mkdir($target);   // rename 到目录必然失败，且不依赖权限位
+        try {
+            $box = new BlackBox(8, $target);
+            $box->noteRecoverable('告警');
+
+            self::assertSame(0, $box->snapshot()['lastFlushFrame']);
+        } finally {
+            @rmdir($target);
+        }
     }
 
     public function testFlushWritesReadableJsonAndNeverThrowsOnUnwritablePath(): void

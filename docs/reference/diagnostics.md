@@ -73,7 +73,7 @@ worker 只能把异常压成 JSON 标量，还原端造不回原来的异常类�
 出问题按这个顺序收窄，能最快定位到是哪一层：
 
 1. **看退出码。** 3 是 Fatal，2 可能是测试缺依赖或等价检查无法完成。退出码先把范围限定到"中止"还是"没通过"。
-2. **翻 `Errors.log` 与 `.drift/blackbox-*.json`。** 确认 cwd 正确、日志落在预期位置。先看 Fatal 的消息，再看有没有 `Errors::RECOVERABLE` 的记录；后者在 release 下还会按应用写进黑匣子的 `recoverables` 面包屑，且不会顶掉 `failure` 现场。
+2. **翻 `Errors.log` 与 `.drift/blackbox-*.json`。** 确认 cwd 正确、日志落在预期位置。先看 Fatal 的消息，再看有没有 `Errors::RECOVERABLE` 的记录；后者在 release 下还会按应用写进黑匣子的 `recoverables` 面包屑，且不会顶掉 `failure` 现场。进程直接崩掉时看 `%APPDATA%\Drift\crash-latest.log`：尾部会原样附上 sidecar，并用 `lastFlushFrame` 说明它离崩点最多差 30 帧。
 3. **搜 `[DX]`。** 若没有 Fatal 但能力变弱，搜退化前缀，确认是不是走了静默退化路径，以及是哪个 key。
 4. **异步链路查 code。** 若错误发生在异步任务里，用 `AsyncValue::code()` 或错误映射拿到字符串码，按上面的具名码表判断是重试类还是配置类。
 5. **回到验证分层。** 解释器与 smoke 全绿、只有真机出问题，通常是 AOT 约束那一族（属性读、arity、继承字段 `private`、`?->`、整数除法）；按[命令速查](./cli.md)跑 T2 与相关 lint 复现。

@@ -8,7 +8,7 @@
 
 但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
 
-1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃现场仍另立平台期。
+1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
 2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；Web 仍缺树与时间轴。
 3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
@@ -40,7 +40,7 @@
 | 内存 / 泄漏 | 已落地：`debug probe --what=memory` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账给每个类型的对象存活跨度（跨查询累积，不阻止 GC）；AOT 侧不采、不进包、不进指纹（A55） | Chrome Memory、Flutter Memory、Tracy | 不做堆转储与字节数（PHP 无此 API），只给能站得住的存活跨度 |
 | 源码位置 | 已落地：`debug probe --what=source` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把 `site` 翻成"哪个方法、定义第几行"；只看已加载类、当场反射、不是证据（A55） | Chrome Sources、LLDB `image lookup` | 补上从因果 site 跳到方法定义的最后一跳 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
-| 崩溃 / 生产黑匣子 | 已落地：每应用一份 Core 标量环，帧末写一条，Frame 异常边界先留现场再响亮失败；release 可恢复错误另记独立面包屑环，不顶掉致命现场（A61）；崩溃文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留（A60） | Sentry breadcrumb、Chrome trace | 已覆盖 PHP 异常与可恢复告警；native 崩溃另立平台期 |
+| 崩溃 / 生产黑匣子 | 已落地：每应用一份 Core 标量环，帧末写一条，Frame 异常边界先留现场再响亮失败；release 可恢复错误另记独立面包屑环，不顶掉致命现场（A61）；sidecar 每 30 帧原子替换，native 过滤器崩溃时原样附加（A62）；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留（A60） | Sentry breadcrumb、Chrome trace | 已覆盖 PHP 异常、可恢复告警与 native context；符号化仍靠 `/MAP` + `rva2sym` |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
 | 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
@@ -228,7 +228,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P3** | select / highlight | 反向流已落地；`pick` 接到活窗口点击已由 A58 落地；highlight 绘制后叠加；highlight 前后**结构因果**指纹相同且像素必变 | P3 | M |
 | **P3** | 多窗口隔离 | 已落地（A53）：录制器绑到应用 + 帧内压栈；交错跑与单独跑逐值相同、第二窗口不推进第一会话的帧号与节点表、无主兜底保住老夹具；A59 补齐 `Discovery` 多条目与跨窗口并列只读视图 | P3 | L |
 | **P4** | S2 常驻黑匣子 | 已落地（A60）：`Core\BlackBox` 标量环挂每应用 Pipeline；帧末唯一写点；崩溃即落盘且自报截断；开销量具已证 frames-only 约占 0.01% 帧预算 | P1、P3 | L |
-| **P4** | 崩溃取证 | 已落地（A60/A61）：Frame 三处 catch 的 PHP 异常留第一现场并落盘，release 可恢复错误记独立面包屑环且立即 flush；C++ 崩溃另立平台期，不混入本批 | P4 | M |
+| **P4** | 崩溃取证 | 已落地（A60/A61/A62）：Frame 三处 catch 的 PHP 异常留第一现场并落盘，release 可恢复错误记独立面包屑环且立即 flush；Win32 原生过滤器把 `blackbox-*.json` 附进崩溃日志，非 Windows 平台另按各自过滤器接同一 sidecar 格式 | P4 | M |
 | **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
 | **P5** | 基线回归 | 已落地：`--baseline` / `--save-baseline` / `--assert` / `--tolerance`；确定性分级（耗时类不计断言）；坏文件五种各自报错；有回归退 3 | P5 | M |
 | **P5** | 证据搜索 | 已落地：`find(pattern, domain, limit, caseSensitive)` + `debug find` 出口 + `/api/find`；产物是地址且可被追问；三数对账；截断 / 空窗口 / 已回收分开自报；不做正则 | P2 | S |

@@ -212,6 +212,14 @@ final class VerifyPlan
                 'label'   => '崩溃符号翻译（合成 map 自证）',
                 'command' => [$php, $root . '/tools/rva2sym.php', '--selftest'],
             ],
+            'crashctx' => [
+                'id'      => 'crashctx',
+                'layer'   => 'device',
+                'tier'    => 'manual',
+                'class'   => 'device',
+                'label'   => '原生崩溃日志附上 PHP 黑匣子 sidecar',
+                'command' => [$php, $root . '/tools/crash-context-selftest/run.php'],
+            ],
             'decode' => [
                 'id'      => 'decode',
                 'layer'   => 'device',

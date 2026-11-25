@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Core;
 
 /**
- * 发布态常驻的现场便签：固定容量标量环形缓冲（帧现场 + 告警面包屑），崩溃时落盘。
+ * 发布态常驻的现场便签：固定容量标量环形缓冲（帧现场 + 告警面包屑），周期性原子落盘给原生崩溃过滤器读。
  *
  * ## 为什么不是 Recorder
  *
@@ -34,8 +34,14 @@ final class BlackBox
     /** 可恢复告警面包屑容量：比帧窗口短，只回答“崩之前发生过什么” */
     public const int RECOVERABLE_CAPACITY = 16;
 
+    /**
+     * sidecar 刷新节奏（帧）。原生崩溃过滤器读不到 PHP 内存，只能读这份文件；
+     * 每帧落盘太贵，30 帧（半秒）是“现场够新”与“磁盘不被写爆”的折中。
+     */
+    public const int FLUSH_EVERY_FRAMES = 30;
+
     /** 发现文件格式；与协议版本无关，遇到未知版本显式报错而不是降级 */
-    public const int PROTOCOL = 2;
+    public const int PROTOCOL = 3;
 
     /** @var list<array{frame: int, cost: float, settle: int, layout: int, paint: int, skipped: bool}|null> */
     private array $frames;
@@ -55,6 +61,9 @@ final class BlackBox
     private array $recoverables = [];
 
     private int $recoverableTotal = 0;
+
+    /** 最近一次成功落盘对应的帧号；0 = 从未落盘 */
+    private int $lastFlushFrame = 0;
 
     /**
      * @param int    $capacity 环形容量；预分配一次，帧内不再分配对象
@@ -98,6 +107,11 @@ final class BlackBox
             $this->worstCost = $costMs;
             $this->worstFrame = $frame;
         }
+
+        // 原生崩溃过滤器只能读盘 ⇒ 周期性留一份可读现场；事件失败仍走立即 flush。
+        if ($this->total % self::FLUSH_EVERY_FRAMES === 0) {
+            $this->flush();
+        }
     }
 
     /**
@@ -112,12 +126,13 @@ final class BlackBox
             return;
         }
         // 当前帧还没 record：total + 1 就是它，不必另开一个帧号出口。
+        $frame = $this->total + 1;
         $this->failure = [
             'stage' => $stage,
             'message' => $message,
-            'frame' => $this->total + 1,
+            'frame' => $frame,
         ];
-        $this->flush();
+        $this->flushAt($frame);
     }
 
     /**
@@ -130,15 +145,16 @@ final class BlackBox
      */
     public function noteRecoverable(string $message): void
     {
+        $frame = $this->total + 1;
         $this->recoverables[] = [
-            'frame' => $this->total + 1,
+            'frame' => $frame,
             'message' => $message,
         ];
         if (count($this->recoverables) > self::RECOVERABLE_CAPACITY) {
             array_shift($this->recoverables);
         }
         ++$this->recoverableTotal;
-        $this->flush();
+        $this->flushAt($frame);
     }
 
     /**
@@ -147,11 +163,21 @@ final class BlackBox
      */
     public function flush(): void
     {
+        $this->flushAt($this->total);
+    }
+
+    /**
+     * 原子替换 sidecar：原生过滤器可能正好在读，半截 JSON 比没有更糟。
+     * 临时名带帧号，`blackbox-*.json` 通配符不会碰到它。
+     */
+    private function flushAt(int $frame): void
+    {
         if ($this->path === '') {
             return;
         }
+        // 快照里写的是"这一次打算落盘的帧号"，但只有 rename 成功才算真的落了。
         $json = \json_encode(
-            $this->snapshot(),
+            $this->buildSnapshot($frame),
             \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE,
         );
         if ($json === false) {
@@ -161,7 +187,15 @@ final class BlackBox
         if (!\is_dir($dir) && !@\mkdir($dir, 0700, true) && !\is_dir($dir)) {
             return;
         }
-        @\file_put_contents($this->path, $json . "\n");
+        $tmp = $this->path . '.tmp-' . \getmypid() . '-' . $frame;
+        if (@\file_put_contents($tmp, $json . "\n") === false) {
+            return;
+        }
+        if (!@\rename($tmp, $this->path)) {
+            @\unlink($tmp);
+            return;
+        }
+        $this->lastFlushFrame = $frame;
     }
 
     public function path(): string
@@ -171,6 +205,12 @@ final class BlackBox
 
     /** @return array<string, mixed> */
     public function snapshot(): array
+    {
+        return $this->buildSnapshot($this->lastFlushFrame);
+    }
+
+    /** @return array<string, mixed> */
+    private function buildSnapshot(int $lastFlushFrame): array
     {
         $frames = [];
         foreach ($this->frames as $row) {
@@ -191,6 +231,7 @@ final class BlackBox
                 ? ['frame' => $this->worstFrame, 'cost' => $this->worstCost]
                 : null,
             'failure' => $this->failure,
+            'lastFlushFrame' => $lastFlushFrame,
             'recoverables' => [
                 'capacity' => self::RECOVERABLE_CAPACITY,
                 'total' => $this->recoverableTotal,
