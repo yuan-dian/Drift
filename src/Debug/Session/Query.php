@@ -1263,6 +1263,151 @@ final class Query
         return ['found' => true] + $record->select($part, $maxBytes) + ['window' => $window];
     }
 
+    /**
+     * 在**证据**里找东西：给一段文本，回一串**地址**。
+     *
+     * ## 为什么不叫"全文检索"
+     *
+     * 全文检索的产物是"文档 + 位置"，而调试题要的产物是**地址**：`node:12` 能直接
+     * 喂给 `boxModel` / `why` / `align`，`request:3` 能直接喂给 `network` /
+     * `networkBody`。所以这里不返回命中行号、不返回片段偏移 —— 那种结果在证据
+     * 被重新导出、窗口滚动之后就没有意义了（A36 ⑧"地址稳定"）。
+     *
+     * ## 只搜证据，不搜活树
+     *
+     * 两个域都可从记录回答，因此**导出的证据包、远端会话、离线包**搜出来的结果
+     * 逐值相同。搜活树会引入"这次搜到的节点下次没了"的不确定性，而搜索的第一
+     * 用途恰恰是"照着结果去追问"，追问必须还能解析。
+     *
+     * ## 匹配是字面子串，没有正则
+     *
+     * 正则有灾难性回溯、有跨实现语义差异（PCRE / JS / 各语言），而搜索的结论要
+     * 能被复算。`Table|Column` 在这里按字面找，找不到就是找不到 —— 不猜用户想写
+     * 的是"或"。大小写默认不敏感（调试时没人记得住 `SizedBox` 的大小写）。
+     *
+     * ## 两个域各匹配什么
+     *
+     * `node` 匹配节点**自身的类型**（`Table` / `SizedBox`），路径只用来显示在哪；
+     * `request` 匹配"方法 + URL + 状态"拼成的一行。两个都不搜报文正文：正文默认
+     * 不采，搜它会给出"抓了就有、没抓就没有"的不稳定结果。
+     *
+     * ## 三个数必须分开报：扫了多少、命中多少、给了多少
+     *
+     * `scanned` 是"这段证据里有多少候选"，`matched` 是命中总数，`returned` 是
+     * 截断后真给出去的。少了 `scanned`，"0 条结果"会被读成"没有匹配"，
+     * 而它更可能是"这个域根本没有候选"（没采 / 窗口空 / 全被回收）——
+     * 两者的下一步动作相反：一个是改关键词，一个是补采集。
+     *
+     * `evicted` 同理：已回收的节点不在表里，**搜不到不等于没有过**。
+     *
+     * @param string $pattern 字面子串（不做正则、不切词）
+     * @param string $domain  `all` / `node` / `request`
+     * @param int    $limit   最多给多少条（命中总数照实报在 `total`）
+     * @param bool   $caseSensitive 默认不敏感
+     *
+     * @return array<string, mixed>
+     *
+     * @throws \InvalidArgumentException 空 pattern / 未知域 / limit 非正
+     */
+    public function find(string $pattern, string $domain = 'all', int $limit = 50, bool $caseSensitive = false): array
+    {
+        $pattern = \trim($pattern);
+        if ($pattern === '') {
+            // 空串会匹配一切：那不是搜索结果，是把整份证据倒出来。
+            throw new \InvalidArgumentException('find 需要非空 pattern');
+        }
+        if ($limit < 1) {
+            throw new \InvalidArgumentException('find 的 limit 是正整数');
+        }
+        $domains = match ($domain) {
+            'all' => ['node', 'request'],
+            'node', 'request' => [$domain],
+            default => throw new \InvalidArgumentException(
+                'find 不认这个域：' . $domain . '（可用：all / node / request）',
+            ),
+        };
+
+        $needle = $caseSensitive ? $pattern : \mb_strtolower($pattern, 'UTF-8');
+        $hit = static fn(string $haystack): bool => \str_contains(
+            $caseSensitive ? $haystack : \mb_strtolower($haystack, 'UTF-8'),
+            $needle,
+        );
+
+        /** @var array<string, array<string, mixed>> $counts */
+        $counts = [];
+        /** @var list<array{domain: string, address: string, text: string}> $all */
+        $all = [];
+
+        if (\in_array('node', $domains, true)) {
+            $scanned = 0;
+            $matched = 0;
+            // ★ 匹配的是**节点自身的类型**，不是完整路径。按路径匹配会让 `Table`
+            //   命中"Table 子树里的每一个节点"（实测 346/364）——结果列表变成整棵树，
+            //   搜索就退化成"打印一切"。要列某容器的子树是 `cascade(frame)` 的问题，
+            //   不是搜索的问题。路径仍然印在 `text` 里：命中之后紧跟的就是它在哪。
+            foreach ($this->recorder->nodeIndex() as $id => $_meta) {
+                ++$scanned;
+                $type = $this->recorder->typeOf($id);
+                if (!$hit($type)) {
+                    continue;
+                }
+                ++$matched;
+                $all[] = [
+                    'domain' => 'node',
+                    'address' => 'node:' . $id,
+                    // 路径只对**命中项**算：3000 个节点各拼一遍父链，代价落在这条
+                    // 查询最贵的地方，而它只对返回的几十行有用。
+                    'text' => $this->recorder->pathOf($id),
+                ];
+            }
+            $counts['node'] = [
+                'scanned' => $scanned,
+                'matched' => $matched,
+                'returned' => 0,
+                'evicted' => \count($this->recorder->evictedNodes()),
+            ];
+        }
+
+        if (\in_array('request', $domains, true)) {
+            $scanned = 0;
+            $matched = 0;
+            foreach ($this->recorder->networkRows() as $record) {
+                ++$scanned;
+                $text = \sprintf('%s %s %d', $record->method, $record->url, $record->status);
+                if (!$hit($text)) {
+                    continue;
+                }
+                ++$matched;
+                $all[] = ['domain' => 'request', 'address' => 'request:' . $record->requestId, 'text' => $text];
+            }
+            $counts['request'] = [
+                'scanned' => $scanned,
+                'matched' => $matched,
+                'returned' => 0,
+                // 网络有独立窗口：被裁掉的请求搜不到，这个数说出"这段没搜"。
+                'window' => $this->recorder->networkCoverage(),
+            ];
+        }
+
+        $total = \count($all);
+        $matches = \array_slice($all, 0, $limit);
+        foreach ($matches as $one) {
+            ++$counts[$one['domain']]['returned'];
+        }
+
+        return [
+            'pattern' => $pattern,
+            'domain' => $domain,
+            'case' => $caseSensitive,
+            'limit' => $limit,
+            'total' => $total,
+            'returned' => \count($matches),
+            'truncated' => $total > \count($matches),
+            'domains' => $counts,
+            'matches' => $matches,
+        ];
+    }
+
     // ------------------------------------------------------------------ 内部
 
     /**

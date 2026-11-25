@@ -75,6 +75,15 @@ async function boot() {
     if (node) select(node);
   });
 
+  const q = document.getElementById('q');
+  q.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') search(q.value);
+    if (e.key === 'Escape') {
+      q.value = '';
+      document.getElementById('hitList').textContent = '';
+    }
+  });
+
   await Promise.all([loadScript(), loadBrief()]);
 
   // `?node=32&frame=1` 直接开到那个节点的卡片。发现里的地址能贴进聊天窗口，
@@ -147,6 +156,46 @@ function jump(address) {
   const n = /node:(\d+)/.exec(address || '');
   if (n) select(Number(n[1]));
   else if (f) loadFrame(Number(f[1]));
+}
+
+// 搜索：结果一律是地址，点一条就落到那个节点上（与发现列表同一条路 `jump()`）。
+// 页面只传关键词、只画返回的数组：匹配规则、截断、扫过多少候选全由 `find()` 给 ——
+// 前端再 filter 一遍就成了第二份实现，"同一次搜索三种结果"就是这么来的。
+async function search(text) {
+  const list = document.getElementById('hitList');
+  list.textContent = '';
+
+  const q = (text || '').trim();
+  if (!q) return;
+
+  let answer;
+  try {
+    answer = await get(`/api/find?domain=node&limit=20&pattern=${encodeURIComponent(q)}`);
+  } catch (e) {
+    list.appendChild(el('li', 'none', e.message));
+    return;
+  }
+
+  const hits = answer.matches || [];
+  if (hits.length === 0) {
+    // "命中 0" 与 "压根没有候选" 是两件事：后者说明这段证据没采到结构。
+    const scanned = (answer.domains && answer.domains.node ? answer.domains.node.scanned : 0) || 0;
+    list.appendChild(el('li', 'none', scanned > 0 ? '没有命中的类型' : '节点表是空的（这段证据没采到结构）'));
+    return;
+  }
+
+  for (const hit of hits) {
+    const li = el('li');
+    li.appendChild(el('span', 'addr', hit.address));
+    li.appendChild(el('span', null, hit.text));
+    li.title = hit.text;
+    li.onclick = () => jump(hit.address);
+    list.appendChild(li);
+  }
+
+  if (answer.truncated) {
+    list.appendChild(el('li', 'none', `命中 ${answer.total}，只列了 ${answer.returned}`));
+  }
 }
 
 async function loadFrame(frame, keepSelected) {

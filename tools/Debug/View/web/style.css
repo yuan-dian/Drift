@@ -98,6 +98,37 @@ h2 {
   font-size: 11px;
 }
 
+/* 搜索：结果一律是地址，点一条就用 `/api/node` 取它的事实。
+   这里不出"匹配度"，排序与截断都由查询层给（页面不重算，见 app.js 顶部的纪律）。 */
+#q {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 4px 0 8px;
+  padding: 4px 6px;
+  background: #1f1f22;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  color: inherit;
+  font: inherit;
+}
+#q:focus { outline: none; border-color: var(--accent); }
+.hits { margin: 0; padding-left: 0; list-style: none; }
+.hits li {
+  padding: 2px 0;
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hits li:hover { color: var(--accent); }
+.hits .addr {
+  color: var(--dim);
+  font-family: ui-monospace, Consolas, monospace;
+  margin-right: 6px;
+}
+.hits .none { color: var(--dim); cursor: default; }
+
 /* 画布 */
 #stage {
   padding: 0;

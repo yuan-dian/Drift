@@ -48,6 +48,7 @@ final class QueryRouter implements SessionQueries
         'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
+        'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射，活树按需快照进独立 200 条窗口）',
         'pick' => '按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点',
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
@@ -111,6 +112,12 @@ final class QueryRouter implements SessionQueries
             'maxBytes' => ['int', 8192],
         ]],
         'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
+        'find' => ['find', [
+            'pattern' => ['string'],
+            'domain' => ['string', 'all'],
+            'limit' => ['int', 50],
+            'caseSensitive' => ['bool', false],
+        ]],
         'props' => ['props', [
             'node' => ['int'],
             'roots' => ['inject', 'treeRoots'],

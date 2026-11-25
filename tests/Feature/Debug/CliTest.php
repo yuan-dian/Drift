@@ -11,7 +11,7 @@ use Drift\Dev\Debug\Cli\Registry;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
- * 驱动词表是十个出口共用的协议。这里的判据全在说同一件事：
+ * 驱动词表是十一个出口共用的协议。这里的判据全在说同一件事：
  * "同一个词在任何一个出口都必须是同一个意思"，而且漏声明不能静默过去。
  */
 final class CliTest extends SmokeTestCase
@@ -27,7 +27,7 @@ final class CliTest extends SmokeTestCase
             $digests[$name] = Commands::set($name)->parse(self::WORDS)->script()->digest();
             check("{$name} 能由词表建出脚本", $digests[$name] !== '', $name);
         }
-        check('10 个出口', \count($digests) === 10, (string) \count($digests));
+        check('11 个出口', \count($digests) === 11, (string) \count($digests));
         check('同一份词只有一份指纹', \count(\array_unique($digests)) === 1, \implode(' ', $digests));
         $this->flushChecks();
     }
@@ -193,7 +193,7 @@ final class CliTest extends SmokeTestCase
         foreach (Registry::all() as $verb => $entry) {
             check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
         }
-        check('12 个出口', \count(Registry::all()) === 12, (string) \count(Registry::all()));
+        check('13 个出口', \count(Registry::all()) === 13, (string) \count(Registry::all()));
         $this->flushChecks();
     }
 

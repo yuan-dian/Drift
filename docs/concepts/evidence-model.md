@@ -434,6 +434,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | S3d | 绘制归因：这一帧画了谁、省了谁 | 重画集合 ⊆ 结构树（每个节点有类型与路径）；集合大小 ≤ 真画次数（命中不是"画过"）；聚合可由逐帧复算；`paint-not-captured` 与"这帧没画"分开；窗口外不 clamp；独立 60 帧窗口有界且自报；证据往返逐值相同 | `Core\PaintObserver`、`PaintRecord`、`Query::paint/repaints` |
 | S-live | 实时跟随：常驻宿主自走 + 观察者按游标只读连接 | 同一会话的帧序列连续；`--at` 停住记 `paused/at`、跑完记 `finished/null`；访问令牌与会话令牌分开；暂停 / 单步不改脚本指纹 | `tools/Debug/Host.php`、`tools/debug-serve.php`、`tools/debug-brief.php` |
 | S5（Web 切片） | 浏览器视图：几何画布 + 发现，与终端同源 | `/api/brief` 与 `brief --json` 的 findings 逐值相同；页面不重算数字；增量游标无状态；接自走宿主时可暂停 / 单步 / 继续 | `tools/Debug/View/Web.php`、`tools/Debug/View/web/`、`tools/debug-web.php` |
+| S5（搜索切片） | 在证据里找：给一段文本，回一串可追问的地址 | 命中集合 == 自身类型匹配的节点集合（不按祖先路径命中）；每个地址能被对应查询解析；`scanned`/`matched`/`returned` 三数可对账；截断、空窗口、已回收三种"没结果"分开报；不做正则（`Padding\|Text` 按字面找） | `Query::find`、`tools/Debug/View/Find.php`、`/api/find` |
 | S6（暂停 / 单步切片） | 干预只改推进节奏，不改记录 | 自走宿主每推一步回头看控制面；`resume --frames=1` 停在 `paused/step`；`state` 是唯一真相；直跑与中途暂停再跑的脚本指纹相同 | `tools/Debug/Drive.php`、`tools/Debug/Host.php`、`tools/Debug/Cli/Commands.php` |
 | S0 | 证据包：版本化导出 / 导入 + 三指纹分离 | 导出→导入逐字节相同、三指纹逐值不变、损坏包或未知版本拒绝；`EvidenceTest` 9 用例 | `src/Debug/Session/Evidence.php`、`EvidenceBag.php`、`tools/Debug/Source.php` |
 
@@ -445,7 +446,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 |---|---|---|
 | 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `tools/Debug/Reopen.php`、`tools/Debug/View/LoopReport.php` |
 | 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `tools/Debug/Cli/OptionSet.php`、`tools/Debug/Cli/Parsed.php` |
-| 出口（B7） | 12 个出口只在 Registry 声明；分发与两级 help 都从它派生 | `tools/Debug/Cli/Registry.php`、`bin/drift` |
+| 出口（B7） | 13 个出口只在 Registry 声明；分发与两级 help 都从它派生 | `tools/Debug/Cli/Registry.php`、`bin/drift` |
 | 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`tools/Debug/Source.php` |
 | 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `tools/Debug/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
 

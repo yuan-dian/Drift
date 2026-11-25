@@ -30,6 +30,7 @@ final class Registry
             ['panel', 'debug-panel.php', '同一个会话上反复追问：时间轴 + 因果树 + 原因', true],
             ['network', 'debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）', true],
             ['node', 'debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络', true],
+            ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
             ['pick', 'debug-pick.php', '按视口坐标点选，给命中链与每层路径', true],
             ['props', 'debug-props.php', '按节点读 Widget / State 配置', true],
             ['host', 'debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）', false],

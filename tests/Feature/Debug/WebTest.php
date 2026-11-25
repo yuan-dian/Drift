@@ -127,6 +127,33 @@ final class WebTest extends SmokeTestCase
         check('不给 node 说清缺什么', ($bad['error'] ?? '') === 'bad_request', \json_encode($bad));
     }
 
+    /**
+     * 搜索与节点卡是同一个循环：搜到的地址必须能被卡片直接解析。
+     *
+     * 这条判据比"路由返回 200"有用得多 —— 页面点一条结果就直接发 `/api/node`，
+     * 地址解析不开时页面只会显示一张空卡片，而没有任何地方报错。
+     */
+    public function testSearchReturnsAddressesTheNodeCardAccepts(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=2']);
+
+        $found = $this->json($port, '/api/find?pattern=Table');
+        $matches = $found['matches'] ?? [];
+        check('搜得到节点', $matches !== [], \json_encode($found));
+        check('命中项是地址', \str_starts_with((string) ($matches[0]['address'] ?? ''), 'node:'), \json_encode($matches[0] ?? []));
+
+        $node = (int) \substr((string) $matches[0]['address'], \strlen('node:'));
+        $card = $this->json($port, "/api/node?node={$node}&frame=1");
+        check('搜到的地址能被节点卡解析', ($card['boxModel']['node'] ?? 0) === $node, \json_encode($card['boxModel'] ?? []));
+
+        $missing = $this->json($port, '/api/find');
+        check('缺 pattern 说清缺什么', ($missing['error'] ?? '') === 'bad_request', \json_encode($missing));
+
+        $badDomain = $this->json($port, '/api/find?pattern=x&domain=frame');
+        check('未知域是 400 不是空结果', ($badDomain['error'] ?? '') === 'bad_request', \json_encode($badDomain));
+        check('未知域列出可用值', \str_contains((string) ($badDomain['message'] ?? ''), 'request'), \json_encode($badDomain));
+    }
+
     /** 判据 6：画布上的盒都在同一帧的几何里 —— 三张脸指同一个节点集。 */
     public function testEveryBoxBelongsToTheSameFrame(): void
     {

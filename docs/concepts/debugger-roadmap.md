@@ -9,7 +9,7 @@
 但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
 
 1. **生产可用线**：录制开销已有量具与数字，但 AOT 常驻黑匣子、崩溃取证与多窗口隔离仍未验。
-2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），但 Web 仍缺树 / 时间轴 / 搜索。
+2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），搜索已落地（`find` 回地址），但 Web 仍缺树与时间轴。
 3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
 所以下一阶段的中心不是“再加几个视图”，而是**先把采集预算、生命周期与生产可用补齐，再让视图消费同一份证据**。任何新域如果没有预算、没有判据、没有独立消费者，就不进入主线。
@@ -27,8 +27,9 @@
 | 属性（Widget / State） | 切片：dev 反射、按需快照、脱敏 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev |
 | 网络 | 切片：骨架 + 发起者 + 落地帧 + 报文 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
+| 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
-| Web 视图 | 切片：几何画布 + 发现 + 节点卡 | Chrome/Flutter 多标签 | 缺树、时间轴、网络、搜索 |
+| Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
 | 多窗口 / 多 target | 未做：第二个会话直接拒绝 | 成熟 DevTools 多 target | S2 的前置 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
@@ -42,7 +43,7 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 12 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 13 出口        Web 视图         AI / CI          IDE（未来）
                     \              |               |               /
 L2 投影        Brief / Findings  Inspector     Timeline     Network     Loop     Paint     Memory
                     \              |               |               /
@@ -179,7 +180,21 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 **判据**（`tests/Unit/Debug/BriefTest.php` + `BaselineTest.php` + `tests/Feature/Debug/BaselineCliTest.php`）：注册表声明的编号集合 == 真实产出的集合；每条发现的 severity == 所属规则的 severity；`--rule=` 只跑一条且兜底自报"只跑了 1/9"；`--without` 关掉一个变体不连带关掉兄弟；`--min-severity` 只去掉低级别；过滤光了报 `suppressed` 而不是 `clean`；未知编号抛错并列出可用编号；`--rules` 目录与注册表同源；基线七种状态各一条、容差边界（等于不报、略超才报）、0 → 正数算变差、耗时类不进 `regressions`、重复键计数、坏文件五种各自报错、`--assert` 无基线退出 2、有回归退出 3、无回归退出 0。
 
-### 7. 后续域：内存、异步、无障碍
+### 7. 搜索：产物是**地址**，不是位置
+
+**问题**：证据里有几百上千个节点、几百条请求、十几条发现，而"哪个东西提到了 `rows`"以前只能靠人翻。这不是缺面板，是缺一次能收敛的查询：没有它，"点一个东西看看"这个动作只能从别人给的地址开始。
+
+**设计**：
+
+- `find(pattern, domain, limit, caseSensitive)`：`domain` 取 `all` / `node` / `request`。命中项一律是 `{domain, address, text}`，`address` 是**能被别的查询直接解析**的形式（`node:19` → `boxModel`，`request:3` → `network`）。不返回行号、屏幕位置、片段偏移 —— 那些在证据重新导出后就失效了。
+- **只搜证据，不搜活树**：两个域都能从记录回答，所以导出的包、远端会话、离线包搜出来的结果逐值相同。搜活树会让"搜到的节点下次没了"变成常态，而搜索的第一用途恰恰是"照着结果去追问"。
+- **匹配自身类型，不匹配路径**：落地时先写成匹配完整路径（`PageShell > Column > Expanded > Table > …`），实测 `Table` 命中 **346/364** 个节点 —— 路径里含祖先类型，等于把整棵子树都算命中，结果列表退化成"打印一切"。改成匹配节点自身类型后是 2 条，路径只用来显示在哪。要列某容器的子树是 `cascade(frame)` 的问题，不是搜索的问题。
+- **不做正则、不打相关度**：正则有灾难性回溯与跨实现语义差异，相关度无法复算。`Padding|Text` 按字面找。大小写默认不敏感，`--case-sensitive` 显式打开。
+- **三种"没结果"必须分开**：`scanned`（扫了多少候选）/ `matched`（命中总数）/ `returned`（截断后给了多少）三数对账；`evicted`（已回收节点搜不到，不等于没有过）与请求域的 `window` 随答案自报。少了 `scanned`，"0 条结果"会被读成"没有匹配"，而它更可能是"这个域根本没有候选"（没采 / 窗口空）—— 两种情况下一步动作相反。
+
+**判据**（`tests/Feature/Debug/FindTest.php` + `FindCliTest.php` + `WebTest`）：命中集合 == 自身类型匹配的节点集合（独立数一遍节点表交叉核对）；不命中整棵子树；每个地址能被 `boxModel` / `network` 解析；`--limit` 只裁返回且标截断、逐域之和 == 总数；空窗口 `scanned=0` 与"搜了没命中"可分；`Padding|Text` 不命中（换成 `preg_match` 会红）；`/api/find` 缺参数与未知域回 400 而不是空结果。
+
+### 8. 后续域：内存、异步、无障碍
 
 这三个域都重要，但不与 S3d / S2 同期做；先按“预算 + 独立窗口 + 独立查询”的形状评估：
 
@@ -209,6 +224,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |
 | **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
 | **P5** | 基线回归 | 已落地：`--baseline` / `--save-baseline` / `--assert` / `--tolerance`；确定性分级（耗时类不计断言）；坏文件五种各自报错；有回归退 3 | P5 | M |
+| **P5** | 证据搜索 | 已落地：`find(pattern, domain, limit, caseSensitive)` + `debug find` 出口 + `/api/find`；产物是地址且可被追问；三数对账；截断 / 空窗口 / 已回收分开自报；不做正则 | P2 | S |
 | **P6** | 内存域 | 节点 / State / 订阅 / 图片缓存计数；泄漏趋势；独立窗口与查询 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |

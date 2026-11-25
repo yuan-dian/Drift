@@ -68,6 +68,15 @@ final class Commands
                 Opt::int('node', 0, 0, null, '节点 id（必填）'),
                 Opt::int('frame', 0, 0, null, '帧号（必填）'),
             ],
+            // `--pattern` 不叫 `--text`：后者已经是驱动词表里的"输入文本"，
+            // 同名同形会让 `debug find --text=x` 有两种解释。
+            'find' => [
+                Opt::str('pattern', null, '要搜的字面子串（必填，不做正则）'),
+                Opt::str('domain', 'all', 'all|node|request'),
+                Opt::int('limit', 50, 1, null, '最多给多少条命中'),
+                Opt::flag('case-sensitive', '区分大小写（默认不区分）'),
+                Opt::str('from', null, '读证据包，不再驱动'),
+            ],
             'pick' => [
                 Opt::float('x', 0.0, null, null, '触点 x'),
                 Opt::float('y', 0.0, null, null, '触点 y'),

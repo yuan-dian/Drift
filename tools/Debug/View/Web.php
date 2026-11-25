@@ -121,6 +121,10 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
             ])),
             '/api/node' => $this->node($query),
+            // 搜索与节点卡是同一个循环的两半：先按文本拿到地址，再按地址取事实。
+            // 页面不自己过滤 `/api/boxes` 的结果 —— 那会在前端重写一遍匹配规则，
+            // 而"同一次搜索三种实现"正是这一层要避免的。
+            '/api/find' => $this->find($query),
             default => $this->error(404, 'not_found', "没有这个路径：{$path}"),
         };
     }
@@ -222,6 +226,38 @@ final class Web
             'boxModel' => $this->tryQuery('boxModel', $args),
             'props' => $this->tryQuery('props', $args),
         ]);
+    }
+
+    /**
+     * 在证据里搜：`?pattern=table&domain=node&limit=20`。
+     *
+     * 参数错（空 pattern / 未知域）回 400 并说清可用值 —— 回一个空结果会让页面
+     * 显示"没有命中"，而真相是"这个请求根本没被接受"。
+     *
+     * @param array<string, mixed> $query
+     * @return array{status: int, type: string, body: string}
+     */
+    private function find(array $query): array
+    {
+        $pattern = $query['pattern'] ?? null;
+        if (!\is_string($pattern) || \trim($pattern) === '') {
+            return $this->error(400, 'bad_request', '缺少 pattern 参数（字面子串，不做正则）');
+        }
+
+        $domain = $query['domain'] ?? 'all';
+        $case = $query['case'] ?? '';
+        $args = [
+            'pattern' => $pattern,
+            'domain' => \is_string($domain) && $domain !== '' ? $domain : 'all',
+            'limit' => (int) ($query['limit'] ?? 50),
+            'caseSensitive' => $case === '1' || $case === 'true',
+        ];
+
+        try {
+            return $this->json($this->queries->query('find', $args));
+        } catch (\InvalidArgumentException $e) {
+            return $this->error(400, 'bad_request', $e->getMessage());
+        }
     }
 
     /**
