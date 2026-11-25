@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Core;
 
 /**
- * 发布态常驻的现场便签：固定容量标量环形缓冲，崩溃时落盘。
+ * 发布态常驻的现场便签：固定容量标量环形缓冲（帧现场 + 告警面包屑），崩溃时落盘。
  *
  * ## 为什么不是 Recorder
  *
@@ -31,8 +31,11 @@ final class BlackBox
 {
     public const int DEFAULT_CAPACITY = 64;
 
+    /** 可恢复告警面包屑容量：比帧窗口短，只回答“崩之前发生过什么” */
+    public const int RECOVERABLE_CAPACITY = 16;
+
     /** 发现文件格式；与协议版本无关，遇到未知版本显式报错而不是降级 */
-    public const int PROTOCOL = 1;
+    public const int PROTOCOL = 2;
 
     /** @var list<array{frame: int, cost: float, settle: int, layout: int, paint: int, skipped: bool}|null> */
     private array $frames;
@@ -45,8 +48,13 @@ final class BlackBox
 
     private float $worstCost = 0.0;
 
-    /** @var array{stage: string, message: string, frame: int}|null */
+    /** @var array{stage: string, message: string, frame: int}|null 第一致命现场，不被告警顶掉 */
     private ?array $failure = null;
+
+    /** @var list<array{frame: int, message: string}> 可恢复告警面包屑，时间正序 */
+    private array $recoverables = [];
+
+    private int $recoverableTotal = 0;
 
     /**
      * @param int    $capacity 环形容量；预分配一次，帧内不再分配对象
@@ -113,6 +121,27 @@ final class BlackBox
     }
 
     /**
+     * 记一条已隔离的可恢复告警并立即落盘。
+     *
+     * ★ 不写 `$failure`：告警是崩溃前的面包屑，不是崩溃根因。复用失败槽会让
+     *   先到的告警顶掉后面的真失败，读文件的人会拿告警当现场。
+     * 帧号沿用 `noteFailure()` 的口径：下一条将写的帧；帧外发生时就表示
+     * “下一次帧之前”，表达时间位置，不冒充精确帧号。
+     */
+    public function noteRecoverable(string $message): void
+    {
+        $this->recoverables[] = [
+            'frame' => $this->total + 1,
+            'message' => $message,
+        ];
+        if (count($this->recoverables) > self::RECOVERABLE_CAPACITY) {
+            array_shift($this->recoverables);
+        }
+        ++$this->recoverableTotal;
+        $this->flush();
+    }
+
+    /**
      * 落盘。写不动就静默——这是崩溃现场便签，绝不能因为目录权限让应用
      * 换一种失败方式（更不能在 G2 的中止序列里抛出第二个异常）。
      */
@@ -162,6 +191,12 @@ final class BlackBox
                 ? ['frame' => $this->worstFrame, 'cost' => $this->worstCost]
                 : null,
             'failure' => $this->failure,
+            'recoverables' => [
+                'capacity' => self::RECOVERABLE_CAPACITY,
+                'total' => $this->recoverableTotal,
+                'dropped' => max(0, $this->recoverableTotal - self::RECOVERABLE_CAPACITY),
+                'items' => $this->recoverables,
+            ],
         ];
     }
 }

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift;
 
+use Drift\Core\Pipeline;
 use Drift\Logging\Log;
 use Drift\Logging\PatternFormatter;
 
@@ -94,6 +95,7 @@ final class Errors
         if ($level === self::RECOVERABLE && !self::$debug) {
             // release 降级继续，但必须留痕（否则就是静默）
             self::appendLog('RECOVERABLE', $message);
+            self::noteRecoverable($message);
             return;
         }
 
@@ -230,6 +232,23 @@ final class Errors
             $lines[] = $fmt->format($entry);
         }
         return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * release 可恢复告警写进当前应用的黑匣子面包屑。
+     *
+     * ★ 用 `active()` 不用 `current()`：这里没有树节点可记账，取的是应用归属，
+     *   没有就必须承认没有，不能造一条默认管线连带造出一个黑匣子文件。
+     * ★ 只写面包屑不写 `$failure`：后者是 A60 的致命第一现场，被告警顶掉就等于
+     *   把根因换成后果。落盘 / 记账失败一律自吞，错误出口不能换一种失败方式。
+     */
+    private static function noteRecoverable(string $message): void
+    {
+        $pipeline = Pipeline::active();
+        if ($pipeline === null) {
+            return;
+        }
+        $pipeline->blackBox()->noteRecoverable($message);
     }
 
     private static function appendLog(string $label, string $body): void

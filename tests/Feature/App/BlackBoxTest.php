@@ -63,6 +63,7 @@ final class BlackBoxTest extends TestCase
 
     protected function tearDown(): void
     {
+        Errors::setDebug(true);
         Errors::reset();
         BlackBoxBoomState::$armed = false;
         Pipeline::enter(new Pipeline());
@@ -116,6 +117,28 @@ final class BlackBoxTest extends TestCase
         self::assertSame(1, $boxA->snapshot()['total']);
         self::assertSame(2, $boxB->snapshot()['total']);
         self::assertNotSame($boxA, $boxB);
+    }
+
+    public function testReleaseRecoverableIsFlushedToTheActivePipeline(): void
+    {
+        $file = $this->dir . '/blackbox.json';
+        $box = new BlackBox(8, $file);
+        $pipeline = new Pipeline();
+        $pipeline->setBlackBox($box);
+        Pipeline::enter($pipeline);
+        Errors::setDebug(false);
+        Errors::setLogPath($this->dir . '/Errors.log');
+
+        Errors::report('订阅者异常已隔离 —— A', Errors::RECOVERABLE);
+
+        $snapshot = $box->snapshot();
+        self::assertNull($snapshot['failure']);
+        self::assertSame(1, $snapshot['recoverables']['total']);
+        self::assertSame('订阅者异常已隔离 —— A', $snapshot['recoverables']['items'][0]['message']);
+
+        $raw = file_get_contents($file);
+        self::assertIsString($raw);
+        self::assertSame($snapshot, json_decode($raw, true));
     }
 
     public function testFrameCatchLeavesTheSiteAndStillFailsLoudly(): void
