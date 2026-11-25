@@ -35,6 +35,7 @@ declare(strict_types=1);
  *   php tools/debug-serve.php --page=async-table --rows=6 --resolve --speed=1
  *   php tools/debug-serve.php --page=table --frames=30 --at=10 --click=400,300
  *   php tools/debug-serve.php --page=table --frames=2000 --speed=0
+ *   php tools/debug-serve.php --page=table --frames=1 --allow-eval   # 开 eval（默认关）
  *
  * @internal 手工工具；不进 V2 判据清单
  */
@@ -88,7 +89,7 @@ $id = $discovery->register($script->target, $token, $server->port());
 ));
 
 try {
-    (new Host($server, $token, $drive))->serve(
+    (new Host($server, $token, $drive, $args->bool('allow-eval')))->serve(
         static fn(Script $skeleton): array => Runner::open(
             $skeleton->target,
             $skeleton->width,

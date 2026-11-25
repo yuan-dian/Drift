@@ -117,7 +117,14 @@ final class NanoHygiene implements Rule
                     $hits[] = ['what' => 'yield', 'line' => $line];
                     break;
                 case T_EVAL:
-                    $hits[] = ['what' => 'eval', 'line' => $line];
+                    // PHP 关键字大小写不敏感：`const string EVAL = 'eval'` 与
+                    // `Methods::EVAL` 里的 EVAL 都会被 tokenize 成 T_EVAL，
+                    // 但它们不是 eval() 构造。只有紧跟 `(` 才是真的调用 ——
+                    // 与 classifyString() 对函数名用的是同一个判据。
+                    $next = Tokens::next($tokens, $i + 1);
+                    if ($next !== null && $next[0] === '(') {
+                        $hits[] = ['what' => 'eval', 'line' => $line];
+                    }
                     break;
                 case T_INCLUDE:
                 case T_INCLUDE_ONCE:

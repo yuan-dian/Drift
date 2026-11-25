@@ -50,6 +50,8 @@ final class Commands
             ],
             'serve' => [
                 Opt::float('speed', 0.0, 0.0, null, '两次推进之间等多久（0=尽快）'),
+                // 安全开关，默认关：eval 让宿主执行任意 PHP。与 loopback 是两道独立的门。
+                Opt::flag('allow-eval', '允许 debug eval 在这个宿主上执行表达式（默认关）'),
             ],
             'web' => [
                 Opt::str('from', null, '读证据包'),

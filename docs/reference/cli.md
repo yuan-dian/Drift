@@ -47,6 +47,8 @@
 
 以下命令不进验证计划、不进 CI，需要时手动跑：
 
+`debug eval` 是对**活宿主**求任意 PHP 表达式的兜底出口——固定出口答不了的一次性问题用它。先起一个开了开关的宿主（`drift debug serve --page=table --frames=1 --allow-eval`），再在另一个终端 `drift debug eval '$app->root()->id()'`；作用域注入 `$app` / `$session` / `$node`（`--node=N` 时）。默认关、只绑 loopback、结果不是证据；表达式若改了应用状态，回执会报 `evidenceChanged=true`。详见[调试器路线](../concepts/debugger-roadmap.md)与裁决 A55 / A56。
+
 <!-- drift-cli-reference:start -->
 下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
 
@@ -60,11 +62,12 @@
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` |
 | `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` |
 | `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` |
+| `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |
 | `pick` | `debug-pick.php` | driver | 按视口坐标点选，给命中链与每层路径 | `--x` `--y` `--node` |
 | `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` |
 | `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` |
 | `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
-| `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` |
+| `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` `--allow-eval` |
 | `ctl` | `debug-ctl.php` | protocol | 控制面：让自走的宿主停一下 / 走一步 / 接着跑 | — |
 | `web` | `debug-web.php` | driver | 浏览器视图：同一份证据的第三个消费者（几何画布 + 发现） | `--from` `--attach` `--session` `--port` `--host` `--slow` `--fanout` `--repeat` `--rule` `--without` `--min-severity` |
 | `loop` | `debug-loop.php` | driver | 重开 N 次：证明关掉这一页再打开是等价的 | `--runs` `--out` `--assert` |

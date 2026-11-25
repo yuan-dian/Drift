@@ -65,11 +65,16 @@ final class Host
      *   没给（stdio 宿主 / 被 `--remote` 拉起的从属宿主）时每一帧都得客户端发，
      *   `pause` / `resume` 对这个宿主没有意义 —— 它们回 `not_applicable`，
      *   而 `frame` 反过来在有驱动时被拒。
+     * @param bool $allowEval
+     *   是否开 `eval`（任意代码执行）。**默认关**：要显式 `debug serve --allow-eval`
+     *   才开。这是安全面不是功能开关 —— loopback 只挡住"外人连得上"，挡不住
+     *   "连上的人能不能让宿主执行代码"，两者得分开判。
      */
     public function __construct(
         private readonly Server $server,
         private readonly ?string $accessToken = null,
         private readonly ?Drive $drive = null,
+        private readonly bool $allowEval = false,
     ) {
     }
 
@@ -247,6 +252,31 @@ final class Host
 
         if ($method === Methods::PAUSE || $method === Methods::RESUME) {
             $this->control($channel, $id, $session, $method, $params);
+
+            return;
+        }
+
+        if ($method === Methods::EVAL) {
+            // 默认关，在分派的最前面判：不开时连参数都不解析。任意代码执行
+            // 是安全面，"参数写错了"和"这个宿主根本不允许求值"不是一回事。
+            if (!$this->allowEval) {
+                $this->fail(
+                    $channel,
+                    $id,
+                    ProtocolError::NOT_APPLICABLE,
+                    '这个宿主没开 eval：起 serve 时加 --allow-eval（任意代码执行，只绑 loopback）',
+                );
+
+                return;
+            }
+            // 与下面 match 那条路径同样要兜：eval 里的语法错 / 运行时异常都是
+            // **结果**，不是让进程退出的故障。少了这层 try，一条 `1 +` 就把
+            // 宿主打崩，客户端只看到管道断了，真正的错留在 stderr。
+            try {
+                $this->ok($channel, $id, $this->eval($session, $params));
+            } catch (\Throwable $e) {
+                $this->failFor($channel, $id, $e);
+            }
 
             return;
         }
@@ -544,6 +574,27 @@ final class Host
         }
 
         return $session->query($name, $args);
+    }
+
+    /**
+     * 在活应用上求值。参数与回执都交给 {@see Evaluator}，这里只做协议形状检查。
+     *
+     * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
+     */
+    private function eval(DebugSession $session, array $params): array
+    {
+        $expression = $params['expression'] ?? null;
+        if (!\is_string($expression)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'eval 需要字符串 expression');
+        }
+        $node = $params['node'] ?? 0;
+        if (!\is_int($node) || $node < 0) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'eval 的 node 是非负整数');
+        }
+
+        return (new Evaluator())->evaluate($session, $expression, $node);
     }
 
     // ------------------------------------------------------------------ 信封

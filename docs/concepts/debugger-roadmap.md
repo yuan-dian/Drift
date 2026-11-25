@@ -34,8 +34,8 @@
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
 | 多窗口 / 多 target | 切片：同进程每个窗口一份录制器、互不串证据；`Discovery` 多条目与跨窗口合并视图仍待做 | 成熟 DevTools 多 target | S2 的前置已清，缺"看得见两个窗口"的消费者 |
-| 编译归属（哪些调试代码进产物） | 切片：`ignore` 实测排掉审查面（showcase −7,931 行 / −39%）；缺“产物调试类 ⊆ 白名单”的检查 | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
-| 交互式提问（任意表达式） | 未做：14 个出口全是固定动词，没有 `eval` | Chrome Console、Flutter Inspector eval | dev 壳最大的体验缺口 |
+| 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
+| 交互式提问（任意表达式） | 已落地：`debug eval` 对活宿主求值，默认关（`serve --allow-eval`）、只绑 loopback、不是证据（A55）；离线包拒绝，求值前后比指纹报 `evidenceChanged` | Chrome Console、Flutter Inspector eval | 补上 dev 壳最大的体验缺口；缺多会话上下文切换 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
 | 内存 / 泄漏 | 未做（**计划改口径**）：dev 侧用 `gc_status` + `memory_get_usage` + `WeakMap` 约三十行；AOT 侧不采 | Chrome Memory、Flutter Memory、Tracy | 不需要完整域，只需要一个 dev 封装 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
@@ -47,7 +47,7 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 14 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 15 出口        Web 视图         AI / CI          IDE（未来）
                     \              |               |               /
 L2 投影        Brief / Findings  Inspector     Timeline     Network     Loop     Paint     Memory
                     \              |               |               /
@@ -146,7 +146,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 - **select / highlight**：`pick` 已经是查询面；反向流 `highlight(node)`（`0` = 清除）**已落地**（2026-11-25，A50/A51/A52）—— 它在绘制后叠加，不写结构、不改布局。三处要点：① 注解是**脚本里的一步**（`Step::HIGHLIGHT`），否则"同一份脚本跑两遍"会让"一次高亮了一次没高亮的"拿到同一个驱动指纹；② 叠加层**自带失效判据**（`paintRequested` + `continueFrame` + `setDebugHighlight()` 排帧），否则 `Frame` 会整帧跳过而不显示；③ 判据是**双向**的 —— `Digest::causal()`（只含 `rebuilt` / `causes`）逐帧不变 **且** 像素必变，另加"环画在这个节点的边框上、盒心不是描边色"与"稳态不再重画"。原始表述"`Digest::ofFrame()` 前后逐值相同"会恒红：它含 `skip`，而高亮正是要求这一帧必须画。**仍未做的**：`pick` 接到活窗口点击（要 live attach）、面板 / Web 侧的悬停即高亮（连续流要节流合并，见 A50 的失效条件）。
 - **多窗口**（2026-11-25 已落地，A53）：**录制器属于应用**，进程级单例改掉 —— 帧内"当前录制器"由 `Recorder::enter()/leave()` 的栈回答（`null` 也压一层，否则第二个窗口的帧会落到别人的录制器上）。判据是"交错跑 == 单独跑"：两个窗口的帧键、节点表、两份指纹逐一相同。**仍未做**：`Discovery` 的数组条目真正生效、跨窗口的合并视图（那属于投影）。
 
-这三件事都触碰 A33 的旧表述（六个方法、不做 live attach）。实施前先重开 A33，把“dev 形态做 / 发布态不做”和“九个方法按角色分组”写清楚。
+这三件事与 A33 相关：A33 已在 P0 收口——九方法按角色分组、live attach 只做 dev 形态、发布态不做，见裁决索引。本节的高亮与多窗口都已按此落地；剩 live attach 本身。
 
 **判据**：attach 到运行中的窗口后能 pause / step / query；highlight 不改变**结构因果**指纹（`Digest::causal()`）且像素必变；两个窗口的节点 id、帧号、会话令牌不串。
 
@@ -236,8 +236,8 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 协议版本、能力列表、错误码表；老客户端遇到未知能力显式报错 | P3 | M |
-| **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/debug-scope-check.php` 守“编译进产物的调试侧文件集合 **恰好等于** 17 项写面白名单”，多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
-| **P8** | `debug eval` 出口 | dev 壳执行任意 PHP 表达式并回值；只绑 loopback、默认关；**不是证据、不进包**（A55） | A55 | S |
+| **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 17 项写面白名单”，多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
+| **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
 | **P8** | 属性域降到 L2 | `__debugInfo` + `Closure::bind` dump；证据包去掉 `props` 段并升版本；补 `RecordOptions::props` 开关；判据：dump 含基类 `mods`、不含 `sealed` 与回指循环 | A55 | M |
 | **P8** | dev 转交三件 | 内存（`gc_status` + `memory_get_usage` + `WeakMap`）、报文旁路（`stream_wrapper_register`，`AsyncHttp` 不改）、调用链（`debug_backtrace` + `ReflectionMethod::getFileName`） | A55 | M |
 
@@ -274,12 +274,12 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 ## 待裁决
 
-以下事项会改变现行裁决或兼容面，实施前需要单独拍板：
+**当前没有待裁决项**。以下事项曾挂在这里，现已收口，保留结论以免下一轮重新翻案：
 
-1. **A36 的“规则可关”**：当前只有阈值可配，没有规则开关；是补开关，还是把“可关”改成“可配阈值”。
-2. **绘制域的指纹**：`PaintRecord` 进 facts 指纹，还是单列 `digest(Paint)`；取决于 layer cache 是否跨机器确定。
+1. ~~A36 的“规则可关”~~ → P5 落地 `--rule` / `--without` / `--min-severity`，“可关”用实现兑现，不改裁决。
+2. ~~绘制域的指纹~~ → §4 已裁决：绘制事实是预算相关观测量，不进 facts 指纹、也不单列 `digest(Paint)`；开不开 `paint` 域不改变应用行为，进指纹等于让“同一应用、两份预算”算出不同指纹。
 
-A33（九方法 / dev attach）、S0 状态与报文默认关闭已分别在 P0 / P1 收口，多窗口模型（每个窗口一份录制器）已在 A53 定下，都不再列为待裁决。
+A33（九方法 / dev attach）、S0 状态与报文默认关闭分别在 P0 / P1 收口，多窗口模型（每个窗口一份录制器）在 A53 定下，编译归属在 A54 定下、内省边界在 A55 定下。新增裁决请先写进[裁决索引](../decisions/README.md)，本页只引用。
 
 ## 相关
 

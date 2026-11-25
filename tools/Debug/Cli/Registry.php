@@ -31,6 +31,7 @@ final class Registry
             ['network', 'debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）', true],
             ['node', 'debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络', true],
             ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
+            ['eval', 'debug-eval.php', 'dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据）', false],
             ['pick', 'debug-pick.php', '按视口坐标点选，给命中链与每层路径', true],
             ['props', 'debug-props.php', '按节点读 Widget / State 配置', true],
             ['highlight', 'debug-highlight.php', '让一个节点在屏上被描边，并回答"真的上屏了没"', true],

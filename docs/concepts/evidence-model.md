@@ -448,7 +448,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 |---|---|---|
 | 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `tools/Debug/Reopen.php`、`tools/Debug/View/LoopReport.php` |
 | 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `tools/Debug/Cli/OptionSet.php`、`tools/Debug/Cli/Parsed.php` |
-| 出口（B7） | 14 个出口只在 Registry 声明；分发与两级 help 都从它派生 | `tools/Debug/Cli/Registry.php`、`bin/drift` |
+| 出口（B7） | 15 个出口只在 Registry 声明；分发与两级 help 都从它派生（`eval` 是协议型出口，不进 schema） | `tools/Debug/Cli/Registry.php`、`bin/drift` |
 | 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`tools/Debug/Source.php` |
 | 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `tools/Debug/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
 
@@ -531,7 +531,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | 一个录制器服务多个窗口 | **已收口** | A53：录制器属于应用，帧内由栈回答 |
 | 实时 attach 一个正在跑的真窗口 | **未定** | dev 形态做、发布态不做；阻塞在平台唤醒，见路线图 |
 
-三层的界不是靠记性维持的：`ignore` 是 list 型项、合并时**整体替换**（`ProjectYamlLoader::mergeConfig` 的 `array_is_list` 分支），任何应用一重写就把基础排除整张顶掉；排父接口必须连子接口一起排（`Session extends SessionQueries, SessionDriver`）；排完还要查孤儿（`Json` 排掉两个消费者之后只剩自己）；而 tpc 对不存在的 ignore 条目静默跳过，拼错路径零报错。所以 A54 把“归属”写进裁决并落实到两个地方：**唯一声明在 `build/base.yml`**（各应用不重写），**`php tools/debug-scope-check.php` 守等集**——每个 AOT 应用里编译进产物的调试侧文件集合恰好等于 17 项写面白名单，多一项报审查面泄漏、少一项报热路径被排、拼错报条目不存在；`--selftest` 四组变异全咬红，8 个应用全绿。
+三层的界不是靠记性维持的：`ignore` 是 list 型项、合并时**整体替换**（`ProjectYamlLoader::mergeConfig` 的 `array_is_list` 分支），任何应用一重写就把基础排除整张顶掉；排父接口必须连子接口一起排（`Session extends SessionQueries, SessionDriver`）；排完还要查孤儿（`Json` 排掉两个消费者之后只剩自己）；而 tpc 对不存在的 ignore 条目静默跳过，拼错路径零报错。所以 A54 把“归属”写进裁决并落实到两个地方：**唯一声明在 `build/base.yml`**（各应用不重写），**`php tools/check-debug-scope.php` 守等集**——每个 AOT 应用里编译进产物的调试侧文件集合恰好等于 17 项写面白名单，多一项报审查面泄漏、少一项报热路径被排、拼错报条目不存在；`--selftest` 四组变异全咬红，8 个应用全绿。
 
 ## 与既有裁决的关系
 

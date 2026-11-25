@@ -231,6 +231,28 @@ final class RemoteSession implements Session
         return $result;
     }
 
+    /**
+     * 在活应用上求一个 PHP 表达式（dev 壳内省，不是证据）。
+     *
+     * 与 {@see self::query()} 分开：那个能对离线包复算、逐值相同；这个必须
+     * 连着活宿主，宿主没开 `--allow-eval` 时回 `not_applicable`。
+     *
+     * @param int $node 可选节点 id；给了就在作用域里注入 `$node`（`0` = 不注入）
+     *
+     * @return array<string, mixed>
+     *
+     * @throws ProtocolError `not_applicable`（宿主没开 eval）/ `call_failed`（表达式抛错）
+     */
+    public function evaluate(string $expression, int $node = 0): array
+    {
+        $params = ['expression' => $expression];
+        if ($node > 0) {
+            $params['node'] = $node;
+        }
+
+        return $this->callObject(Methods::EVAL, $params);
+    }
+
     public function lastFrameId(): int
     {
         return $this->lastFrameId;

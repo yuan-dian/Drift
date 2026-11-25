@@ -19,8 +19,8 @@ declare(strict_types=1);
  *   `- value` 与 `- path: value` + 缩进的 `if:`）。
  *
  * 用法：
- *   php tools/debug-scope-check.php              # 对账全部应用，exit 0/1
- *   php tools/debug-scope-check.php --selftest   # 守门器自证（合成用例）
+ *   php tools/check-debug-scope.php              # 对账全部应用，exit 0/1
+ *   php tools/check-debug-scope.php --selftest   # 守门器自证（合成用例）
  */
 
 /** 允许进 AOT 产物的调试侧文件（L1 写面：热路径 tap + 记录类型）。 */
@@ -272,8 +272,8 @@ function selftest(string $root): int
     }
 
     echo $failures === 0
-        ? "[debug-scope-check --selftest] ✓ 全过\n"
-        : "[debug-scope-check --selftest] ✗ {$failures} 条红\n";
+        ? "[check-debug-scope --selftest] ✓ 全过\n"
+        : "[check-debug-scope --selftest] ✗ {$failures} 条红\n";
     return $failures === 0 ? 0 : 1;
 }
 
@@ -288,7 +288,7 @@ foreach (glob($root . '/apps/*/project.yml') ?: [] as $project) {
 }
 sort($apps);
 
-echo "[debug-scope-check] AOT 调试面 = 写面白名单（" . count(writeFace()) . " 项）\n";
+echo "[check-debug-scope] AOT 调试面 = 写面白名单（" . count(writeFace()) . " 项）\n";
 $failed = 0;
 foreach ($apps as $app) {
     $errors = checkApp($root, $app);
@@ -303,6 +303,6 @@ foreach ($apps as $app) {
     }
 }
 echo $failed === 0
-    ? "[debug-scope-check] ✓ " . count($apps) . " 个应用全绿\n"
-    : "[debug-scope-check] ✗ {$failed} 个应用红\n";
+    ? "[check-debug-scope] ✓ " . count($apps) . " 个应用全绿\n"
+    : "[check-debug-scope] ✗ {$failed} 个应用红\n";
 exit($failed === 0 ? 0 : 1);

@@ -80,8 +80,8 @@ jobs:
       - name: Debug scope gate
         shell: bash
         run: |
-          php tools/debug-scope-check.php --selftest
-          php tools/debug-scope-check.php
+          php tools/check-debug-scope.php --selftest
+          php tools/check-debug-scope.php
       # ★ PHPUnit 二进制不入库（`/vendor/` 被 .gitignore 排除），CI 必须自己装。
       #   不装 ⇒ verify 的 unit / feature step 进程起不来（exitCode 127）、
       #   顶层 ok=false，绝不会伪装成"通过"（2026-11-12 查出的假绿）。
