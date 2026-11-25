@@ -61,7 +61,6 @@ final class Evidence
     public const string D_PAINT = 'paint';
     public const string D_NETWORK = 'network';
     public const string D_BODIES = 'bodies';
-    public const string D_PROPS = 'props';
     public const string D_SCRIPT = 'script';
 
     /**
@@ -83,7 +82,6 @@ final class Evidence
         self::D_GEOMETRY,
         self::D_PAINT,
         self::D_NETWORK,
-        self::D_PROPS,
         self::D_SCRIPT,
     ];
 
@@ -97,7 +95,6 @@ final class Evidence
         self::D_PAINT,
         self::D_NETWORK,
         self::D_BODIES,
-        self::D_PROPS,
         self::D_SCRIPT,
     ];
 
@@ -110,7 +107,6 @@ final class Evidence
     private const string K_PAINT = 'paint';
     private const string K_NETWORK = 'network';
     private const string K_BODY = 'body';
-    private const string K_PROP = 'prop';
     private const string K_SCRIPT = 'script';
 
     /**
@@ -136,7 +132,6 @@ final class Evidence
         self::K_PAINT => ['domain' => self::D_PAINT, 'keys' => ['frame', 'painted', 'misses', 'paintedTotal', 'hits', 'truncated']],
         self::K_NETWORK => ['domain' => self::D_NETWORK, 'keys' => ['request', 'method', 'url']],
         self::K_BODY => ['domain' => self::D_BODIES, 'keys' => ['request']],
-        self::K_PROP => ['domain' => self::D_PROPS, 'keys' => ['node', 'widget']],
         self::K_SCRIPT => ['domain' => self::D_SCRIPT, 'keys' => ['version', 'target', 'viewport']],
     ];
 
@@ -241,14 +236,6 @@ final class Evidence
                 }
             }
 
-            if (\in_array(self::D_PROPS, $domains, true)) {
-                foreach ($recorder->propNodes() as $node) {
-                    $snapshot = $recorder->propAt($node);
-                    if ($snapshot !== null) {
-                        self::put($handle, ['kind' => self::K_PROP] + $snapshot->encode());
-                    }
-                }
-            }
         } finally {
             \fclose($handle);
         }
@@ -297,8 +284,6 @@ final class Evidence
         $network = [];
         /** @var array<int, NetworkBodyRecord> $bodies */
         $bodies = [];
-        /** @var array<int, PropSnapshot> $props */
-        $props = [];
         /** @var array<int, true> $boxless */
         $boxless = [];
         /** @var array<int, int> $evicted */
@@ -416,11 +401,6 @@ final class Evidence
                     $bodyRow = NetworkBodyRecord::decode($raw);
                     $bodies[$bodyRow->requestId] = $bodyRow;
                     break;
-
-                case self::K_PROP:
-                    $propRow = PropSnapshot::decode($raw);
-                    $props[$propRow->node] = $propRow;
-                    break;
             }
 
             $seen[$kind] = ($seen[$kind] ?? 0) + 1;
@@ -455,7 +435,6 @@ final class Evidence
             paint: $paint,
             network: $network,
             bodies: $bodies,
-            props: $props,
             boxless: $boxless,
             evicted: $evicted,
             script: $script,
@@ -548,7 +527,6 @@ final class Evidence
             self::K_PAINT => [self::D_PAINT, \count($recorder->paintFrames())],
             self::K_NETWORK => [self::D_NETWORK, \count($recorder->networkRows())],
             self::K_BODY => [self::D_BODIES, \count($recorder->bodyRequests())],
-            self::K_PROP => [self::D_PROPS, \count($recorder->propNodes())],
         ];
         foreach ($plan as $kind => [$domain, $count]) {
             if (isset($open[$domain])) {

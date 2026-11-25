@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Debug;
 
 use Drift\App\DebugSession;
+use Drift\Debug\Session\ObjectDump;
 use Drift\Widget\Element;
 
 /**
@@ -33,9 +34,11 @@ use Drift\Widget\Element;
  *
  * `eval()` 可能返回对象、闭包、资源，它们编不成 JSON，宿主 `ok()` 只能回
  * 一条 `call_failed`，用户看不到值。这里按 PHP 原语把结果压成 JSON-safe：
- * 标量原样，数组递归，对象走 `__debugInfo()`（有就用）/ 公开属性，其余回
- * 类型占位。这是 A55 说的"交给 PHP 原语"——不自己造一套反射 dump。
- * 深度与宽度有上限，防止一个 `return $app;` 把整棵活树拉进管道。
+ * 标量原样，数组递归，对象优先走它自带的 `__debugInfo()`（类对自己的权威
+ * 陈述），没有则用 {@see ObjectDump} 反射逐层读 —— 与 `debug props` 出口共用
+ * 同一套编码，两个入口看同一对象必得同一结论。这是 A55 说的"交给 PHP 原语"，
+ * 不自建第二套反射 dump。深度与宽度有上限，防止一个 `return $app;` 把整棵
+ * 活树拉进管道。
  *
  * @internal 手工工具；不进 V2 判据清单
  */
@@ -123,8 +126,15 @@ final class Evaluator
     /** 把任意 PHP 值压成 JSON-safe 的形状。 */
     private static function normalise(mixed $value, int $depth, bool &$truncated): mixed
     {
-        if ($value === null || \is_scalar($value)) {
+        if ($value === null || \is_bool($value) || \is_int($value) || \is_string($value)) {
             return $value;
+        }
+        if (\is_float($value)) {
+            // NAN / INF 不是合法 JSON（Modifier::$width 默认就是 NAN）。
+            // 反射展开基类字段后必然遇到，不挡就会让整个回值 call_failed。
+            return \is_finite($value)
+                ? $value
+                : (\is_nan($value) ? 'NAN' : ($value > 0 ? 'INF' : '-INF'));
         }
         if ($depth >= self::MAX_DEPTH) {
             $truncated = true;
@@ -147,9 +157,10 @@ final class Evaluator
         }
 
         if (\is_object($value)) {
-            // __debugInfo 是 PHP 自己的协议：类怎么呈现自己由类决定，
-            // 我们不替它列字段。没有就退回公开属性 —— 与 var_dump 同源。
-            $fields = \method_exists($value, '__debugInfo') ? $value->__debugInfo() : \get_object_vars($value);
+            // __debugInfo 是 PHP 自己的协议：类怎么呈现自己由类决定，我们不替它列字段。
+            // 没有则用 ObjectDump 逐层反射（含 private / 基类字段），与 debug props 看到
+            // 的字段集合同源 —— 上一版用 get_object_vars 只看得到公开属性，mods 全丢。
+            $fields = \method_exists($value, '__debugInfo') ? $value->__debugInfo() : ObjectDump::rawFields($value);
             if (!\is_array($fields)) {
                 // __debugInfo() 约定返回数组；不守约定的类只回类型名，不猜它的内部结构。
                 return ['__class' => $value::class];

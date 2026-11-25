@@ -114,15 +114,9 @@ final class PropsTest extends SmokeTestCase
         $resource = $this->field($answer, 'resource')['value'] ?? [];
         check('资源带 resource tag 与类型', ($resource['kind'] ?? null) === 'resource' && ($resource['type'] ?? null) === 'stream', \json_encode($resource));
 
-        // 顶层 cycle 是对象本身；第二次遇到同一个对象才该变成 ref —— 那才是
-        // "认出循环"的证据。断言第二层，不是第一层。
-        $cycleObject = $this->field($answer, 'cycle')['value'] ?? [];
-        $cycle = null;
-        foreach ($cycleObject['props'] ?? [] as $property) {
-            if ($property['name'] === 'cycle') {
-                $cycle = $property['value'];
-            }
-        }
+        // 顶层 cycle 指回对象自己。ObjectDump 把根对象也放进 seen，所以第一层
+        // 就是 ref —— 比"展开第二层才认出"更早截断，循环绝无递归风险。
+        $cycle = $this->field($answer, 'cycle')['value'] ?? [];
         check('循环引用给 ref 而不是递归', ($cycle['kind'] ?? null) === 'ref', \json_encode($cycle));
         check('循环引用计数被报出', ($answer['cycles'] ?? 0) >= 1, 'cycles=' . ($answer['cycles'] ?? 0));
 
@@ -217,31 +211,31 @@ final class PropsTest extends SmokeTestCase
         $this->flushChecks();
     }
 
-    public function testSnapshotWindowReplacesInsteadOfAppending(): void
+    public function testPropsIsIntrospectionNotEvidence(): void
     {
         [$app, $session] = $this->open(new SwapWidget());
         $node = $app->root()?->debugId ?? 0;
 
-        $session->query('props', ['node' => $node]);
-        $session->query('props', ['node' => $node]);
-        $window = $session->query('props', ['node' => $node])['window'] ?? [];
+        $first = $session->query('props', ['node' => $node]);
+        $second = $session->query('props', ['node' => $node]);
 
-        check('同一节点重读窗口只留一条', ($window['nodes'] ?? -1) === 1, \json_encode($window));
-        check('窗口容量自报', ($window['capacity'] ?? 0) === 200);
-        check('快照标记 stored', ($session->query('props', ['node' => $node])['stored'] ?? false) === true);
+        check('属性查询不写 stored 标记', !\array_key_exists('stored', $first), \json_encode(\array_keys($first)));
+        check('属性查询不报快照窗口', !\array_key_exists('window', $first), \json_encode(\array_keys($first)));
+        check('重读仍可读到（每次现读活树）', ($second['found'] ?? false) === true);
+        check('每次自报读在哪一帧', ($first['liveFrame'] ?? -1) === ($second['liveFrame'] ?? -2));
         $this->flushChecks();
     }
 
-    public function testExplicitProtocolOverridesReflection(): void
+    public function testReflectionReadsEveryDeclaredLayer(): void
     {
-        [$app, $session] = $this->open(new DescribedWidget());
+        [$app, $session] = $this->open(new StatefulProbe());
         $node = $app->root()?->debugId ?? 0;
         $answer = $session->query('props', ['node' => $node]);
 
-        $names = \array_column($answer['fields'] ?? [], 'name');
-        check('显式协议给的值在', \in_array('shown', $names, true), \json_encode($names));
-        check('显式协议整组替代反射', !\in_array('secretInternal', $names, true), \json_encode($names));
-        check('协议值仍走统一编码', ($this->field($answer, 'shown')['value']['value'] ?? null) === 42);
+        $owners = \array_column($answer['fields'] ?? [], 'owner');
+        check('Widget 基类字段归 Widget', \in_array('Widget', $owners, true), \json_encode(\array_unique($owners)));
+        check('State 子类字段归 ProbedState', \in_array('ProbedState', $owners, true), \json_encode(\array_unique($owners)));
+        check('不引入 debugProps 第二套协议', !\in_array('debugProps', $owners, true), \json_encode(\array_unique($owners)));
         $this->flushChecks();
     }
 }
@@ -355,22 +349,5 @@ final class SwapState extends State
         $this->setState(function (): void {
             $this->alt = true;
         });
-    }
-}
-
-/** @internal */
-final class DescribedWidget extends StatelessWidget
-{
-    public int $secretInternal = 99;
-
-    /** @return array<string, int> */
-    public function debugProps(): array
-    {
-        return ['shown' => 42];
-    }
-
-    public function build(BuildContext $context): Widget
-    {
-        return Text::make('x');
     }
 }

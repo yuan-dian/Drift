@@ -36,7 +36,6 @@ function writeFace(): array
         'src/Debug/Session/NetworkBodyRecord.php',
         'src/Debug/Session/NetworkRecord.php',
         'src/Debug/Session/PaintRecord.php',
-        'src/Debug/Session/PropSnapshot.php',
         'src/Debug/Session/RecordOptions.php',
         'src/Debug/Session/Recorder.php',
         'src/Debug/Session/Redactor.php',
@@ -221,7 +220,7 @@ function selftest(string $root): int
     };
 
     $actual = checkApp($root, 'showcase');
-    $check('当前 showcase 绿（写面 17 项、审查面 12 项）', $actual === []);
+    $check('当前 showcase 绿（写面 ' . \count(writeFace()) . ' 项）', $actual === []);
 
     // 应用侧刻意**显式重写** ignore：这样既能验「继承 base」的常规路径，
     // 也能在合成用例里改单条并重跑（改 base 会污染真实工程）。

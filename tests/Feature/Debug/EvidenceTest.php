@@ -13,7 +13,6 @@ use Drift\Debug\Session\FrameRecord;
 use Drift\Debug\Session\GeometryRecord;
 use Drift\Debug\Session\NetworkBodyRecord;
 use Drift\Debug\Session\NetworkRecord;
-use Drift\Debug\Session\PropSnapshot;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\RecordOptions;
@@ -156,37 +155,9 @@ final class EvidenceTest extends SmokeTestCase
         check('报文往返（原样，不按查询预算再截）', $bodyBack->responseBody === $longBody);
         check('报文 meta 往返（redact 位也在）', $bodyBack->response === $body->response);
 
-        // ★ 唯一真正依赖 `JSON_PRESERVE_ZERO_FRACTION` 的地方：`fields` 是"带 tag 的
-        //   自由结构"，decode 只能原样保留、没法逐字段强转。所以 `24.0` 一旦编成 `24`，
-        //   往返后就变成 int —— 而"值是 24.0 的浮点"与"值是 24 的整数"在面板上是
-        //   两种显示，在配置比对里是两回事。
-        //
-        //   其它记录的 float 字段都有 `(float)` 兜底，所以它们**测不出**这个标志的作用。
-        $snapshot = new PropSnapshot(
-            7,
-            2,
-            'Table',
-            'StatefulElement',
-            'TableState',
-            [
-                ['name' => 'rows', 'owner' => 'TableState', 'value' => ['t' => 'float', 'v' => 24.0]],
-                ['name' => 'ratio', 'owner' => 'TableState', 'value' => ['t' => 'float', 'v' => 0.5]],
-                ['name' => 'tags', 'owner' => 'TableState', 'value' => ['t' => 'array', 'n' => 3]],
-            ],
-            0,
-            0,
-            0,
-            2,
-            true,
-            0.75,
-        );
-        $snapshotBack = PropSnapshot::decode(self::throughJson($snapshot->encode()));
-        check('属性快照往返', $snapshotBack->encode() === $snapshot->encode());
-        check(
-            '自由结构里的浮点没被编成整数',
-            $snapshotBack->fields[0]['value']['v'] === 24.0,
-            \get_debug_type($snapshotBack->fields[0]['value']['v']),
-        );
+        // 属性快照曾在这里测"带 tag 自由结构里的浮点往返"；它降为即时内省后
+        // 不进证据包（A55），这条不再适用。JSON_PRESERVE_ZERO_FRACTION 仍由
+        // 帧记录 / 几何 / 网络 / 协议层的判据覆盖。
     }
 
     /**
@@ -409,6 +380,36 @@ final class EvidenceTest extends SmokeTestCase
         check('耗时与落地帧不算变化', $digestOf($record('https://api.example.com/items', 200, 99.0, 40)) === $plain);
         check('status 变了要红', $digestOf($record('https://api.example.com/items', 500, 12.0, 4)) !== $plain);
         check('host 变了要红', $digestOf($record('https://other.example.com/items', 200, 12.0, 4)) !== $plain);
+    }
+
+    /**
+     * 属性不是证据（A55）：既不在默认包，也不在 ALL_DOMAINS —— 没有"显式要"的口子。
+     *
+     * 报文默认排除但可以显式要，因为它是发出即固定的历史事实；属性读的是当下活树，
+     * 导出即 stale，任何形式的进包都是在声称一件无法复算的事。这条判据把
+     * "降到 L2"钉在格式层，而不只是一次性删代码。
+     */
+    public function testPropsNeverEnterEvidencePackage(): void
+    {
+        $app = $this->boot();
+        $recorder = Recorder::install();
+        $path = self::tempFile('.evidence');
+
+        try {
+            $app->frame(0.0, $this->constraints());
+            $default = Evidence::write($recorder, $path);
+            $all = Evidence::write($recorder, $path, Evidence::ALL_DOMAINS);
+
+            check('默认包不声明属性域', !\in_array('props', $default['domains'], true), \json_encode($default['domains']));
+            check('ALL_DOMAINS 也不含属性域', !\in_array('props', $all['domains'], true), \json_encode($all['domains']));
+            check('没有 prop 记录类型', !\array_key_exists('prop', $default['counts']) && !\array_key_exists('prop', $all['counts']), \json_encode($default['counts']));
+            check('包里没有 prop 行', !\str_contains((string) \file_get_contents($path), '"kind":"prop"'));
+        } finally {
+            Recorder::uninstall();
+            @\unlink($path);
+        }
+
+        $this->flushChecks();
     }
 
     /** 默认包不带报文：它体积最大且隐私最敏感，要显式要。 */

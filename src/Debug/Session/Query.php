@@ -15,10 +15,9 @@ use Drift\Widget\StatefulElement;
  * 纯函数：只读 {@see Recorder} 的不可变帧记录，不改状态、不碰元素树。
  * 所以可以重试、可以缓存、可以在任意线程问卷（记录本身在写时拷贝）。
  *
- * ★ 两个例外都只读当前活树（每帧采样必掉帧）：{@see self::props()} 把读数存进
- *   Recorder 的独立快照窗口；{@see self::pick()} 为命中的活树节点发号，使它们能被
- *   `props(node)` / `why(node)` 继续追问。查询本身有副作用，其余查询不改状态，
- *   这条例外不外溢。
+ * ★ 活树例外：{@see self::pick()} 为命中的活树节点发号，使它能被 `why(node)`
+ *   继续追问。`props()` 曾经也是例外（把字段读数存进快照窗口、写进证据包），
+ *   按 A55 已降为纯内省：只读当场活树、不写任何记录 —— 属性复算不了，不是证据。
  *
  * ## 两个聚合的口径不同，不要合并
  *
@@ -38,11 +37,8 @@ final class Query
     /** `shapeCache` 属于哪一代；与 `Recorder::generation()` 不一致就整体丢弃。 */
     private int $cacheGeneration = -1;
 
-    private readonly PropReader $reader;
-
     public function __construct(private readonly Recorder $recorder)
     {
-        $this->reader = new PropReader();
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
@@ -52,29 +48,27 @@ final class Query
     }
 
     /**
-     * 按节点读 Widget / State 配置（dev 反射，活树按需快照）。
+     * 按节点读 Widget / State 配置（dev 反射，纯内省，不是证据）。
      *
      * ★ 帧号不是参数：属性读的是**现在**的活树，给一个历史帧号却返回当前值
      *   就是"伪称对齐"。返回值里的 `liveFrame` 明说这是哪一帧读到的。
+     *
+     * ★ 不写任何记录（A55）：这一帧过去后对象已变，把字段写进证据包等于声称
+     *   一件无法复算的事。字段用 {@see ObjectDump} 的反射原语现读，与 `eval`
+     *   的 `$node` 同源 —— 同一个对象在两个入口看到同一份字段。
      *
      * @param list<Element> $roots 全部树根（主树 + 浮层），由派发层给 —— Debug 层不依赖 App
      * @return array<string, mixed>
      */
     public function props(int $node, array $roots, int $maxDepth = 3, int $maxFields = 120): array
     {
-        if (!$this->reader->available()) {
-            return [
-                'found' => false,
-                'node' => $node,
-                'reason' => 'reflection-unavailable',
-                'window' => $this->recorder->propsCoverage(),
-            ];
+        if (!ObjectDump::available()) {
+            return ['found' => false, 'node' => $node, 'reason' => 'reflection-unavailable'];
         }
 
         $element = $this->findElement($roots, $node);
         if ($element === null) {
-            // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，
-            // 后者是活树里已经没有它（快照窗口里仍可能有当时的读数）。
+            // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，后者是活树里已经没有它。
             $status = $this->recorder->nodeStatus($node);
             $known = $this->recorder->nodeIndex()[$node] ?? null;
 
@@ -87,26 +81,33 @@ final class Query
                     default => 'unknown-node',
                 },
                 'type' => $known['c'] ?? null,
-                'window' => $this->recorder->propsCoverage(),
             ];
         }
 
-        $frame = $this->recorder->lastFrameId();
-        $snapshot = $this->reader->read(
-            $element,
-            $node,
-            $frame,
-            $maxDepth,
-            $maxFields,
-            $this->recorder->redactionEnabled(),
-        );
-        $this->recorder->rememberProps($snapshot);
+        $t0 = \hrtime(true);
+        $widget = $element->widget();
+        $state = $element instanceof StatefulElement ? $element->state() : null;
+        $redact = $this->recorder->redactionEnabled();
+
+        $w = ObjectDump::fields($widget, $maxDepth, $maxFields, $redact);
+        $s = $state === null
+            ? ['fields' => [], 'omitted' => 0, 'cut' => 0, 'cycles' => 0, 'redacted' => 0, 'redact' => $redact]
+            : ObjectDump::fields($state, $maxDepth, $maxFields, $redact);
 
         return [
             'found' => true,
-            'stored' => true,
-            'liveFrame' => $frame,
-        ] + $snapshot->toArray() + ['window' => $this->recorder->propsCoverage()];
+            'liveFrame' => $this->recorder->lastFrameId(),
+            'widget' => self::shortClass($widget::class),
+            'element' => self::shortClass($element::class),
+            'state' => $state === null ? null : self::shortClass($state::class),
+            'fields' => \array_merge($w['fields'], $s['fields']),
+            'omitted' => $w['omitted'] + $s['omitted'],
+            'cut' => $w['cut'] + $s['cut'],
+            'cycles' => $w['cycles'] + $s['cycles'],
+            'redacted' => $w['redacted'] + $s['redacted'],
+            'redact' => $redact,
+            'costMs' => (\hrtime(true) - $t0) / 1e6,
+        ];
     }
 
     /**

@@ -9,15 +9,18 @@ namespace Drift\Dev\Debug\View;
  * ## 它不采集、不反射、不判断
  *
  * 输入只有查询面的返回；编码、截断、能力降级都在查询层做完。视图若自己
- * 再"美化"一个值，"同一份证据不同消费者结论一致"就断了。
+ * 再"美化"一个值，两个消费者看到同一对象就会得出不同结论。
  *
  * ## 两条纪律
  *
  * 1. **纯函数**：同样的 answer 必须给出逐字节相同的行；不读时钟、不读环境。
- * 2. **自报裁剪**：`omitted` / `cut` / `cycles` / 窗口必须写出来。读者把
- *    "我没看到"当成"不存在"，而一列文本看不出这一点。
+ * 2. **自报裁剪**：`omitted` / `cut` / `cycles` 必须写出来。读者把"我没看到"
+ *    当成"不存在"，而一列文本看不出这一点。
  *
- * @internal 证据层视图；`tools/debug-props.php` 是它唯一的调用方
+ * ★ 属性是 dev 即时内省，不是证据（A55）：没有快照窗口、不写包。头部明说
+ *   这是"第 N 帧现读"的值，避免被当成可回放的历史事实。
+ *
+ * @internal 内省视图；`tools/debug-props.php` 是它唯一的调用方
  */
 final class Props
 {
@@ -34,29 +37,24 @@ final class Props
     public static function lines(array $answer): array
     {
         $node = (int) ($answer['node'] ?? 0);
-        $window = $answer['window'] ?? [];
         if (($answer['found'] ?? false) !== true) {
             return [
                 \sprintf(
-                    '节点 #%d 的属性查不到：%s（快照窗口 %d..%d / 容量 %d）',
+                    '节点 #%d 的属性查不到：%s',
                     $node,
                     (string) ($answer['reason'] ?? 'unknown'),
-                    (int) ($window['from'] ?? 0),
-                    (int) ($window['to'] ?? 0),
-                    (int) ($window['capacity'] ?? 0),
                 ),
             ];
         }
 
         $lines = [
             \sprintf(
-                '节点 #%d  %s（%s）%s · 快照于第 %d 帧%s',
+                '节点 #%d  %s（%s）%s · 第 %d 帧现读（即时内省，不进证据包）',
                 $node,
                 (string) ($answer['widget'] ?? '?'),
                 (string) ($answer['element'] ?? '?'),
                 ($answer['state'] ?? null) === null ? '' : ' / State=' . $answer['state'],
                 (int) ($answer['liveFrame'] ?? 0),
-                ($answer['stored'] ?? false) === true ? ' · 已入窗口' : ' · 未入窗口',
             ),
         ];
 
@@ -87,14 +85,7 @@ final class Props
         );
         $lines[] = ($answer['redact'] ?? true) === true
             ? \sprintf('凭证脱敏 %d 处', (int) ($answer['redacted'] ?? 0))
-            : '未脱敏（含明文，不要直接导出证据包）';
-        $lines[] = \sprintf(
-            '快照窗口 %d..%d / 容量 %d（已存 %d 个节点）',
-            (int) ($window['from'] ?? 0),
-            (int) ($window['to'] ?? 0),
-            (int) ($window['capacity'] ?? 0),
-            (int) ($window['nodes'] ?? 0),
-        );
+            : '未脱敏（含明文）';
 
         return $lines;
     }

@@ -216,11 +216,10 @@ final class FindTest extends SmokeTestCase
             $set('boxless', []);
             $set('geometryDigest', []);
             $set('frames', []);
-            // ★ 几何 / 属性 / 网络落地都算"引用"，会保住节点。真实场景里它们随窗口
+            // ★ 几何 / 网络落地都算"引用"，会保住节点。真实场景里它们随窗口
             //   一起滚掉；夹具不滚窗口，就得显式清掉 —— 否则"回收"根本没发生，
-            //   而判据会以为自己验过了。
+            //   而判据会以为自己验过了。属性已降为即时内省（A55），不进 Recorder。
             $set('geometry', []);
-            $set('props', []);
             $set('network', []);
             $set('frameId', 200);
 

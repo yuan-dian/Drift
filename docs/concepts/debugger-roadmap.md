@@ -26,7 +26,7 @@
 | 重放与指纹 | 已落地：脚本驱动 + 三指纹 + 重开 N 次 | Chrome Recorder、Redux 时间旅行、Tracy | **领先**：重放是重新执行 |
 | 证据包 | 已落地：NDJSON + manifest + 版本 + 逐域 counts + 导入校验 | Chrome trace、Perfetto | **领先**：语义化、可复算 |
 | 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
-| 属性（Widget / State） | 切片，**定位有误**：dev 反射 + 按需快照 + 脱敏，却被当成证据段（`Evidence::D_PROPS`）；按 A55 应降为 L2 内省 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev，且成本按“进 AOT 证据包”付 |
+| 属性（Widget / State） | 已落地：降为 L2 即时内省（`ObjectDump` 反射原语），与 `eval $node` 共用；**不进证据包、不写快照窗口**（A55）。原 `PropReader`/`PropSnapshot` 与证据 `props` 段已删 | Flutter Inspector、React DevTools | 同为 dev 专用，但我们不把内省当证据、成本不按进包付 |
 | 网络 | 切片：骨架 + 发起者 + 落地帧（证据）；报文是 dev 内省，计划改 `stream_wrapper` 旁路 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
@@ -236,9 +236,9 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 协议版本、能力列表、错误码表；老客户端遇到未知能力显式报错 | P3 | M |
-| **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 17 项写面白名单”，多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
+| **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 16 项写面白名单”（属性降级后 PropSnapshot 移除），多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
 | **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
-| **P8** | 属性域降到 L2 | `__debugInfo` + `Closure::bind` dump；证据包去掉 `props` 段并升版本；补 `RecordOptions::props` 开关；判据：dump 含基类 `mods`、不含 `sealed` 与回指循环 | A55 | M |
+| **P8** | 属性域降到 L2 | 已落地：`ObjectDump` 用 ReflectionProperty 逐层读所有声明层的 private（含基类 `mods`、State 私有字段），与 `eval $node` 共用一份编码；`Query::props()` 只读当场活树、**不写快照窗口**；删 `PropReader`/`PropSnapshot` 与证据 `props` 段（`DEFAULT_DOMAINS`/`ALL_DOMAINS`/读写/counts 全清），白名单 17→16 项。**不升版本**：逐 kind 显式拒绝已是证据格式的演进机制，绝大多数从没采过 props 的老包仍可读，升 v2 会无谓拒绝它们；也没有补 `RecordOptions::props` 开关——不进包就无从采集。判据：含 `mods`、不含 `sealed`、循环回 `ref`、NAN 安全、脱敏、属性永不进包；7 组变异全咬红 | A55 | M |
 | **P8** | dev 转交三件 | 内存（`gc_status` + `memory_get_usage` + `WeakMap`）、报文旁路（`stream_wrapper_register`，`AsyncHttp` 不改）、调用链（`debug_backtrace` + `ReflectionMethod::getFileName`） | A55 | M |
 
 ### 建议顺序的理由
@@ -248,7 +248,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 - **P3 先于 S2**：S2 的“多窗口隔离”与“常驻”需要 live attach 探出的会话/窗口形状；先做 S2 会返工。
 - **P5 可以并行**：规则注册表只依赖 S3d 的投影形状，不依赖 live attach；如果人力允许，与 P3 并行。
 - **P6 最后**：内存/异步/无障碍都是新域，必须等预算与回收机制稳定，否则每个域都会自带一套泄漏。
-- **P8 可以随时插入**：它不新增证据域、不进指纹，只改“代码在哪、事实归谁”。四条里除属性降级要动证据包版本，其余都能独立落地。
+- **P8 可以随时插入**：它不新增证据域、不进指纹，只改“代码在哪、事实归谁”。属性降级只删了一个证据段（靠逐 kind 显式拒绝演进，无需升版本），其余三条都能独立落地。
 
 ## 验收门
 

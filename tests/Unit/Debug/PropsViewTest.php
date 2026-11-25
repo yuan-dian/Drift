@@ -23,7 +23,6 @@ final class PropsViewTest extends TestCase
             'element' => 'StatelessElement',
             'state' => null,
             'liveFrame' => 2,
-            'stored' => true,
             'fields' => [
                 ['owner' => 'Text', 'name' => 'content', 'value' => ['kind' => 'string', 'value' => 'hi']],
             ],
@@ -31,14 +30,14 @@ final class PropsViewTest extends TestCase
             'cut' => 0,
             'cycles' => 0,
             'costMs' => 0.125,
-            'window' => ['from' => 4, 'to' => 4, 'capacity' => 200, 'nodes' => 1],
         ];
 
         self::assertSame(Props::lines($answer), Props::lines($answer));
         $text = \implode("\n", Props::lines($answer));
         self::assertStringContainsString('节点 #4', $text);
         self::assertStringContainsString('Text（StatelessElement）', $text);
-        self::assertStringContainsString('快照于第 2 帧', $text);
+        self::assertStringContainsString('第 2 帧现读', $text);
+        self::assertStringContainsString('不进证据包', $text);
         self::assertStringContainsString('"hi"', $text);
     }
 
@@ -55,7 +54,6 @@ final class PropsViewTest extends TestCase
             'element' => 'StatelessElement',
             'state' => null,
             'liveFrame' => 1,
-            'stored' => true,
             'fields' => [
                 [
                     'owner' => 'X',
@@ -67,7 +65,6 @@ final class PropsViewTest extends TestCase
             'cut' => 2,
             'cycles' => 1,
             'costMs' => 1.0,
-            'window' => ['from' => 1, 'to' => 1, 'capacity' => 200, 'nodes' => 1],
         ];
 
         $lines = Props::lines($answer);
@@ -79,19 +76,18 @@ final class PropsViewTest extends TestCase
         self::assertStringContainsString('循环引用 1 处', $text);
     }
 
-    public function testMissNamesReasonAndWindow(): void
+    public function testMissNamesReason(): void
     {
         $answer = [
             'found' => false,
             'node' => 99,
             'reason' => 'reflection-unavailable',
-            'window' => ['from' => 0, 'to' => 0, 'capacity' => 200],
         ];
         $lines = Props::lines($answer);
 
         self::assertCount(1, $lines);
         $text = $lines[0];
         self::assertStringContainsString('reflection-unavailable', $text);
-        self::assertStringContainsString('容量 200', $text);
+        self::assertStringNotContainsString('窗口', $text);
     }
 }

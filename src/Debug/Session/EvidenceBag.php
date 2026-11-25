@@ -37,8 +37,6 @@ final readonly class EvidenceBag
         public array $network = [],
         /** @var array<int, NetworkBodyRecord> requestId ⇒ 报文 */
         public array $bodies = [],
-        /** @var array<int, PropSnapshot> 节点号 ⇒ 属性快照 */
-        public array $props = [],
         /** @var array<int, true> 没有自己盒的节点（复合控件） */
         public array $boxless = [],
         /** @var array<int, int> 已回收节点 id => 最后见到的帧 */

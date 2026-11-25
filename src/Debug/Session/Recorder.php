@@ -53,12 +53,6 @@ final class Recorder implements PaintObserver
     /** 单帧最多记多少条因果边（防御：装了录制却不跑帧） */
     private const int MAX_CAUSES = 512;
 
-    /**
-     * 属性快照保留的条数：与报文一样是**按需取证**的独立窗口。
-     * 不按帧采（反射全树必掉帧），读过才存。
-     */
-    private const int PROP_CAPACITY = 200;
-
     /** 几何事实保留的帧数；比帧窗口短是刻意的，查询必须自报边界。 */
     public const int GEOMETRY_FRAMES = 60;
 
@@ -252,9 +246,6 @@ final class Recorder implements PaintObserver
      * @var array<int, NetworkBodyRecord>
      */
     private array $bodies = [];
-
-    /** @var array<int, PropSnapshot> 节点 id => 最近一次按需读取的属性快照 */
-    private array $props = [];
 
     /** 当前正在结算的请求 id，供 `noteStateWrite` 把落地节点写进它的记录。 */
     private int $activeRequest = 0;
@@ -472,7 +463,6 @@ final class Recorder implements PaintObserver
         $recorder->paint = $bag->paint;
         $recorder->network = $bag->network;
         $recorder->bodies = $bag->bodies;
-        $recorder->props = $bag->props;
         $recorder->boxless = $bag->boxless;
 
         $seq = 0;
@@ -550,15 +540,6 @@ final class Recorder implements PaintObserver
             'paintedCap' => self::MAX_PAINTED_NODES,
             'missesCap' => self::MAX_PAINT_MISSES,
         ];
-    }
-
-    /** @return list<int> 读过属性的节点号（升序） */
-    public function propNodes(): array
-    {
-        $ids = \array_map('\intval', \array_keys($this->props));
-        \sort($ids);
-
-        return $ids;
     }
 
     /** @return list<int> 有报文的 requestId（升序） */
@@ -1158,36 +1139,6 @@ final class Recorder implements PaintObserver
         return $element->debugId > 0 && $element->debugSession === $this->tag;
     }
 
-    /** 存一次按需属性取证；同一节点重读是替换而不是追加（窗口按条目数计）。 */
-    public function rememberProps(PropSnapshot $snapshot): void
-    {
-        // 先删再插：覆盖已有键不会把它移到队尾，否则"最近读过"会被误当成最旧。
-        unset($this->props[$snapshot->node]);
-        $this->props[$snapshot->node] = $snapshot;
-        while (\count($this->props) > self::PROP_CAPACITY) {
-            $first = \array_key_first($this->props);
-            unset($this->props[$first]);
-        }
-    }
-
-    public function propAt(int $node): ?PropSnapshot
-    {
-        return $this->props[$node] ?? null;
-    }
-
-    /** @return array{nodes: int, capacity: int, from: int, to: int} */
-    public function propsCoverage(): array
-    {
-        $keys = \array_keys($this->props);
-
-        return [
-            'nodes' => \count($keys),
-            'capacity' => self::PROP_CAPACITY,
-            'from' => $keys === [] ? 0 : \min($keys),
-            'to' => $keys === [] ? 0 : \max($keys),
-        ];
-    }
-
     /** @return array{captured: bool, requests: int, capacity: int, from: int, to: int, bytes: int} */
     public function bodyCoverage(): array
     {
@@ -1580,9 +1531,6 @@ final class Recorder implements PaintObserver
         $this->openPaintTotal = 0;
         $this->openPaintHits = 0;
         $this->paintTruncated = false;
-        // 属性是旧会话的活树读数，重开会话后一句都不能留（帧号会从头开始，
-        // 残留快照会被读成"这一帧的属性"，且不会报 stale）。
-        $this->props = [];
         // ★ 节点登记与发号计数器必须一起清，否则「重新开始录」只做到一半：
         //   `$seq` 接着上一轮涨，重跑后的号就从 365 起，而 `Element::$debugId`
         //   的契约是"每个会话从 1 开始、按首次出现顺序递增"——结构指纹跨跑
@@ -1683,9 +1631,6 @@ final class Recorder implements PaintObserver
             foreach ($rows as $node => $_) {
                 $retain[(int) $node] = true;
             }
-        }
-        foreach ($this->props as $node => $_) {
-            $retain[(int) $node] = true;
         }
         foreach ($this->network as $record) {
             foreach ($record->landed as $node) {

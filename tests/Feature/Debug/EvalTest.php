@@ -172,7 +172,10 @@ final class EvalTest extends SmokeTestCase
 
         $obj = $replies[2]['result'] ?? [];
         check('对象结果能编码', \is_array($obj['value'] ?? null) && isset($obj['value']['__class']), self::show($replies[2] ?? null));
-        check('对象不整棵展开', ($obj['truncated'] ?? null) === false && \count($obj['value'] ?? []) <= 41, self::show($replies[2] ?? null));
+        // 反射展开后能看到基类私有字段（mods / box），比旧的 get_object_vars 信息更全；
+        // 代价是一棵活对象树会触顶，所以只钉"有界"：宽度 <= 41 且如实报 truncated。
+        check('活对象展开有界', \count($obj['value'] ?? []) <= 41 && ($obj['truncated'] ?? null) === true, self::show($replies[2] ?? null));
+        check('反射读到基类私有配置', isset($obj['value']['widget']['mods']) || isset($obj['value']['mods']), self::show($obj));
         // Closure 自带 __debugInfo（空数组），规范化后是 {__class: Closure}：
         // 看得出类型、不暴露句柄，比纯占位符信息更多。
         check('闭包只回类名', ($replies[3]['result']['value']['__class'] ?? null) === 'Closure', self::show($replies[3] ?? null));
