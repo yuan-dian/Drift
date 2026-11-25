@@ -104,3 +104,46 @@ $at !== null  → paused   / at
 ## 七、落地记录
 
 （实现后追加。）
+
+## 七、落地记录
+
+### 7.1 一行换掉 `instanceof`，同时修好三种错
+
+`Source::resolve()` 原来那句「本地才标 finished」换成 `$live->finish($at)` 之后，
+四种组合一次全对：本地/远端 × 整份/`--at` 给出同样的 `{state, reason, lastFrame}`。
+三种错不是三个 bug，是一个动作没有统一入口。
+
+### 7.2 状态规则落在纯函数上
+
+`SessionState::afterDrive(?int $at)` 是唯一规则：整份 → `finished`，`at` → `paused(at)`。
+`DebugSession::finish()` 调它并返回 `query('state')` —— 回执与观察面**同一份组装**，
+不是两次拼出来再比。宿主里的 `finish` 分支也只调到会话的这个动作，没有第二套翻译。
+
+### 7.3 自走宿主拒绝 `finish`
+
+与 `frame` / `pause` 的现有处理同构：它有 `Drive::settle()` 自己判停，客户端说"我发完了"
+在它身上没有意义，回 `not_applicable` 而不是装作接受。否则两套"跑完了"会各自说一套。
+
+### 7.4 `at` 校验放在宿主，不放在客户端
+
+参数是标量，过管道时可能变成字符串或 0。宿主只在 `finish` 一处校验正整数；
+非法值回 `bad_request`，之后会话还活着（错误信封不是终止）。客户端不做第二遍检查——
+两处校验会各自漂，而漂开的表现是"一边报错一边继续跑"。
+
+### 7.5 七组变异全咬红
+
+| 变异 | 咬住的判据 | 现象 |
+|---|---|---|
+| 协议表删 `FINISH` | 5 + 1 | 5/6 条失败 |
+| `Source` 丢掉 `at` 事实 | 3 | 1/6 条失败（`local-at` 变 `finished`） |
+| 规则把 `at` 标成 `finished` | 1 | 1/2 条失败 |
+| 宿主收 `finish` 但不标 | 1 | 2/6 条失败（远端仍 `running`） |
+| 自走宿主也接受 `finish` | 6 | 8 个 error |
+| 远端不发 `at` | 1 | 1/6 条失败 |
+| 不校验非法 `at` | 7 | 1 个 error |
+
+### 7.6 判据落点
+
+- `FinishTest`（新）：一条纯函数判据 + 四组合逐值对比（真子进程跑 `--remote`）。
+- `HostTest` +2：`finish` 回执与 `state` 同形、`FINISH` 已登记；非法 `at` 被拒且会话还活着。
+- `LiveHostTest`：在既有的自走三面判据里补第四面 —— `finish` 报 `not_applicable`。
