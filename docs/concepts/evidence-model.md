@@ -529,7 +529,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | 源码跳转 | **L2** | `callSite()` 的运行时栈 + 反射取定义位置：dev 做、AOT 不做 |
 | 每帧遍历树建“盒 → 元素”映射 | **L1 的代价问题** | 2000 节点每帧一次不划算；在造盒的唯一写点写一次 `debugOwner` |
 | 一个录制器服务多个窗口 | **已收口** | A53：录制器属于应用，帧内由栈回答 |
-| 实时 attach 一个正在跑的真窗口 | **未定** | dev 形态做、发布态不做；阻塞在平台唤醒，见路线图 |
+| 实时 attach 一个正在跑的真窗口 | **已落地（dev-only，A57）** | 协作式 tick：有桥时 `waitEvents` 有上界、每轮收一次消息；`t` 来自墙钟 ⇒ live 可观察不可重放，不进证据语义 |
 
 三层的界不是靠记性维持的：`ignore` 是 list 型项、合并时**整体替换**（`ProjectYamlLoader::mergeConfig` 的 `array_is_list` 分支），任何应用一重写就把基础排除整张顶掉；排父接口必须连子接口一起排（`Session extends SessionQueries, SessionDriver`）；排完还要查孤儿（`Json` 排掉两个消费者之后只剩自己）；而 tpc 对不存在的 ignore 条目静默跳过，拼错路径零报错。所以 A54 把“归属”写进裁决并落实到两个地方：**唯一声明在 `build/base.yml`**（各应用不重写），**`php tools/check-debug-scope.php` 守等集**——每个 AOT 应用里编译进产物的调试侧文件集合恰好等于 17 项写面白名单，多一项报审查面泄漏、少一项报热路径被排、拼错报条目不存在；`--selftest` 四组变异全咬红，8 个应用全绿。
 

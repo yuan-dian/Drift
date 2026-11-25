@@ -35,7 +35,7 @@ use Drift\Debug\Session\Step;
  *
  * @internal 手工工具；不进 V2 判据清单
  */
-final class Drive
+final class Drive implements DrivePort
 {
     /** @var list<Step> */
     private readonly array $queue;
@@ -86,6 +86,11 @@ final class Drive
     public function script(): Script
     {
         return $this->script;
+    }
+
+    public function live(): bool
+    {
+        return false;
     }
 
     /** 最近一次崩溃的详情；没崩过为 `null`。 */

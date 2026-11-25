@@ -50,6 +50,12 @@ final class RemoteSession implements Session
     /** 帧是不是这个宿主自己推的（`attach` 才知道）；没接过为 `null`。 */
     private ?bool $driven = null;
 
+    /**
+     * 这个会话的 `t` 来自真窗口墙钟还是脚本（A57）。
+     * `null` = 宿主没说（老版本）；`true` = live、不可重放。
+     */
+    private ?bool $live = null;
+
     public function __construct(private readonly Transport $transport)
     {
     }
@@ -80,6 +86,7 @@ final class RemoteSession implements Session
         }
         $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
         $this->driven = \is_bool($result['driven'] ?? null) ? $result['driven'] : null;
+        $this->live = \is_bool($result['live'] ?? null) ? $result['live'] : null;
 
         return (float) $mount;
     }
@@ -103,6 +110,8 @@ final class RemoteSession implements Session
         $result = $this->callObject(Methods::OPEN, ['token' => $token]);
         $this->hostPid = \is_int($result['pid'] ?? null) ? $result['pid'] : null;
         $this->driven = \is_bool($result['driven'] ?? null) ? $result['driven'] : null;
+        // 老宿主没这个字段 ⇒ null，不当成 false：不知道就是不知道。
+        $this->live = \is_bool($result['live'] ?? null) ? $result['live'] : null;
         if (\is_int($result['lastFrame'] ?? null)) {
             $this->lastFrameId = $result['lastFrame'];
         }
@@ -119,6 +128,21 @@ final class RemoteSession implements Session
     public function driven(): ?bool
     {
         return $this->driven;
+    }
+
+    /**
+     * `true` = 真窗口的墙钟时间线，**不可重放**（A57）。
+     * `false` = 脚本驱动；`null` = 宿主没说（老版本或没接过）。
+     */
+    public function live(): ?bool
+    {
+        return $this->live;
+    }
+
+    /** `live()` 的反面；老宿主没说时也是 `null`，不猜。 */
+    public function replayable(): ?bool
+    {
+        return $this->live === null ? null : !$this->live;
     }
 
     /**

@@ -60,11 +60,10 @@ final class Host
      *   这个是"这个进程的调试面开给谁"，进程活多久就多久。两者混用会让"宿主重启"
      *   与"重新录制"变成同一件事。
      *   `null` = 不校验（stdio 宿主：通道就是父进程的管道，本来没有"外人"这回事）。
-     * @param Drive|null $drive
-     *   自走驱动：给了它，宿主自己按脚本推帧，并且能被 `pause` / `resume` 叫停。
-     *   没给（stdio 宿主 / 被 `--remote` 拉起的从属宿主）时每一帧都得客户端发，
-     *   `pause` / `resume` 对这个宿主没有意义 —— 它们回 `not_applicable`，
-     *   而 `frame` 反过来在有驱动时被拒。
+     * @param DrivePort|null $drive
+     *   谁在推帧：`Drive`（脚本自走）或 `LiveDrive`（真窗口由 `EventLoop` 推）。
+     *   给了它就能被 `pause` / `resume` 叫停，`frame` 反过来被拒；没给
+     *   （stdio 宿主 / 被 `--remote` 拉起的从属宿主）时每一帧都得客户端发。
      * @param bool $allowEval
      *   是否开 `eval`（任意代码执行）。**默认关**：要显式 `debug serve --allow-eval`
      *   才开。这是安全面不是功能开关 —— loopback 只挡住"外人连得上"，挡不住
@@ -73,10 +72,17 @@ final class Host
     public function __construct(
         private readonly Server $server,
         private readonly ?string $accessToken = null,
-        private readonly ?Drive $drive = null,
+        private readonly ?DrivePort $drive = null,
         private readonly bool $allowEval = false,
     ) {
     }
+
+    /** @var array<int, Channel> */
+    private array $channels = [];
+
+    private ?DebugSession $session = null;
+
+    private ?\Closure $open = null;
 
     /**
      * @param callable(Script): array{session: DebugSession, mountMs: float} $open
@@ -91,69 +97,105 @@ final class Host
             );
         }
 
-        /** @var array<int, Channel> $channels */
-        $channels = [];
-        $session = null;
+        $this->open = \Closure::fromCallable($open);
 
         try {
             if ($this->drive !== null) {
                 // 自走：没有客户端来发 open，会话只能由宿主自己建。
-                $session = $open($this->drive->script()->fork())['session'];
+                // live 宿主由 {@see self::adopt()} 在帧循环启动时放进来。
+                if ($this->session === null) {
+                    $this->session = ($this->open)($this->drive->script()->fork())['session'];
+                }
             }
 
-            while (true) {
-                // 会话在跑才零超时：扫一眼有没有待办消息，没有就推**一步**。
-                // 停下之后必须阻塞等 —— 空转只会烧 CPU，而它连一帧都推不了。
-                // 一步而不是一路推到底：后者让默认的 `--speed=0` 在跑完之前读不到
-                // 任何消息，于是"暂停"要等脚本跑完才生效（等于没有）。
-                //
-                // 这个判断**只**决定要不要零超时，不决定推不推：那一层是
-                // `Drive::advance` 自己的守卫。两处都判会让它们互为冗余 ——
-                // 去掉任何一处都不出错，于是也没有判据能钉住任何一处。
-                $advancing = $this->drive !== null && $session !== null && $session->canAdvance();
-                $ready = $this->server->wait($channels, $advancing ? 0 : -1);
-
-                if ($ready === []) {
-                    if ($this->drive !== null && $session !== null) {
-                        $this->drive->advance($session);
-                    }
-
-                    continue;
-                }
-
-                foreach ($ready as $channel) {
-                    $key = \spl_object_id($channel);
-                    $channels[$key] = $channel;
-
-                    $line = $channel->read();
-                    if ($line === null) {
-                        unset($channels[$key]);
-
-                        continue;
-                    }
-
-                    $this->dispatch($channel, $line, $open, $session);
-                }
-
-                // 没有连接了、也不自走 ⇒ 没人听了。自走中则继续跑（观察者随时可重连）；
-                // 自走宿主跑完也继续等 —— "serve 完就悄悄退出"会让下一个人连上来时
-                // 看到"连接被拒绝"，而他什么都没做错。
-                if ($channels === [] && $this->drive === null) {
-                    return;
-                }
+            while ($this->pollOnce($this->advancing() ? 0 : -1)) {
+                // 等完一轮、处理一轮；退出条件在 `pollOnce()` 里只有一个。
             }
         } finally {
-            $session?->close();
+            $this->session?->close();
+            $this->session = null;
         }
+    }
+
+    /**
+     * 处理**一轮**消息；live 宿主由 `EventLoop` 每帧调一次，同一个分派路径。
+     *
+     * 返回 `false` = 没有连接也不自走，没人听了。`true` 不代表"做了事" ——
+     * 空闲时它只是扫一眼消息、推一步，调用方不该据此安排后续动作。
+     *
+     * `$timeoutMs` 由调用方给：自走宿主在会话跑时用 `0`（否则消息要等脚本跑完），
+     * live 宿主永远给 `0`（`EventLoop` 已经为 socket 留有等待上界，这里再等就是两次睡）。
+     */
+    public function pollOnce(int $timeoutMs): bool
+    {
+        $ready = $this->server->wait($this->channels, $timeoutMs);
+
+        if ($ready === []) {
+            // 唯一一次推进一步：两处都判（这里与 `Drive::advance`）会互为冗余，
+            // 去掉任一个都不出错，于是没有判据能钉住任何一个。
+            if ($this->drive !== null && $this->session !== null) {
+                $this->drive->advance($this->session);
+            }
+
+            return $this->keepServing();
+        }
+
+        foreach ($ready as $channel) {
+            $key = \spl_object_id($channel);
+            $this->channels[$key] = $channel;
+
+            $line = $channel->read();
+            if ($line === null) {
+                unset($this->channels[$key]);
+
+                continue;
+            }
+
+            $this->dispatch($channel, $line);
+        }
+
+        return $this->keepServing();
+    }
+
+    /** live 宿主用：会话由帧循环开，宿主只接管消息面。 */
+    public function adopt(DebugSession $session): void
+    {
+        $this->session = $session;
+    }
+
+    public function session(): ?DebugSession
+    {
+        return $this->session;
+    }
+
+    /** 已接受的通道：关监听之前先断开，避免观察者握着半死的连接。 */
+    public function closeChannels(): void
+    {
+        foreach ($this->channels as $channel) {
+            $channel->close();
+        }
+        $this->channels = [];
+    }
+
+    private function advancing(): bool
+    {
+        return $this->drive !== null && $this->session !== null && $this->session->canAdvance();
+    }
+
+    private function keepServing(): bool
+    {
+        // 自走中继续跑（观察者随时可重连）；跑完也继续等 —— "serve 完就悄悄退出"
+        // 会让下一个人连上来时看到"连接被拒绝"，而他什么都没做错。
+        return $this->channels !== [] || $this->drive !== null;
     }
 
     /**
      * 处理一条消息。所有失败都变成信封，不往外抛。
      *
-     * @param callable(Script): array{session: DebugSession, mountMs: float} $open
-     * @param ?DebugSession                                                 $session 引用：open 赋值、close 置空
+     * @internal 只由 {@see self::pollOnce()} 调；会话与连接都住在宿主的字段里，
+     *   不再经参数传来传去（两份真相在 live 宿主里必然漂）。
      */
-    private function dispatch(Channel $channel, string $line, callable $open, ?DebugSession &$session): void
+    private function dispatch(Channel $channel, string $line): void
     {
         try {
             $message = Wire::decode($line);
@@ -187,8 +229,8 @@ final class Host
         if ($method === Methods::CLOSE) {
             // 只关会话，不退进程：另一个观察者可能还在看，而新客户端也该能重新 open。
             // 客户端通常紧跟着断开，那时 `read()` 得到 null、通道被移除、循环自己结束。
-            $session?->close();
-            $session = null;
+            $this->session?->close();
+            $this->session = null;
             $this->ok($channel, $id, null);
 
             return;
@@ -199,19 +241,19 @@ final class Host
             // 观察者看到的"那一次运行"换成另一次，而两次的帧号、节点号本来就不保证相同。
             $token = $params['token'] ?? null;
             if (\is_string($token) && $token !== '') {
-                $this->attach($channel, $id, $session, $token);
+                $this->attach($channel, $id, $this->session, $token);
 
                 return;
             }
 
-            if ($session !== null) {
+            if ($this->session !== null) {
                 $this->fail($channel, $id, ProtocolError::ALREADY_OPEN, '这个宿主已经打开过会话：先 close 或新开一个宿主进程');
 
                 return;
             }
             try {
-                $result = $this->open($open, $params);
-                $session = $result['session'];
+                $result = $this->open($params);
+                $this->session = $result['session'];
                 $this->ok($channel, $id, $result['reply']);
             } catch (\Throwable $e) {
                 $this->failFor($channel, $id, $e);
@@ -220,7 +262,7 @@ final class Host
             return;
         }
 
-        if ($session === null) {
+        if ($this->session === null) {
             $this->fail($channel, $id, ProtocolError::NOT_OPEN, "还没 open 就调用 {$method}");
 
             return;
@@ -234,7 +276,7 @@ final class Host
                     $channel,
                     $id,
                     ProtocolError::NOT_APPLICABLE,
-                    '这个宿主自己按脚本判停：别告诉它什么时候结束',
+                    '这个宿主自己按帧循环判停：别告诉它什么时候结束',
                 );
 
                 return;
@@ -245,13 +287,13 @@ final class Host
 
                 return;
             }
-            $this->ok($channel, $id, $session->finish($at));
+            $this->ok($channel, $id, $this->session->finish($at));
 
             return;
         }
 
         if ($method === Methods::PAUSE || $method === Methods::RESUME) {
-            $this->control($channel, $id, $session, $method, $params);
+            $this->control($channel, $id, $this->session, $method, $params);
 
             return;
         }
@@ -273,7 +315,7 @@ final class Host
             // **结果**，不是让进程退出的故障。少了这层 try，一条 `1 +` 就把
             // 宿主打崩，客户端只看到管道断了，真正的错留在 stderr。
             try {
-                $this->ok($channel, $id, $this->eval($session, $params));
+                $this->ok($channel, $id, $this->eval($this->session, $params));
             } catch (\Throwable $e) {
                 $this->failFor($channel, $id, $e);
             }
@@ -289,7 +331,7 @@ final class Host
                 $channel,
                 $id,
                 ProtocolError::NOT_APPLICABLE,
-                '这个宿主自己按脚本推帧：不要再喂 t。要单步用 resume --frames=1',
+                '这个宿主自己按帧循环推帧：不要再喂 t。要单步用 resume --frames=1',
             );
 
             return;
@@ -297,11 +339,11 @@ final class Host
 
         try {
             $this->ok($channel, $id, match ($method) {
-                Methods::FRAME => $this->frame($session, $params),
-                Methods::INPUT => $this->input($session, $params),
-                Methods::EFFECT => $this->effect($session, $params),
-                Methods::HIGHLIGHT => $this->highlight($session, $params),
-                Methods::QUERY => $this->query($session, $params),
+                Methods::FRAME => $this->frame($this->session, $params),
+                Methods::INPUT => $this->input($this->session, $params),
+                Methods::EFFECT => $this->effect($this->session, $params),
+                Methods::HIGHLIGHT => $this->highlight($this->session, $params),
+                Methods::QUERY => $this->query($this->session, $params),
                 // Methods::ALL 已在上面挡过，这里不可达；写成显式异常，
                 // 让"加了方法名却忘了实现"在第一次调用时就撞红。
                 default => throw new ProtocolError(
@@ -367,6 +409,10 @@ final class Host
             // 帧是谁推的。客户端拿到 true 就别发 frame（会被拒），拿到 false 就知道
             // 自己得推。不发一次 frame 去试探，省一次往返，也不必从错误码去猜。
             'driven' => $this->drive !== null,
+            // ★ live 的 `t` 来自墙钟，不能重放。客户端要拿这份记录做复算时必须先看
+            //   这一个字段 —— 只看 `driven` 会以为它跟脚本自走宿主一样可复算。
+            'live' => $this->drive?->live() ?? false,
+            'replayable' => !($this->drive?->live() ?? false),
         ]);
     }
 
@@ -426,12 +472,11 @@ final class Host
     }
 
     /**
-     * @param callable(Script): array{session: DebugSession, mountMs: float} $open
      * @param array<array-key, mixed> $params
      *
      * @return array{session: DebugSession, reply: array<string, mixed>}
      */
-    private function open(callable $open, array $params): array
+    private function open(array $params): array
     {
         $raw = $params['script'] ?? null;
         if (!\is_array($raw)) {
@@ -445,7 +490,7 @@ final class Host
         $options = $optionsRaw === null ? RecordOptions::default() : RecordOptions::fromManifest($optionsRaw);
 
         // 录制落在**分叉**上：脚本进、脚本出，客户端交上来的那份不被改动。
-        $opened = $open($script->fork(), $options);
+        $opened = ($this->open)($script->fork(), $options);
 
         return [
             'session' => $opened['session'],
