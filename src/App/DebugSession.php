@@ -84,8 +84,12 @@ final class DebugSession implements Session
     /**
      * 开启会话；调用前应用必须已经 `attach()`。
      *
-     * 已有录制器在跑时**拒绝**，不覆盖：那可能是另一个会话或测试夹具的记录，
-     * 静默接管会让两边的结论都不可信。
+     * **这个窗口**已经有会话时拒绝，不覆盖：两路写进同一份记录，静默丢数据的
+     * 是后来那一份，而两份报告都会显得正常。
+     *
+     * ★ 拒的粒度是"窗口"不是"进程"：一个进程可以有多个窗口，每个窗口一份录制器
+     *   （见 {@see Recorder::bindTo()}）。进程级的拒会把多窗口挡在门外，却挡不住
+     *   真正的污染源 —— 第二个窗口的帧从来不走这里。
      *
      * @param RecordOptions|int|null $options 采集预算；整数是旧容量参数的兼容入口
      * @param Script|null $script 脚本骨架（目标名 / 视口 / 环境）。不给则按
@@ -100,8 +104,12 @@ final class DebugSession implements Session
         bool $redactBodies = true,
     ): self {
         $options = RecordOptions::fromLegacy($options, $script, $redactBodies);
-        if (Recorder::installed()) {
-            throw new \LogicException('已有录制器在运行：先关闭原会话，避免覆盖它的缓冲');
+        // ★ 拒的是"**这个窗口**已经有会话"，不是"这个进程里已经有录制器"。
+        //   后者会把多窗口挡在门外（一个进程两个窗口是常态），而挡不住真正的
+        //   污染源 —— 第二个窗口的帧从来不走 `open()`，它只要开始跑帧就会写进
+        //   进程里那一份录制器。真正的隔离靠 `Recorder::bindTo()` + 帧内压栈。
+        if ($app->debugRecorder() !== null) {
+            throw new \LogicException('这个窗口已经有会话在跑：先关闭它，避免两路写进同一份记录');
         }
         if ($app->root() === null) {
             throw new \LogicException('应用还没有挂表面：先 $app->attach($surface, $constraints)');
@@ -115,6 +123,9 @@ final class DebugSession implements Session
         $options = $options->withScript($script);
 
         $recorder = Recorder::install($options);
+        // 认主 + 绑到窗口：从这一刻起这个应用的帧只写这一份，别的窗口借不到。
+        $recorder->bindTo($app);
+        $app->setDebugRecorder($recorder);
         $queries = new Query($recorder);
 
         // 令牌每次 open 新生成：帧号与节点号都是每会话重发的，观察者只能靠它
@@ -391,8 +402,9 @@ final class DebugSession implements Session
         // 的最后状态当成"现在正看着它"。
         $this->app->setDebugHighlight(null);
 
-        if (Recorder::current() === $this->recorder) {
-            Recorder::uninstall();
-        }
+        // ★ 解绑而不是 `uninstall()`：`uninstall()` 是进程级硬重置，同进程里可能还有
+        //   另一个窗口在录 —— 它清的是"这个世界"，不是"这个会话"。
+        $this->app->setDebugRecorder(null);
+        $this->recorder->unbind();
     }
 }

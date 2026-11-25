@@ -8,7 +8,7 @@
 
 但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
 
-1. **生产可用线**：录制开销已有量具与数字，但 AOT 常驻黑匣子、崩溃取证与多窗口隔离仍未验。
+1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（录制器属于应用，见 A53），但 AOT 常驻黑匣子与崩溃取证仍未验。
 2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），搜索已落地（`find` 回地址），但 Web 仍缺树与时间轴。
 3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
@@ -31,7 +31,7 @@
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
-| 多窗口 / 多 target | 未做：第二个会话直接拒绝 | 成熟 DevTools 多 target | S2 的前置 |
+| 多窗口 / 多 target | 切片：同进程每个窗口一份录制器、互不串证据；`Discovery` 多条目与跨窗口合并视图仍待做 | 成熟 DevTools 多 target | S2 的前置已清，缺"看得见两个窗口"的消费者 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
 | 内存 / 泄漏 | 未做 | Chrome Memory、Flutter Memory、Tracy | 长跑应用必需 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
@@ -132,13 +132,13 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 ### 5. 实时 attach、select / highlight 与多窗口
 
-**问题**：当前只能对 headless / 宿主子进程取证；用户不能在正在跑的真窗口上点一个控件、看它的约束链。多窗口直接拒绝。
+**问题**：当前只能对 headless / 宿主子进程取证；用户不能在正在跑的真窗口上点一个控件、看它的约束链。多窗口此前直接拒绝（`DebugSession::open()` 见已有录制器就抛）；现在每个窗口一份录制器，互不串证据。
 
 **设计**：
 
 - **live attach（dev-only）**：在帧循环里做非阻塞轮询，或把读记录放到独立线程；AOT 发布态仍不做（没有空闲帧循环，暂停会改事实）。
-- **select / highlight**：`pick` 已经是查询面；反向流 `highlight(node)`（`0` = 清除）**已落地**（2026-11-26，A50/A51/A52）—— 它在绘制后叠加，不写结构、不改布局。三处要点：① 注解是**脚本里的一步**（`Step::HIGHLIGHT`），否则"同一份脚本跑两遍"会让"一次高亮了一次没高亮的"拿到同一个驱动指纹；② 叠加层**自带失效判据**（`paintRequested` + `continueFrame` + `setDebugHighlight()` 排帧），否则 `Frame` 会整帧跳过而不显示；③ 判据是**双向**的 —— `Digest::causal()`（只含 `rebuilt` / `causes`）逐帧不变 **且** 像素必变，另加"环画在这个节点的边框上、盒心不是描边色"与"稳态不再重画"。原始表述"`Digest::ofFrame()` 前后逐值相同"会恒红：它含 `skip`，而高亮正是要求这一帧必须画。**仍未做的**：`pick` 接到活窗口点击（要 live attach）、面板 / Web 侧的悬停即高亮（连续流要节流合并，见 A50 的失效条件）。
-- **多窗口**：录制器按应用/窗口命名空间隔离；`Discovery` 的数组条目真正生效；同一进程第二个窗口要么独立会话，要么显式拒绝并说明原因，不允许“开了就错”。
+- **select / highlight**：`pick` 已经是查询面；反向流 `highlight(node)`（`0` = 清除）**已落地**（2026-11-25，A50/A51/A52）—— 它在绘制后叠加，不写结构、不改布局。三处要点：① 注解是**脚本里的一步**（`Step::HIGHLIGHT`），否则"同一份脚本跑两遍"会让"一次高亮了一次没高亮的"拿到同一个驱动指纹；② 叠加层**自带失效判据**（`paintRequested` + `continueFrame` + `setDebugHighlight()` 排帧），否则 `Frame` 会整帧跳过而不显示；③ 判据是**双向**的 —— `Digest::causal()`（只含 `rebuilt` / `causes`）逐帧不变 **且** 像素必变，另加"环画在这个节点的边框上、盒心不是描边色"与"稳态不再重画"。原始表述"`Digest::ofFrame()` 前后逐值相同"会恒红：它含 `skip`，而高亮正是要求这一帧必须画。**仍未做的**：`pick` 接到活窗口点击（要 live attach）、面板 / Web 侧的悬停即高亮（连续流要节流合并，见 A50 的失效条件）。
+- **多窗口**（2026-11-25 已落地，A53）：**录制器属于应用**，进程级单例改掉 —— 帧内"当前录制器"由 `Recorder::enter()/leave()` 的栈回答（`null` 也压一层，否则第二个窗口的帧会落到别人的录制器上）。判据是"交错跑 == 单独跑"：两个窗口的帧键、节点表、两份指纹逐一相同。**仍未做**：`Discovery` 的数组条目真正生效、跨窗口的合并视图（那属于投影）。
 
 这三件事都触碰 A33 的旧表述（六个方法、不做 live attach）。实施前先重开 A33，把“dev 形态做 / 发布态不做”和“九个方法按角色分组”写清楚。
 
@@ -219,7 +219,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P2** | S3d 绘制归因 | 已落地：`PaintRecord` + `paint(frame)` / `repaints()` + `repaint-storm` / `layer-miss`；重画集合 ⊆ 结构树、命中不算"画过"；独立 60 帧窗口；证据包带 `paint` 域；简报 / Web / `/api/paint` 有入口；AOT 可用（无反射） | P1 | L |
 | **P3** | live attach（dev） | 运行中真窗口可 attach、pause、step、query；AOT 仍拒绝并说明原因 | P0、P1 | L |
 | **P3** | select / highlight | `pick` 接到活窗口点击；高亮绘制后叠加；highlight 前后**结构因果**指纹相同且像素必变 | P3 | M |
-| **P3** | 多窗口隔离 | 会话按应用/窗口命名空间；`Discovery` 多条目生效；第二窗口独立或明确拒绝 | P3 | L |
+| **P3** | 多窗口隔离 | 已落地（A53）：录制器绑到应用 + 帧内压栈；交错跑与单独跑逐值相同、第二窗口不推进第一会话的帧号与节点表、无主兜底保住老夹具；`Discovery` 多条目仍待做 | P3 | L |
 | **P4** | S2 常驻黑匣子 | AOT 标量环形缓冲；慢帧快照；默认开销 < 2%；崩溃文件可检出截断 | P1、P3 | L |
 | **P4** | 崩溃取证 | PHP 可捕获异常 + 可恢复致命错误落盘；C++ 崩溃另立平台期，不混入本批 | P4 | M |
 | **P5** | 规则注册表 | 已落地：`Rule` + `RuleRegistry` + `Severity`；`--rule` / `--without` / `--min-severity` / `--rules`；未知规则报错；`suppressed` 兜底；运行时双向闭合；九条规则各一个类，`Brief` 只留编排 | P2 | M |
@@ -265,10 +265,9 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 以下事项会改变现行裁决或兼容面，实施前需要单独拍板：
 
 1. **A36 的“规则可关”**：当前只有阈值可配，没有规则开关；是补开关，还是把“可关”改成“可配阈值”。
-2. **多窗口模型**：一个进程一个录制器（按窗口命名空间）还是每个窗口一个录制器；这决定 S2 的隔离形状。
-3. **绘制域的指纹**：`PaintRecord` 进 facts 指纹，还是单列 `digest(Paint)`；取决于 layer cache 是否跨机器确定。
+2. **绘制域的指纹**：`PaintRecord` 进 facts 指纹，还是单列 `digest(Paint)`；取决于 layer cache 是否跨机器确定。
 
-A33（九方法 / dev attach）、S0 状态与报文默认关闭已分别在 P0 / P1 收口，不再列为待裁决。
+A33（九方法 / dev attach）、S0 状态与报文默认关闭已分别在 P0 / P1 收口，多窗口模型（每个窗口一份录制器）已在 A53 定下，都不再列为待裁决。
 
 ## 相关
 

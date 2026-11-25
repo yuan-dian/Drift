@@ -212,6 +212,9 @@ final class Source
             return;
         }
 
+        // 出口一次只跑一个会话（多窗口是"一个进程两个窗口"，不是"一个 CLI 两个会话"），
+        // 所以这里取进程默认值就够了。真要两个会话同时导出，得让 `Source` 持住自己那个
+        // 会话 —— 那时候"最后绑定的那一份"会悄悄替掉想要的那一份。
         $recorder = Recorder::current();
         if ($recorder === null) {
             throw new \RuntimeException('--out 要本地那份记录，当前没有录制器');

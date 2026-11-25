@@ -87,6 +87,16 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     /** 上一次真的画上屏的叠加目标（与 `$paintedFocus` 同一个口径，同一类记账） */
     private ?Element $paintedHighlight = null;
 
+    /**
+     * 这个窗口的录制器（`null` = 没在录）。
+     *
+     * ★ 录制器**属于应用**而不是进程：一个进程可以有两个窗口，而一份录制器同时收
+     *   两个窗口的帧就是串证据（节点表混进别人的节点、帧号被别人的帧推走、指纹跟着变）。
+     *   存这里而不是每次问静态的"当前录制器"：静态那个在帧外没有窗口上下文，问到谁
+     *   全看最后一次装的是谁。见 `Recorder::bindTo()`。
+     */
+    private ?Recorder $debugRecorder = null;
+
     /** UI 线程 id（`GetCurrentThreadId`，`attach()` 时记；`getmypid()` 区分不了线程）。 */
     private int $uiThreadId = 0;
 
@@ -1732,6 +1742,38 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
             $canvas,
             Paint::stroke($this->theme()->color(ColorToken::Accent), 2.0),
         );
+    }
+
+    /**
+     * 绑定 / 解绑这个窗口的录制器（`null` = 解绑）。
+     *
+     * ★ 只改"这个窗口归谁记账"，不动 `Recorder::current()`：帧内的当前录制器由
+     *   {@see \Drift\App\Application::frame()} 压栈决定，帧外那个是进程默认值。
+     *   两件事混在一起写，就会出现"绑定顺手改全局"的副作用 —— 那等于把这次修复
+     *   又变回进程单例。
+     *
+     * @internal 由 `Application::setDebugRecorder()` 转发（调试会话专用）
+     */
+    public function setDebugRecorder(?Recorder $recorder): void
+    {
+        $this->debugRecorder = $recorder;
+    }
+
+    /** 这个窗口**绑定**的录制器（不走"借无主的"那条兜底）。 */
+    public function boundRecorder(): ?Recorder
+    {
+        return $this->debugRecorder;
+    }
+
+    /**
+     * 这一帧该用哪一份录制器（`null` = 这一帧不录）。
+     *
+     * 自己的优先；没有自己的就只能借**无主**的那一份（测试 / bench 手工装的）。
+     * 有主的一律不借：那是另一个窗口的证据，借到了就是静默串证据。
+     */
+    public function frameRecorder(): ?Recorder
+    {
+        return $this->debugRecorder ?? Recorder::unowned();
     }
 
     /**

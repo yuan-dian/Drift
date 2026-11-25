@@ -299,36 +299,53 @@ abstract class Application
         return $this->shell->imeCaretRect();
     }
 
-    /** 跑一帧：平台每帧调一次。 */
+    /**
+     * 跑一帧：平台每帧调一次。
+     *
+     * ★ 帧内"当前录制器"= 本窗口那一份（`null` 也压，见 {@see Recorder::enter()}）。
+     *   不压的话，这个窗口的帧会从栈里拿不到东西、落到进程默认值上 —— 也就是
+     *   **另一个窗口**的录制器：它的节点表会混进这一页的节点、帧号被推走、指纹
+     *   跟着变，而两份报告各自看起来都正常。
+     *
+     * 录制边界必须成对，故收在这里而不是壳里（壳有零视口提前返回，散在壳里会漏掉
+     * 那一帧）。
+     *
+     * ★ `try/finally`：帧内抛异常时也必须 `endFrame`，否则 recorder 停在
+     *   `open` 状态，**下一帧**的 `openCauses` 会把这一帧的残余一起吞进去 ——
+     *   一条"看起来合理、实际跨越了两帧"的因果边。异常帧本身标 `aborted`：
+     *   半截的 `rebuilt` / `costMs` 不能当正常帧读。
+     */
     public function frame(float $timestampMs, BoxConstraints $constraints): void
     {
-        $recorder = Recorder::current();
-        if ($recorder === null) {
-            $this->shell->frame($timestampMs, $constraints);
+        Recorder::enter($this->shell->frameRecorder());
 
-            return;
-        }
-
-        // 录制只在装了之后才多这两次调用；帧边界必须成对，故收在这里而不是壳里
-        // （壳有零视口提前返回，散在壳里会漏掉那一帧）。
-        //
-        // ★ `try/finally`：帧内抛异常时也必须 `endFrame`，否则 recorder 停在
-        //   `open` 状态，**下一帧**的 `openCauses` 会把这一帧的残余一起吞进去 ——
-        //   一条"看起来合理、实际跨越了两帧"的因果边。异常帧本身标 `aborted`：
-        //   半截的 `rebuilt` / `costMs` 不能当正常帧读。
-        $t0 = \hrtime(true);
-        $recorder->beginFrame($timestampMs);
-        $aborted = true;
         try {
-            $this->shell->frame($timestampMs, $constraints);
-            $aborted = false;
+            // ★ 不把上面那个值另存一份交给下面：帧内"用谁的账本"只由栈回答。
+            //   另存一份就有两个可以分别写错的地方（"栈说什么"与"这一帧用谁"），
+            //   而它们分叉时的表现正是这一层要堵的那种静默串证据。
+            $recorder = Recorder::current();
+            if ($recorder === null) {
+                $this->shell->frame($timestampMs, $constraints);
+
+                return;
+            }
+
+            $t0 = \hrtime(true);
+            $recorder->beginFrame($timestampMs);
+            $aborted = true;
+            try {
+                $this->shell->frame($timestampMs, $constraints);
+                $aborted = false;
+            } finally {
+                $recorder->endFrame(
+                    $this->shell->frameFacts(),
+                    (\hrtime(true) - $t0) / 1e6,
+                    $this->root(),
+                    $aborted,
+                );
+            }
         } finally {
-            $recorder->endFrame(
-                $this->shell->frameFacts(),
-                (\hrtime(true) - $t0) / 1e6,
-                $this->root(),
-                $aborted,
-            );
+            Recorder::leave();
         }
     }
 
@@ -336,6 +353,31 @@ abstract class Application
     public function repaintForResize(BoxConstraints $constraints): void
     {
         $this->shell->repaintForResize($constraints);
+    }
+
+    /**
+     * 把这个窗口的录制器交给壳（`null` = 解绑）。
+     *
+     * ★ 为什么参数是 `?Recorder` 而不是 `bool $recording`：录制器是有状态的实例，
+     *   同进程可以有第二个（另一个窗口）。壳只要"记账时用哪一份"，不需要知道
+     *   有几份、谁是当前 —— 那两件事归 {@see Recorder::current()}。
+     *
+     * @internal 调试会话专用（`DebugSession::open()` / `close()`）
+     */
+    public function setDebugRecorder(?Recorder $recorder): void
+    {
+        $this->shell->setDebugRecorder($recorder);
+    }
+
+    /**
+     * 这个窗口**绑定**的录制器（`null` = 没在录）。
+     *
+     * 与 {@see self::frame()} 实际用的那一份不同：帧里还可能借用无主的录制器
+     * （测试 / bench），而"这个窗口有没有自己的会话"只看绑定的这一份。
+     */
+    public function debugRecorder(): ?Recorder
+    {
+        return $this->shell->boundRecorder();
     }
 
     /**

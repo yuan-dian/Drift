@@ -89,12 +89,55 @@ final class Recorder implements PaintObserver
     private static ?self $current = null;
 
     /**
+     * 帧内栈：{@see self::enter()} 压、{@see self::leave()} 弹；空 = 不在任何帧里。
+     *
+     * `null` 也是合法的一层，表示"这一帧的应用没有录制器"。**必须能压 null**：
+     * 不压的话，第二个窗口的帧会从栈里拿不到东西，落到 {@see self::$current} 上，
+     * 也就是**上一个窗口的录制器** —— 那正是这一层要堵的静默污染。
+     *
+     * @var list<?self>
+     */
+    private static array $frameStack = [];
+
+    /**
+     * 还活着的**有主**录制器（{@see self::bindTo()} 之后进、{@see self::unbind()} 之后出）。
+     *
+     * 存在的理由只有一个：某个窗口关掉时，{@see self::$current} 要落到另一个还活着的
+     * 会话上，而不是变成 `null`（那时"当前录制器"会指向一个已经关掉的会话，而查询层
+     * 各自握着实例，谁也发现不了）。量具同理 —— 最后一个会话关了才关掉。
+     *
+     * ★ 键是**对象号不是 `tag`**：`reset()` 会换 `tag`（旧号在新会话里指别的节点），
+     *   而"这份录制器还活着"跟换没换号无关。按 `tag` 记，`reset()` 之后解绑就删不掉
+     *   自己那一行 —— 表现为"关掉会话后 `installed()` 仍是 true"，而 `$current` 指的
+     *   是一份已经关掉的记录。
+     *
+     * @var array<int, self> 对象号 => 实例
+     */
+    private static array $live = [];
+
+    /**
      * 量具是不是我们打开的。
      *
      * 只有自己打开的量具才能帧首清零、帧末读账：调用方本来开着（bench 的 M4）
      * 时那是他的跨帧累计，清一个字都是替他毁数据 —— 那种情况宁可不记段耗时。
      */
     private static bool $ownsProfile = false;
+
+    /**
+     * 这份录制器的**主人**（`spl_object_id` 的 {@see \Drift\App\Application}）；`null` = 无主。
+     *
+     * ## 为什么录制器要认主
+     *
+     * "一个进程一份录制器"在单窗口下是对的，在多窗口下是**静默串证据**：第二个窗口
+     * 一挂上，它首帧的全量 `build` 就把自己 88 个节点写进第一个窗口的节点表，帧号也
+     * 一并推进 —— 而两个消费者各自的报告看起来都正常。实测（两个 `PageHostApplication`
+     * 交错推帧）：第一个会话的节点表 361 → 449、帧窗口多出两帧、`digest` 跟着变。
+     *
+     * 所以录制器属于**应用**，不属于进程：谁在跑帧，帧内 `current()` 就是谁的
+     * （见 {@see self::enter()}）。无主的录制器是留给测试 / bench 的显式逃生口 ——
+     * 装了却没绑定应用，说明装的人自己承担"谁写进来"的责任。
+     */
+    private ?int $ownerId = null;
 
     /** @var array<int, FrameRecord> 帧号 => 记录，键升序 */
     private array $frames = [];
@@ -292,17 +335,92 @@ final class Recorder implements PaintObserver
             SurfaceProfile::reset();
         }
         self::$ownsProfile = false;
+        // 硬重置：测试夹具在 `finally` 里用它把"这个世界"清干净，所以三样一起清。
+        // 会话自己关的话走 {@see self::unbind()} —— 那里要照顾"还有别的窗口活着"。
         self::$current = null;
+        self::$live = [];
+        self::$frameStack = [];
+    }
+
+    /**
+     * 把这份录制器**绑到一个应用**上（一个窗口一份）。
+     *
+     * 绑定之后：① 这个应用的帧内 `current()` 一定指向它（见 {@see self::enter()}）；
+     * ② 别的应用没有自己的录制器时**借不到**它 —— 借到了就是串证据。
+     */
+    public function bindTo(object $owner): void
+    {
+        $this->ownerId = \spl_object_id($owner);
+        self::$live[\spl_object_id($this)] = $this;
+        self::$current = $this;
+    }
+
+    /** 应用与会话解绑：`current()` 落到另一个还活着的会话上，量具只留到最后一个。 */
+    public function unbind(): void
+    {
+        unset(self::$live[\spl_object_id($this)]);
+        $this->ownerId = null;
+
+        if (self::$current === $this) {
+            $remaining = \end(self::$live);
+            self::$current = $remaining === false ? null : $remaining;
+        }
+
+        if (self::$live === [] && self::$ownsProfile) {
+            SurfaceProfile::$on = false;
+            SurfaceProfile::reset();
+            self::$ownsProfile = false;
+        }
+    }
+
+    /** 这份录制器的主人（应用的对象号）；`null` = 无主（测试 / bench 手工装的）。 */
+    public function ownerId(): ?int
+    {
+        return $this->ownerId;
+    }
+
+    /**
+     * "无主的那一份" —— 没有绑定应用的应用能借用的录制器。
+     *
+     * 有主的一律不借：那是另一个窗口的证据。这条判断是整个多窗口隔离的**分界点**，
+     * 去掉它 {@see self::$current} 就会重新变成"进程里最后装的那份"。
+     */
+    public static function unowned(): ?self
+    {
+        return self::$current !== null && self::$current->ownerId === null ? self::$current : null;
+    }
+
+    /**
+     * 进入一帧：帧内的 {@see self::current()} 变成 `$recorder`（`null` 也算一层）。
+     *
+     * 由 {@see \Drift\App\Application::frame()} 成对调用，`finally` 里 {@see self::leave()}。
+     * 用栈而不是"存一个旧值再写回"：后者在重入（帧里再跑一帧，例如离屏预热）时会把
+     * 中间那一层冲掉，而冲掉的表现是"某几帧写进了别人的记录"，事后无从归因。
+     */
+    public static function enter(?self $recorder): void
+    {
+        self::$frameStack[] = $recorder;
+    }
+
+    public static function leave(): void
+    {
+        if (self::$frameStack !== []) {
+            \array_pop(self::$frameStack);
+        }
     }
 
     public static function current(): ?self
     {
+        if (self::$frameStack !== []) {
+            return self::$frameStack[\count(self::$frameStack) - 1];
+        }
+
         return self::$current;
     }
 
     public static function installed(): bool
     {
-        return self::$current !== null;
+        return self::current() !== null;
     }
 
     /** 代际号：`reset()` 自增。派生缓存以它为键，帧号重用也不会命中旧数据。 */
