@@ -50,3 +50,8 @@ sources:
     if: PHP_OS_FAMILY == 'Windows'
   - path: ../../cpp-src/x11
     if: PHP_OS_FAMILY == 'Linux'
+
+# ── 不进产物的源码 ──
+# 统一在 `build/base.yml` 的 `ignore`（含调试层审查面）里声明，本文件不重写：
+# list 型项一旦重写就是**整体替换**，会把 base 的排除全顶掉。
+# 由 `php tools/debug-scope-check.php` 守这条边界。

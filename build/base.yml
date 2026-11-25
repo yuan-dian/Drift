@@ -155,6 +155,34 @@ link-libs:
 # sources 里用 `if: PHP_OS_FAMILY == ...` 选本平台的桥接目录。
 ignore:
   - build
+  - tests
+  - mock-server.php
+
+  # ── 调试层的「审查面」（A54 L3）──
+  # tpc 全量编译 sources、没有死码消除：类可达即整类进产物，不排就是白扛
+  # 约 7,900 行永不执行的查询 / 证据 / 协议 / 驱动代码（实测占 showcase 产物 9.3%）。
+  # 采集核心（Recorder 及记录类型）必须留 —— 热路径上有 tap，排掉会编译期炸。
+  #
+  # ★ 为什么放在 base 而不是各工程：list 型项合并时是**整体替换**，放在这里
+  #   只要各工程自己不写 `ignore` 就全继承；一旦某个工程重写，就必须把整张表
+  #   抄一遍（第一版就漏了 Session.php —— 它 extends 两个已排除的父接口，
+  #   留下子接口 = 悬空继承）。`php tools/debug-scope-check.php` 守这条边界。
+  # ★ 路径基准是**各应用 project.yml 所在目录**（Translator::resolvePath 传的是
+  #   projectDir），不是本文件目录 —— 所以这里写 `../../src/...`。
+  # ★ 拼错路径不会报错：tpc 对不存在的 ignore 条目直接 continue（"optional
+  #   exclusions"）。守门器额外验条目必须命中真实文件。
+  - ../../src/Debug/Json.php
+  - ../../src/Debug/Protocol
+  - ../../src/App/DebugSession.php
+  - ../../src/App/Replay.php
+  - ../../src/Debug/Session/Query.php
+  - ../../src/Debug/Session/QueryRouter.php
+  - ../../src/Debug/Session/Evidence.php
+  - ../../src/Debug/Session/PropReader.php
+  - ../../src/Debug/Session/Digest.php
+  - ../../src/Debug/Session/SessionDriver.php
+  - ../../src/Debug/Session/SessionQueries.php
+  - ../../src/Debug/Session/Session.php
 
 build-dir: build
 

@@ -37,9 +37,5 @@ sources:
     if: PHP_OS_FAMILY == 'Linux'
 
 # ★ `tests/` 必须排除（理由同 `apps/users/project.yml`：夹具要写顶层 `return`，
-#   AOT 编译器的判据里没有 `Stmt_Return`）。
-# ★ **`ignore` 要写全** —— tpc 的 list 型项是**整体替换**（不是追加），
-#   只写 `[tests]` 会把 base 的 `build` 顶掉 ⇒ `Duplicate function main`。
-ignore:
-  - build
-  - tests
+#   AOT 编译器的判据里没有 `Stmt_Return`）。统一在 `build/base.yml` 的 `ignore`
+#   声明，本文件不重写 —— list 型项是整体替换，一写就顶掉 base 那张表。

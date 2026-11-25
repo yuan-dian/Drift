@@ -46,16 +46,8 @@ sources:
   - path: ../../cpp-src/x11
     if: PHP_OS_FAMILY == 'Linux'
 
-# ★ `tests/` 必须排除：`drift-preview` 的夹具要写顶层 `return`（解释器面的约定），
-#   而 AOT 编译器的判据里没有 `Stmt_Return` ⇒ 落在 `sources` 里会让构建当场中止
-#   （`Fatal error: Unsupported statement: Stmt_Return`，2026-10-16 实际踩到）。
-# ★ **`ignore` 要写全** —— tpc 的 list 型项是**整体替换**（不是追加），
-#   只写 `[tests]` 会把 base 的 `build` 顶掉，而 `build/` 里是生成的 `.cc`，
-#   再被当源码翻译一遍 ⇒ `Duplicate function main`。
-# ★ `mock-server.php` 同理必须排除：它是 `php -S` 用的 mock 后端，里面有顶层
-#   `return` 与 `$_SERVER` 分支 ⇒ `Fatal error: Unsupported statement: Stmt_If`
-#   （2026-11-10 实测；2026-11-05 加它时漏了这条，`apps/users` 的 AOT 一直构建不了）。
-ignore:
-  - build
-  - tests
-  - mock-server.php
+# ★ `tests/` / `mock-server.php` 必须排除：夹具与 mock 后端含顶层 `return`、
+#   `$_SERVER` 分支，而 AOT 编译器没有 `Stmt_Return` / `Stmt_If` 的编译路径
+#   （2026-10-16 / 2026-11-10 实测构建中止）。
+# ★ `ignore` 不在这里重写 —— list 型项是**整体替换**，一写就会顶掉 base 的
+#   `build` + 调试审查面那张表。`build/base.yml` 是唯一声明处。

@@ -12,6 +12,8 @@
 2. **调试体验线**：不能 attach 正在跑的真窗口，没有 select / highlight / 盒叠加；绘制归因已落地（重画集合 + 层缓存命中率），搜索已落地（`find` 回地址），但 Web 仍缺树与时间轴。
 3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
+这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。
+
 所以下一阶段的中心不是“再加几个视图”，而是**先把采集预算、生命周期与生产可用补齐，再让视图消费同一份证据**。任何新域如果没有预算、没有判据、没有独立消费者，就不进入主线。
 
 ## 能力现状
@@ -24,16 +26,18 @@
 | 重放与指纹 | 已落地：脚本驱动 + 三指纹 + 重开 N 次 | Chrome Recorder、Redux 时间旅行、Tracy | **领先**：重放是重新执行 |
 | 证据包 | 已落地：NDJSON + manifest + 版本 + 逐域 counts + 导入校验 | Chrome trace、Perfetto | **领先**：语义化、可复算 |
 | 几何与约束链 | 已落地：帧末记录 + 复算 + 三类 miss | Chrome Elements 盒模型、Flutter Layout Explorer | **领先**：给的是传播链，不只是当前值 |
-| 属性（Widget / State） | 切片：dev 反射、按需快照、脱敏 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev |
-| 网络 | 切片：骨架 + 发起者 + 落地帧 + 报文 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
+| 属性（Widget / State） | 切片，**定位有误**：dev 反射 + 按需快照 + 脱敏，却被当成证据段（`Evidence::D_PROPS`）；按 A55 应降为 L2 内省 | Flutter Inspector、React DevTools | 可用，但只覆盖 dev，且成本按“进 AOT 证据包”付 |
+| 网络 | 切片：骨架 + 发起者 + 落地帧（证据）；报文是 dev 内省，计划改 `stream_wrapper` 旁路 | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
 | Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
 | 实时 attach | 未做：只有 headless / 宿主子进程 | Chrome、Flutter、GammaRay | **最大体验缺口** |
 | 多窗口 / 多 target | 切片：同进程每个窗口一份录制器、互不串证据；`Discovery` 多条目与跨窗口合并视图仍待做 | 成熟 DevTools 多 target | S2 的前置已清，缺"看得见两个窗口"的消费者 |
+| 编译归属（哪些调试代码进产物） | 切片：`ignore` 实测排掉审查面（showcase −7,931 行 / −39%）；缺“产物调试类 ⊆ 白名单”的检查 | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
+| 交互式提问（任意表达式） | 未做：14 个出口全是固定动词，没有 `eval` | Chrome Console、Flutter Inspector eval | dev 壳最大的体验缺口 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
-| 内存 / 泄漏 | 未做 | Chrome Memory、Flutter Memory、Tracy | 长跑应用必需 |
+| 内存 / 泄漏 | 未做（**计划改口径**）：dev 侧用 `gc_status` + `memory_get_usage` + `WeakMap` 约三十行；AOT 侧不采 | Chrome Memory、Flutter Memory、Tracy | 不需要完整域，只需要一个 dev 封装 |
 | 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
 | 崩溃 / 生产黑匣子 | 未做 | Sentry breadcrumb、Chrome trace | S2 的核心价值 |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
@@ -43,7 +47,7 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 13 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 14 出口        Web 视图         AI / CI          IDE（未来）
                     \              |               |               /
 L2 投影        Brief / Findings  Inspector     Timeline     Network     Loop     Paint     Memory
                     \              |               |               /
@@ -51,6 +55,8 @@ L1 证据        FrameStore   NodeRegistry   GeometryStore   NetworkStore   Prop
                     \              |               |               /
 L0 采集        frame  state-write  rebuild  input  network  geometry  props  pick  paint  memory  async
 ```
+
+这张图是**语义分层**，不是物理分布。编译边界（A54）横切它：L0 的写面与 L1 的记录类型在产物里；L1 的读面（`Query` / `Evidence` / `Digest`）和 L3 的协议与会话在 `tools/` 侧，用 `ignore` 排出；L2 内省（属性 / 内存 / 报文 / 调用链）只在 dev 存在，不属于这张图的任何一层。
 
 四条不变量沿用[裁决索引](../decisions/README.md)：
 
@@ -198,7 +204,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 这三个域都重要，但不与 S3d / S2 同期做；先按“预算 + 独立窗口 + 独立查询”的形状评估：
 
-- **内存**：节点 / State 存活数、订阅数、图片缓存、worker 内存；不做堆转储（PHP/AOT 限制），只做可复算的计数与泄漏趋势。
+- **内存**（口径已改，A55）：不做证据域，做 **dev 内省** —— `gc_status()` + `memory_get_usage()` + `WeakMap` 按节点分组，约三十行；不做堆转储（PHP/AOT 限制）。只有在“跨帧泄漏趋势要进 CI”这个真实需求出现时，才考虑升成 L1 域。
 - **异步**：Future / worker job 的时间线、队列深度、结算延迟、取消；网络只是其中一个子域。
 - **无障碍**：语义树 + UIA 属性；已有 UIA 实现，缺的是查询面与投影。
 
@@ -230,6 +236,10 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 协议版本、能力列表、错误码表；老客户端遇到未知能力显式报错 | P3 | M |
+| **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/debug-scope-check.php` 守“编译进产物的调试侧文件集合 **恰好等于** 17 项写面白名单”，多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
+| **P8** | `debug eval` 出口 | dev 壳执行任意 PHP 表达式并回值；只绑 loopback、默认关；**不是证据、不进包**（A55） | A55 | S |
+| **P8** | 属性域降到 L2 | `__debugInfo` + `Closure::bind` dump；证据包去掉 `props` 段并升版本；补 `RecordOptions::props` 开关；判据：dump 含基类 `mods`、不含 `sealed` 与回指循环 | A55 | M |
+| **P8** | dev 转交三件 | 内存（`gc_status` + `memory_get_usage` + `WeakMap`）、报文旁路（`stream_wrapper_register`，`AsyncHttp` 不改）、调用链（`debug_backtrace` + `ReflectionMethod::getFileName`） | A55 | M |
 
 ### 建议顺序的理由
 
@@ -238,6 +248,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 - **P3 先于 S2**：S2 的“多窗口隔离”与“常驻”需要 live attach 探出的会话/窗口形状；先做 S2 会返工。
 - **P5 可以并行**：规则注册表只依赖 S3d 的投影形状，不依赖 live attach；如果人力允许，与 P3 并行。
 - **P6 最后**：内存/异步/无障碍都是新域，必须等预算与回收机制稳定，否则每个域都会自带一套泄漏。
+- **P8 可以随时插入**：它不新增证据域、不进指纹，只改“代码在哪、事实归谁”。四条里除属性降级要动证据包版本，其余都能独立落地。
 
 ## 验收门
 
@@ -245,7 +256,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 | 门 | 必须同时满足 | 对应批次 |
 |---|---|---|
-| **生产可用** | AOT 常驻默认开销 < 2%；崩溃文件可检出截断；多窗口隔离；慢帧可回看 | P1、P3、P4 |
+| **生产可用** | AOT 常驻默认开销 < 2%；崩溃文件可检出截断；多窗口隔离；慢帧可回看；**产物不含审查面**（`ignore` + 检查） | P1、P3、P4、P8 |
 | **调试体验** | 真窗口 attach；点选 + 高亮；因果树 / 时间线 / 绘制页可在同一会话里联动 | P2、P3 |
 | **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议有能力发现；使用指南可独立走通 | P5、P7 |
 
@@ -258,6 +269,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 - **实时属性编辑**：控件不可变，改了就与运行时不是同一份证据。
 - **远程多用户 / TLS 调试面**：当前只绑 loopback；要开远程另立安全设计。
 - **GPU 驱动级 / 系统级采样**：S3d 只做框架绘制与 layer，不做 Perfetto 级系统追踪。
+- **自己实现内省**：属性 / 内存 / 报文原文 / 调用链交给 PHP 原语（A55）。我们重新实现一遍只会更贵、更少 —— 69 行的 `__debugInfo` dump 实测比 715 行的结构化版本信息更全。
 - **替代 Sentry / APM**：崩溃取证只服务本框架的现场，不做通用告警平台。
 
 ## 待裁决
