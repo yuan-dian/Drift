@@ -143,6 +143,15 @@ final class RemoteSession implements Session
         return $this->callObject(Methods::RESUME, $frames === null ? [] : ['frames' => $frames]);
     }
 
+    /**
+     * 告诉宿主这次驱动结束了。只发"我因为 `--at=N` 停了"这个事实，
+     * 状态名由宿主按唯一规则翻译 —— 客户端写状态等于让两边各有一套语义。
+     */
+    public function finish(?int $at = null): array
+    {
+        return $this->callObject(Methods::FINISH, $at === null ? [] : ['at' => $at]);
+    }
+
     /** 跑这次会话的宿主进程号；没打开时为 `null`。 */
     public function hostPid(): ?int
     {

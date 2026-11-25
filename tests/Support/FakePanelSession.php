@@ -135,6 +135,16 @@ final class FakePanelSession implements Session
         return null;
     }
 
+    public function finish(?int $at = null): array
+    {
+        return [
+            'session' => 'fake',
+            'state' => $at === null ? 'finished' : 'paused',
+            'reason' => $at === null ? null : 'at',
+            'lastFrame' => $this->lastFrameId(),
+        ];
+    }
+
     /** 假会话没有录制器要卸，也没有连接要断 —— 关它是空操作，但必须能关。 */
     public function close(): void
     {

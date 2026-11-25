@@ -322,9 +322,9 @@ final class LiveHostTest extends SmokeTestCase
     /**
      * S6 判据 3 + 5 + 8 + 9：`--at` 停住的会话能被放行，而自走宿主上 `frame` 被拒。
      *
-     * 合成一条是因为它们判的是同一件事的三面：**这个宿主的帧由它自己推**。
+     * 合成一条是因为它们判的是同一件事的四面：**这个宿主的帧由它自己推**。
      * 观察点只生效一次（否则 `resume` 一步都走不动）、`driven` 说得出这件事、
-     * `frame` 因此不该被接受。
+     * `frame` 因此不该被接受、`finish` 也不该由客户端代为判定。
      */
     public function testAtCanBeResumedAndFrameIsRefused(): void
     {
@@ -344,6 +344,17 @@ final class LiveHostTest extends SmokeTestCase
         } catch (ProtocolError $e) {
             check(
                 '自走宿主上 frame 报 not_applicable',
+                $e->errorCode === ProtocolError::NOT_APPLICABLE,
+                $e->errorCode . '：' . $e->getMessage(),
+            );
+        }
+
+        try {
+            $session->finish();
+            check('自走宿主上 finish 该被拒', false, '居然替它判了停');
+        } catch (ProtocolError $e) {
+            check(
+                '自走宿主上 finish 报 not_applicable',
                 $e->errorCode === ProtocolError::NOT_APPLICABLE,
                 $e->errorCode . '：' . $e->getMessage(),
             );

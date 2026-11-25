@@ -14,6 +14,7 @@ namespace Drift\Debug\Protocol;
  * | 驱动 | `frame` / `input` / `effect` | 同上 |
  * | 读 | `query` | 同上 |
  * | 干预 | `pause` / `resume` | 同上，但**只对自走宿主有意义** |
+ * | 收尾 | `finish` | 客户端说，宿主标结束；**只对从属宿主有意义** |
  *
  * 纪律还在，只是换了写法：凡是能由 `query` 表达的，都不另开动词 —— 每多一个动词，
  * 对端就多一份"哪个先哪个后"的状态要维护，而状态会漂。`script` / `digest` 因此是
@@ -51,6 +52,12 @@ final class Methods
      */
     public const string RESUME = 'resume';
 
+    /**
+     * 客户端通知：这次驱动结束了。参数 `at`（可选正整数）：因为 `--at` 停的。
+     * 回执与一次 `state` 查询同形。自走宿主上被拒（何时停由它自己判）。
+     */
+    public const string FINISH = 'finish';
+
     /** 卸录制器、关会话。 */
     public const string CLOSE = 'close';
 
@@ -62,6 +69,7 @@ final class Methods
         self::QUERY,
         self::PAUSE,
         self::RESUME,
+        self::FINISH,
         self::CLOSE,
     ];
 }

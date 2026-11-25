@@ -390,6 +390,49 @@ final class HostTest extends SmokeTestCase
         check('状态还是 running（没被谎称暂停）', ($replies[3]['result']['state'] ?? '') === 'running', self::show($replies[3]['result'] ?? null));
     }
 
+    public function testFinishMarksTheEndWithTheAtFact(): void
+    {
+        check('FINISH 已登记在协议里', \in_array(Methods::FINISH, Methods::ALL, true));
+
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::FRAME, ['t' => 16.7]),
+            self::call(3, Methods::FINISH, ['at' => 2]),
+            self::call(4, Methods::QUERY, ['name' => 'state']),
+        ])->decoded();
+
+        check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
+        if (\count($replies) !== 4) {
+            return;
+        }
+
+        $finish = $replies[2]['result'] ?? null;
+        $state = $replies[3]['result'] ?? null;
+        check('finish 成功', $replies[2]['ok'] === true, self::show($replies[2]));
+        check('finish 报 paused', ($finish['state'] ?? '') === 'paused', self::show($finish));
+        check('reason 是 at', ($finish['reason'] ?? '') === 'at', self::show($finish));
+        check('finish 回执与 state 查询逐值相同', $finish === $state, self::show($finish) . ' vs ' . self::show($state));
+    }
+
+    public function testFinishRejectsAnInvalidAtAndStaysAlive(): void
+    {
+        $replies = $this->serve([
+            self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
+            self::call(2, Methods::FINISH, ['at' => 0]),
+            self::call(3, Methods::FINISH, ['at' => '2']),
+            self::call(4, Methods::QUERY, ['name' => 'state']),
+        ])->decoded();
+
+        check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
+        if (\count($replies) !== 4) {
+            return;
+        }
+
+        check('at=0 报 bad_request', ($replies[1]['error']['code'] ?? '') === ProtocolError::BAD_REQUEST, self::show($replies[1]));
+        check('字符串 at 报 bad_request', ($replies[2]['error']['code'] ?? '') === ProtocolError::BAD_REQUEST, self::show($replies[2]));
+        check('被拒后会话还在', ($replies[3]['result']['state'] ?? '') === 'running', self::show($replies[3]));
+    }
+
     /** `open` 回执照样说清楚帧是谁推的，客户端不必靠"发一条试试"去猜。 */
     public function testOpenSaysTheClientDrives(): void
     {

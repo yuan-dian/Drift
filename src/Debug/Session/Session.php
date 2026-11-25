@@ -29,6 +29,17 @@ namespace Drift\Debug\Session;
  */
 interface Session extends SessionQueries, SessionDriver
 {
+    /**
+     * 通知会话：这次驱动结束了。
+     *
+     * `$at` 是调用方知道的事实（只跑到第 N 帧就停了），不是它猜的状态名。
+     * 返回与 `query('state')` 同形的数组：控制面与观察面不能有两套形状。
+     * 本地与远端都走这里 —— 一处实现各自翻译，调用方不必知道自己连的是哪一个。
+     *
+     * @return array{session: string, state: string, reason: ?string, lastFrame: int}
+     */
+    public function finish(?int $at = null): array;
+
     /** 结束这次会话。重复调用必须无害。 */
     public function close(): void;
 }

@@ -40,6 +40,21 @@ final class SessionState
     {
     }
 
+    /**
+     * 一次驱动结束时的状态，只有这一个规则。
+     *
+     * 参数是调用方知道的事实（「我因为 `--at=N` 停了」），不是它猜的状态名——
+     * 让它直接写 `state` 等于把 `crashed` 也开放给不配判的人。
+     *
+     * @return array{state: string, reason: ?string}
+     */
+    public static function afterDrive(?int $at): array
+    {
+        return $at === null
+            ? ['state' => 'finished', 'reason' => null]
+            : ['state' => 'paused', 'reason' => 'at'];
+    }
+
     /** @return array{session: string, state: string, reason: ?string} */
     public function toArray(): array
     {

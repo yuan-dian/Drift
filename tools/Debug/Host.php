@@ -220,6 +220,30 @@ final class Host
             return;
         }
 
+        if ($method === Methods::FINISH) {
+            if ($this->drive !== null) {
+                // 何时停由自走宿主自己判（`Drive::settle()`）；让它听客户端的
+                // 就会出现两套"跑完了"的定义，而两边的状态会各自说一套。
+                $this->fail(
+                    $channel,
+                    $id,
+                    ProtocolError::NOT_APPLICABLE,
+                    '这个宿主自己按脚本判停：别告诉它什么时候结束',
+                );
+
+                return;
+            }
+            $at = $params['at'] ?? null;
+            if ($at !== null && (!\is_int($at) || $at < 1)) {
+                $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'finish 的 at 是正整数');
+
+                return;
+            }
+            $this->ok($channel, $id, $session->finish($at));
+
+            return;
+        }
+
         if ($method === Methods::PAUSE || $method === Methods::RESUME) {
             $this->control($channel, $id, $session, $method, $params);
 

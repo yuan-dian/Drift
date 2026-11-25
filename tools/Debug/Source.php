@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\DebugSession;
 use Drift\App\Replay;
 use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Evidence;
@@ -154,12 +153,10 @@ final class Source
         Replay::apply($live, $drive, [], $at, static function (int $id, float $ms): void {
         });
 
-        // 一次跑完的出口，会话状态该是 finished：不然 `web` 的状态栏会一直说"还在跑"，
-        // 而它早就不动了 —— 观察者只能靠"帧号不再变"自己推，那不是状态该有的样子。
-        // （`--remote` 那份状态的宿主在别人进程里，这里管不到，见 B4 §11。）
-        if ($live instanceof DebugSession) {
-            $live->markState('finished');
-        }
+        // 收尾状态由会话自己翻译：本地与远端调同一个动作，调用方不知道自己连的是
+        // 哪一个。--at 是 paused(at) 而不是 finished —— 与自走宿主同一套语义。
+        // 不标的话 `web` 的状态栏会一直说"还在跑"，而它早就不动了。
+        $live->finish($at);
 
         return new self($live, $drive->target, false, $out, static function () use ($live): void {
             $live->close();

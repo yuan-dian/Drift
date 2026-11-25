@@ -317,6 +317,18 @@ final class DebugSession implements Session
     }
 
     /**
+     * 这次驱动跑完了（或到了 `--at`）。返回与 `query('state')` 同一份形状，
+     * 让控制面与观察面读到的是同一个事实，而不是两次组装。
+     */
+    public function finish(?int $at = null): array
+    {
+        $settled = SessionState::afterDrive($at);
+        $this->markState($settled['state'], $settled['reason']);
+
+        return $this->query('state');
+    }
+
+    /**
      * 关闭会话并卸下录制器。
      *
      * 只在当前录制器**仍是自己装的**那个时才卸：别把后来者的缓冲摘掉。
