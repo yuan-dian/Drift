@@ -184,6 +184,41 @@ final class RecorderTest extends SmokeTestCase
         }
     }
 
+    /**
+     * 窗口里还被证据引用着的节点，不因 TTL 过期而回收。
+     *
+     * TTL 按帧号算，而桥让静止页以 ≤25ms 一轮空转：120 帧眨眼就过。只看 TTL 会把
+     * 当前页面上的节点标成"已回收"，而窗口里那些帧的因果与重建明明还引用着它。
+     * 判据钉的是"窗口引用优先于 TTL"，不是 TTL 的具体数字。
+     */
+    public function testFramesInWindowKeepTheirNodesAlive(): void
+    {
+        $recorder = Recorder::install();
+
+        try {
+            $app = $this->boot();
+            $app->frame(0.0, $this->constraints());
+            CounterState::$last?->increment();
+            $app->frame(16.0, $this->constraints());
+
+            $id = CounterState::$last?->element()?->debugId ?? 0;
+            check('拿到了节点号', $id > 0, 'id=' . $id);
+            check('起初是活动节点', $recorder->nodeStatus($id) === 'active', $recorder->nodeStatus($id));
+
+            for ($i = 2; $i <= 400; ++$i) {
+                $app->frame($i * 16.0, $this->constraints());
+            }
+
+            check(
+                '静止 400 帧后仍是活动节点',
+                $recorder->nodeStatus($id) === 'active',
+                'frame=' . $recorder->lastFrameId() . ' status=' . $recorder->nodeStatus($id),
+            );
+        } finally {
+            Recorder::uninstall();
+        }
+    }
+
     /** settle 与 paint 都整段跳过的帧没有新几何；不采它才能把成本压到变化量。 */
     public function testQuietFrameSkipsGeometrySampling(): void
     {
