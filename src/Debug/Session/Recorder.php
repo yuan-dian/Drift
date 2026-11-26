@@ -178,6 +178,17 @@ final class Recorder implements PaintObserver
     private array $geometryDigest = [];
 
     /**
+     * node => 最后一次采到的几何。窗口滚动会裁掉旧帧，但稳定祖先（外层容器）只在
+     * 首帧采过一次、签名此后不变 —— 没有这份基线，后代的父链查不到祖先，绝对坐标
+     * 就丢掉整段祖先偏移，线框整体平移、与真机底图错位。
+     *
+     * 只作为窗口内找不到时的兜底；记录帧晚于目标帧（查历史帧）或节点已离树时不用。
+     *
+     * @var array<int, GeometryRecord>
+     */
+    private array $geometryBaseline = [];
+
+    /**
      * 最后一次真实采样时还在树里的节点。
      *
      * ★ 几何按"每节点最近一次记录"累积，节点从树上消失后旧记录不会自己走 ——
@@ -956,6 +967,13 @@ final class Recorder implements PaintObserver
             }
         }
 
+        // 窗口滚动裁掉了祖先那一条唯一记录（签名此后没变、不再重采）。基线保留最后
+        // 一次采样，用它补出父链；只在本帧之前记过才算，查更早的历史帧不能拿现在补。
+        $base = $this->geometryBaseline[$node] ?? null;
+        if ($base !== null && $base->frame <= $frame) {
+            return $base;
+        }
+
         return null;
     }
 
@@ -1007,6 +1025,18 @@ final class Recorder implements PaintObserver
                 }
                 $out[$node] = $record;
             }
+        }
+
+        // 稳定祖先的唯一记录被窗口裁掉后，用基线补回，让绝对坐标的父链不断。
+        // 窗口里已有更新的记录时不覆盖；离树节点、晚于目标帧的记录不补。
+        foreach ($this->geometryBaseline as $node => $record) {
+            if (isset($out[$node]) || $record->frame > $frame) {
+                continue;
+            }
+            if (($this->goneAt[(int) $node] ?? \PHP_INT_MAX) <= $frame) {
+                continue;
+            }
+            $out[$node] = $record;
         }
 
         return $out;
@@ -1339,7 +1369,9 @@ final class Recorder implements PaintObserver
             if ($this->options->geometry() === GeometryCapture::All
                 || ($this->geometryDigest[$id] ?? null) !== $signature
             ) {
-                $this->geometry[$frame][$id] = GeometryRecord::fromFields($fields);
+                $record = GeometryRecord::fromFields($fields);
+                $this->geometry[$frame][$id] = $record;
+                $this->geometryBaseline[$id] = $record;
                 $this->geometryDigest[$id] = $signature;
             }
             $boxId = $id;
@@ -1564,6 +1596,7 @@ final class Recorder implements PaintObserver
         //   上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报，看起来完美。
         $this->geometry = [];
         $this->geometryDigest = [];
+        $this->geometryBaseline = [];
         $this->sampledNodes = [];
         $this->goneAt = [];
         $this->geometryPrimed = false;
@@ -1686,7 +1719,7 @@ final class Recorder implements PaintObserver
                 continue;
             }
             $this->evicted[$id] = $seen;
-            unset($this->nodes[$id], $this->boxless[$id], $this->geometryDigest[$id]);
+            unset($this->nodes[$id], $this->boxless[$id], $this->geometryDigest[$id], $this->geometryBaseline[$id]);
         }
         foreach ($this->goneAt as $node => $gone) {
             if (!isset($retain[$node]) && $this->frameId - $gone > self::NODE_TTL_FRAMES) {
