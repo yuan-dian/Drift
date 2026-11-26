@@ -216,10 +216,12 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
      */
     public function onPainted(\Drift\Rendering\Canvas $canvas, int $frame): void
     {
-        // `frame` 是**拍这张图时主循环跑到第几帧**（这个回调发生在 `endFrame()` 之前，
-        // 本帧的几何还没落账）。它只写进 meta 供人参考 —— 谁也不该拿它去取几何，
-        // 那个号必然落后一帧。web 的跟随用服务端缺省帧（几何窗口最新），与画面同源。
-        $this->shot?->capture($canvas, $frame, \hrtime(true) / 1e6);
+        // 快照的锚点必须落在几何窗口里：live 几何只在结构变化时落账（Changed），
+        // 而主循环在空闲窗口里照常推进。拿 `frame` 配对，静止几十秒后它就会跑到
+        // 60 帧窗口之外，`boxes?frame=N` 回 frame-out-of-window，前端退回缺省帧，
+        // 于是当前画面套上了另一页的线框。几何窗口最新帧才是这张图能配上的几何。
+        $anchor = $this->session?->recorder()->geometryCoverage()['to'] ?? $frame;
+        $this->shot?->capture($canvas, $anchor, \hrtime(true) / 1e6);
     }
 
     /**
