@@ -1303,12 +1303,21 @@ final class Recorder implements PaintObserver
     /** 帧末从根先序采一遍；父指针取最近的**有盒祖先**，约束是沿盒树传的。 */
     private function sampleGeometry(Element $root, int $frame): void
     {
+        // 离树后重新出现的节点（Offstage 保活的页面切回来）用同一个号：签名还留着，
+        // 但旧记录可能已经滚出几何窗口。先撤签名，逼这次采样真的落一条。
+        foreach ($this->goneAt as $node => $_) {
+            unset($this->geometryDigest[$node]);
+        }
+
         $seen = [];
         $this->sampleOne($root, $frame, -1, $seen);
         foreach ($this->sampledNodes as $node => $_) {
             if (!isset($seen[$node])) {
                 $this->goneAt[$node] = $frame;
             }
+        }
+        foreach ($seen as $node => $_) {
+            unset($this->goneAt[$node]);
         }
         $this->sampledNodes = $seen;
     }

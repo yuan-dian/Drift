@@ -9,7 +9,12 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Routing\PageHost;
+use Drift\Routing\RouteTable;
+use Drift\Widget\BuildContext;
 use Drift\Widget\Column;
+use Drift\Widget\State;
+use Drift\Widget\StatefulWidget;
 use Drift\Widget\Text;
 use Drift\Widget\Widget;
 
@@ -82,6 +87,68 @@ final class GeometryLifetimeTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    public function testSwitchingBackRestoresTheSameNodes(): void
+    {
+        $recorder = Recorder::install();
+        try {
+            $old = $this->app('old');
+            $new = $this->app('new');
+            $old->frame(32.0, $this->constraints()); // 切回：同一批元素、同一个节点号
+
+            $rows = \array_keys($recorder->geometryRows($recorder->lastFrameId()));
+            \sort($rows);
+            $live = $this->liveIds($recorder, $recorder->lastFrameId());
+
+            check('切回后旧节点重新有几何', $rows === $live,
+                '实得 ' . \json_encode($rows) . ' 应得 ' . \json_encode($live));
+            check('画面只属于当前这一棵树', !\in_array(4, $rows, true),
+                \json_encode($rows));
+        } finally {
+            Recorder::uninstall();
+        }
+        $this->flushChecks();
+    }
+
+    public function testHiddenPageLeavesNoBoxesAndComesBackWithThem(): void
+    {
+        $recorder = Recorder::install();
+        try {
+            $app = new SwitchPagesApplication();
+            $surface = new SurfaceProbe();
+            $surface->resize(200, 120, 1.0);
+            $app->attach($surface, $this->constraints());
+            $firstFrame = $recorder->lastFrameId();
+            $firstIds = \array_keys($recorder->geometryRows($firstFrame));
+
+            SwitchPagesApplication::$state?->switchTo('b');
+            $app->frame(16.0, $this->constraints());
+            $secondFrame = $recorder->lastFrameId();
+            $secondRows = \array_keys($recorder->geometryRows($secondFrame));
+            $hidden = \array_diff($firstIds, $secondRows);
+
+            check('前提：第一页有被隐藏的专属节点', $hidden !== [], 'ids=' . \json_encode($firstIds));
+            check('隐藏页的盒不再出现在当前帧', \array_intersect($hidden, $secondRows) === [],
+                '残留 ' . \json_encode(\array_intersect($hidden, $secondRows)));
+
+            SwitchPagesApplication::$state?->switchTo('a');
+            $app->frame(32.0, $this->constraints());
+            $backFrame = $recorder->lastFrameId();
+            $backRows = \array_keys($recorder->geometryRows($backFrame));
+
+            check('切回原页的盒全部回来', \array_diff($hidden, $backRows) === [],
+                '缺 ' . \json_encode(\array_diff($hidden, $backRows)));
+            check(
+                '切回后几何窗口跟着推进（底图不会再配到切页前的旧帧）',
+                (int) $recorder->geometryCoverage()['to'] === $backFrame,
+                'coverage=' . \json_encode($recorder->geometryCoverage()) . ' frame=' . $backFrame,
+            );
+        } finally {
+            Recorder::uninstall();
+            SwitchPagesApplication::$state = null;
+        }
+        $this->flushChecks();
+    }
+
     public function testQuietFrameKeepsTheLastSampledTree(): void
     {
         $recorder = Recorder::install();
@@ -103,6 +170,57 @@ final class GeometryLifetimeTest extends SmokeTestCase
             Recorder::uninstall();
         }
         $this->flushChecks();
+    }
+}
+
+/** @internal 判据夹具：真 PageHost 切页，隐藏页由 Offstage 保活。 */
+final class SwitchPagesApplication extends Application
+{
+    public static ?SwitchPagesState $state = null;
+
+    public function buildRoot(): Widget
+    {
+        return new SwitchPagesWidget();
+    }
+}
+
+/** @internal 判据夹具 */
+final class SwitchPagesWidget extends StatefulWidget
+{
+    public function createState(): State
+    {
+        return new SwitchPagesState();
+    }
+}
+
+/** @internal 判据夹具 */
+final class SwitchPagesState extends State
+{
+    private string $page = 'a';
+
+    public function initState(): void
+    {
+        SwitchPagesApplication::$state = $this;
+    }
+
+    public function switchTo(string $page): void
+    {
+        $this->setState(function () use ($page): void {
+            $this->page = $page;
+        });
+    }
+
+    public function build(BuildContext $ctx): Widget
+    {
+        $table = RouteTable::make()
+            ->route('a', static fn (): Widget => Column::make()->children([
+                Text::make('a-one'), Text::make('a-two'),
+            ]))
+            ->route('b', static fn (): Widget => Column::make()->children([
+                Text::make('a-one'), Text::make('a-two'),
+            ]));
+
+        return PageHost::make()->current($this->page)->table($table);
     }
 }
 
