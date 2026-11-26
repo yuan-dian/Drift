@@ -254,7 +254,7 @@ h2 {
 /* 帧时间轴：用现成 /api/frames，点一帧就落到那一帧，不用先看发现才知道去哪。 */
 #framestrip {
   flex: 0 0 auto;
-  max-height: 132px;
+  max-height: 186px;
   overflow: auto;
   border-top: 1px solid var(--line);
   background: var(--panel);
@@ -263,7 +263,8 @@ h2 {
   font-size: 12px;
 }
 #framestrip summary { cursor: pointer; margin-bottom: 4px; }
-#frameList { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }
+#axis { overflow-x: auto; padding-bottom: 4px; }
+#frameList { display: flex; gap: 5px; width: max-content; }
 .frame {
   flex: 0 0 auto;
   min-width: 66px;
@@ -279,6 +280,53 @@ h2 {
 .frame.slow { border-left: 2px solid var(--warn); }
 .frame .cost { color: var(--dim); }
 .frame.current .cost { color: inherit; }
+.frame.settled { border-bottom: 2px solid var(--accent); }
+
+/* 网络泳道：与帧条同处一个横向滚动容器，位置按帧条实际几何落，不猜格宽。 */
+#netlane {
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+  height: 22px;
+  border-top: 1px solid var(--line);
+}
+#netlane .req {
+  position: absolute;
+  top: 3px;
+  height: 14px;
+  min-width: 3px;
+  padding: 0 3px;
+  border: 1px solid #4b7f93;
+  border-radius: 2px;
+  background: #264452;
+  color: var(--text);
+  font-size: 10px;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+#netlane .req:hover { border-color: var(--accent); color: var(--accent); }
+#netlane .req.active { border-color: var(--accent); background: #1d3b36; color: var(--accent); }
+#netlane .req.failed { border-color: var(--bad); background: #4b2e33; }
+#netlane .req.outside { border-style: dashed; }
+#netlane .empty { padding-top: 3px; }
+#netscope { margin: 4px 0 0; }
+
+/* 请求详情的四段链：落地节点与帧都能点回主时间轴，不是一行死文本。 */
+#card .step {
+  margin: 8px 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+}
+#card .step > b {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+}
+#card .jump { color: var(--accent); cursor: pointer; }
+#card .jump:hover { text-decoration: underline; }
 
 /* 节点面板 */
 #crumbs { color: var(--dim); margin-bottom: 8px; word-break: break-all; }

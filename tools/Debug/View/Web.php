@@ -124,6 +124,10 @@ final class Web
             '/api/repaints' => $this->json($this->queries->query('repaints', [
                 'limit' => (int) ($query['limit'] ?? 200),
             ])),
+            // 网络泳道与请求详情走同一个查询面；列表只给骨架，报文仍要显式问。
+            '/api/network' => $this->json($this->queries->query('network', [
+                'limit' => (int) ($query['limit'] ?? 100),
+            ])),
             '/api/node' => $this->node($query),
             // 搜索命中 request:N 后的落地页。请求详情走同一个查询面，不另存一份。
             '/api/request' => $this->request($query),

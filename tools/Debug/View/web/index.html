@@ -59,7 +59,11 @@
     </div>
     <details id="framestrip" open>
       <summary>帧时间轴 <span id="frameCount" class="dim"></span></summary>
-      <div id="frameList"></div>
+      <div id="axis">
+        <div id="frameList"></div>
+        <div id="netlane"></div>
+      </div>
+      <p id="netscope" class="dim small">仅统计经 Drift HTTP 客户端的请求 · 每格一帧，静止空帧已折叠</p>
     </details>
   </section>
 

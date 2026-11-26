@@ -43,6 +43,11 @@ const state = {
   // 用户是否动过视图。没动过时 `layout()` 每次重新居中（窗口尺寸变了也不跑偏）；
   // 一旦拖过或缩放过就尊重用户的视点，直到点"适配"。
   panned: false,
+  // 共轴时间轴：帧条是横轴，请求条按帧条的实际 DOM 位置贴上去。
+  frames: [],
+  network: [],
+  networkCaptured: false,
+  activeRequest: 0,
 };
 
 const colorCache = new Map();
@@ -96,7 +101,7 @@ async function boot() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'F5' || (e.key === 'r' && (e.ctrlKey || e.metaKey))) refresh();
   });
-  window.addEventListener('resize', () => scheduleDraw());
+  window.addEventListener('resize', () => { scheduleDraw(); placeNetwork(); });
 
   // 只监听 window.resize 不够：首屏 flex 算完、右面板内容撑开、字号加载完成
   // 都会改变画布的客户区尺寸，而这些都不发 window 事件。漏掉的表现是
@@ -183,7 +188,7 @@ async function boot() {
     }
   });
 
-  await Promise.all([loadScript(), loadBrief(), loadFrames()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork()]);
 
   // 第一屏：有底图就跟"最新"（服务端缺省帧 = 几何窗口最新），画面也是最新的，
   // 两者同源；没有底图（离线包 / 自己跑的会话）才退回"最值得看的一帧"。
@@ -331,8 +336,10 @@ function jump(address) {
   if (n) select(Number(n[1]));
 }
 
-/** 请求地址（request:N）的落地：复用右侧节点面板，不另起一个要维护的详情窗口。 */
+/** 请求详情：骨架 + 落地节点 + 结算帧的重建与绘制。四段都来自现成查询。 */
 async function showRequest(id) {
+  state.activeRequest = Number(id);
+  markActiveRequest();
   document.getElementById('selected').textContent = `#req ${id}`;
   document.getElementById('crumbs').textContent = '';
   document.getElementById('children').textContent = '请求不属于控件树';
@@ -363,6 +370,59 @@ async function showRequest(id) {
       table.appendChild(tr);
     }
     host.appendChild(table);
+
+    const landed = el('div', 'step');
+    landed.appendChild(el('b', '', '它落到哪个节点'));
+    if (Array.isArray(r.landed) && r.landed.length) {
+      for (const node of r.landed) {
+        const link = el('span', 'jump', `node:${node}`);
+        link.onclick = () => {
+          setFollow(false);
+          loadFrame(Number(r.settledAtFrame)).then(() => select(Number(node)));
+        };
+        landed.appendChild(link);
+        landed.appendChild(document.createTextNode(' '));
+      }
+    } else {
+      landed.appendChild(el('span', 'none', '同帧没有状态写入'));
+    }
+    host.appendChild(landed);
+
+    const frame = Number(r.settledAtFrame || 0);
+    const cause = el('div', 'step');
+    cause.appendChild(el('b', '', '结算那一帧'));
+    const summary = state.frames.find((f) => Number(f.id) === frame);
+    if (summary) {
+      cause.appendChild(el('span', '', `#${frame} · 重建 ${summary.rebuilt ?? 0} · 因果 ${summary.causes ?? 0} · ${Number(summary.cost || 0).toFixed(1)}ms`));
+      const link = el('span', 'jump', ' 跳到这帧');
+      link.onclick = () => { setFollow(false); loadFrame(frame); };
+      cause.appendChild(link);
+    } else {
+      cause.appendChild(el('span', 'none', frame ? `#${frame} 不在帧窗口里（滚出或未采）` : '请求还在飞，没有结算帧'));
+    }
+    host.appendChild(cause);
+
+    const painted = el('div', 'step');
+    painted.appendChild(el('b', '', '那一帧画了什么'));
+    if (frame) {
+      try {
+        const p = await get(`/api/paint?frame=${frame}`);
+        if (p.found) {
+          const misses = Object.keys(p.misses || {}).length;
+          painted.appendChild(el('span', '', `重画 ${p.paintedNodes ?? 0} 盒 · 层命中 ${p.hits ?? 0} · 未命中 ${misses}`));
+        } else {
+          const why = p.reason === 'paint-not-captured'
+            ? '这份证据没有开绘制采集'
+            : `绘制记录不可用（${p.reason || '未知'}）`;
+          painted.appendChild(el('span', 'none', why));
+        }
+      } catch (e) {
+        painted.appendChild(el('span', 'none', e.message));
+      }
+    } else {
+      painted.appendChild(el('span', 'none', '请求未结算'));
+    }
+    host.appendChild(painted);
   } catch (e) {
     host.textContent = e.message;
   }
@@ -412,7 +472,8 @@ async function search(text) {
 async function loadFrames() {
   try {
     const page = await get('/api/frames?limit=120');
-    renderFrames(page.frames || []);
+    state.frames = page.frames || [];
+    renderFrames(state.frames);
   } catch (e) {
     document.getElementById('frameList').textContent = e.message;
   }
@@ -433,11 +494,83 @@ function renderFrames(rows) {
     host.appendChild(b);
   }
   markCurrentFrame();
+  // 帧条重建后 DOM 位置全变了，网络条要跟着重贴。
+  placeNetwork();
 }
 
 function markCurrentFrame() {
   for (const b of document.querySelectorAll('#frameList .frame')) {
     b.classList.toggle('current', b.dataset.frame === String(state.frame));
+  }
+}
+
+/** 网络泳道：列表原样取自 /api/network，只把每帧的骨架画成横条。 */
+async function loadNetwork() {
+  try {
+    const page = await get('/api/network?limit=100');
+    state.network = page.rows || [];
+    state.networkCaptured = page.window?.captured === true;
+  } catch (e) {
+    state.network = [];
+    state.networkCaptured = false;
+  }
+  renderNetwork();
+}
+
+function renderNetwork() {
+  const host = document.getElementById('netlane');
+  if (!host) return;
+  host.textContent = '';
+  if (state.network.length === 0) {
+    // "没开采集"与"开了但没请求"是两件事：前者不能让读者以为应用没发过请求。
+    host.appendChild(el('div', 'empty',
+      state.networkCaptured ? '这段证据没有请求' : '这份证据没有开网络采集'));
+    return;
+  }
+
+  for (const r of state.network) {
+    const failed = r.ok === false || Number(r.status || 0) >= 400;
+    const bar = el('div', `req${failed ? ' failed' : ''}`);
+    bar.dataset.request = String(r.request);
+    bar.textContent = `${r.method || '?'} ${r.path || r.url || '?'}`;
+    bar.title = `#${r.request} ${r.method || ''} ${r.url || ''} · ${r.status ?? '?'} · ${r.elapsedMs ?? '?'}ms`
+      + ` · 帧 #${r.startedAtFrame ?? '?'}→#${r.settledAtFrame || '在飞'}`
+      + (r.pendingFrames ? ` · 等 ${r.pendingFrames} 帧` : '');
+    bar.onclick = () => showRequest(Number(r.request));
+    host.appendChild(bar);
+  }
+  placeNetwork();
+}
+
+/**
+ * 把请求条贴到帧条上。★ 用 DOM 实际位置而不是"每格 71px"：帧条宽度随帧号位数
+ * 和内容变，写死格宽会让条尾和结算帧错开一格，看着像请求在别的帧落地。
+ */
+function placeNetwork() {
+  const host = document.getElementById('netlane');
+  if (!host) return;
+  const cells = new Map();
+  for (const b of document.querySelectorAll('#frameList .frame')) {
+    cells.set(Number(b.dataset.frame), b);
+  }
+  for (const bar of host.querySelectorAll('.req')) {
+    const r = state.network.find((one) => Number(one.request) === Number(bar.dataset.request));
+    if (!r) continue;
+    const a = cells.get(Number(r.startedAtFrame));
+    const z = cells.get(Number(r.settledAtFrame));
+    const left = a ? a.offsetLeft : (z ? z.offsetLeft : 0);
+    const right = z ? z.offsetLeft + z.offsetWidth : (a ? a.offsetLeft + a.offsetWidth : 0);
+    bar.style.left = `${left}px`;
+    bar.style.width = `${Math.max(8, right - left)}px`;
+    bar.classList.toggle('outside', !a || !z);
+    if (z) z.classList.add('settled');
+  }
+  markActiveRequest();
+}
+
+function markActiveRequest() {
+  for (const bar of document.querySelectorAll('#netlane .req')) {
+    bar.classList.toggle('active', Number(bar.dataset.request) === state.activeRequest);
   }
 }
 
@@ -1093,7 +1226,10 @@ async function poll() {
   await pollSelection();
   updateNoShot(driven);
   // 帧时间轴增长慢，没必要跟着 500ms 的选中/画面轮询一起取；3 秒一次足够。
-  if (++pollTick % 6 === 0) await loadFrames();
+  if (++pollTick % 6 === 0) {
+    await loadFrames();
+    await loadNetwork();
+  }
 }
 
 /**
@@ -1148,7 +1284,7 @@ async function pollShot() {
 }
 
 async function refresh() {
-  await Promise.all([loadScript(), loadBrief(), loadFrames()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork()]);
   await loadFrame(state.frame);
   await poll();
 }
