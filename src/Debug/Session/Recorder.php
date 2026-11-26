@@ -178,6 +178,20 @@ final class Recorder implements PaintObserver
     private array $geometryDigest = [];
 
     /**
+     * 最后一次真实采样时还在树里的节点。
+     *
+     * ★ 几何按"每节点最近一次记录"累积，节点从树上消失后旧记录不会自己走 ——
+     *   切到另一页/另一个窗口时，两棵树的盒会一起留在投影层。静止帧不重采样，
+     *   这份集合正好继承上一帧，不会因为"这一轮没看见"而把画面上的盒清空。
+     *
+     * @var array<int, true> node => true
+     */
+    private array $sampledNodes = [];
+
+    /** @var array<int, int> node => 离开树的那一帧；查询帧不早于它就不再输出旧几何 */
+    private array $goneAt = [];
+
+    /**
      * 是否已经采过至少一帧几何。
      *
      * settle 与 paint 都整段跳过的帧才算"全静止"：既不重建也不重画，几何没有理由变。
@@ -933,6 +947,9 @@ final class Recorder implements PaintObserver
         if ($frame > $max) {
             return null; // 未来帧：窗口里没有这一帧的采样，往前找等于伪造
         }
+        if (($this->goneAt[$node] ?? \PHP_INT_MAX) <= $frame) {
+            return null; // 这一帧时节点已经离开树；旧记录只属于更早的帧
+        }
         for ($f = $frame; $f >= $min; --$f) {
             if (isset($this->geometry[$f][$node])) {
                 return $this->geometry[$f][$node];
@@ -967,6 +984,8 @@ final class Recorder implements PaintObserver
      * 供投影层跨盒扫描（例如比较父给子的约束与子实际收到的约束）。逐节点各问一次
      * 会得到同样的答案，但那要多 N 次往返，而且让消费者自己拼一张表。
      *
+     * 离开树的节点不再算"生效"：否则切窗后上一页的盒会一直挂在新画面上。
+     *
      * @return array<int, GeometryRecord> node id => 该帧生效的几何记录
      */
     public function geometryRows(int $frame): array
@@ -983,6 +1002,9 @@ final class Recorder implements PaintObserver
                 break;
             }
             foreach ($rows as $node => $record) {
+                if (($this->goneAt[(int) $node] ?? \PHP_INT_MAX) <= $frame) {
+                    continue;
+                }
                 $out[$node] = $record;
             }
         }
@@ -1281,12 +1303,21 @@ final class Recorder implements PaintObserver
     /** 帧末从根先序采一遍；父指针取最近的**有盒祖先**，约束是沿盒树传的。 */
     private function sampleGeometry(Element $root, int $frame): void
     {
-        $this->sampleOne($root, $frame, -1);
+        $seen = [];
+        $this->sampleOne($root, $frame, -1, $seen);
+        foreach ($this->sampledNodes as $node => $_) {
+            if (!isset($seen[$node])) {
+                $this->goneAt[$node] = $frame;
+            }
+        }
+        $this->sampledNodes = $seen;
     }
 
-    private function sampleOne(Element $element, int $frame, int $parentBoxId): void
+    /** @param array<int, true> $seen 本帧树里的节点，逐级累积后由 {@see sampleGeometry()} 收账 */
+    private function sampleOne(Element $element, int $frame, int $parentBoxId, array &$seen): void
     {
         $id = $this->idOf($element);
+        $seen[$id] = true;
         $boxId = $parentBoxId;
         $box = $element->renderObject();
         if ($box === null) {
@@ -1305,8 +1336,8 @@ final class Recorder implements PaintObserver
             $boxId = $id;
         }
 
-        $element->visitChildren(function (Element $child) use ($frame, $boxId): void {
-            $this->sampleOne($child, $frame, $boxId);
+        $element->visitChildren(function (Element $child) use ($frame, $boxId, &$seen): void {
+            $this->sampleOne($child, $frame, $boxId, $seen);
         });
     }
 
@@ -1524,6 +1555,8 @@ final class Recorder implements PaintObserver
         //   上上次会话的几何 —— 帧号恰好匹配，`stale` 也不会报，看起来完美。
         $this->geometry = [];
         $this->geometryDigest = [];
+        $this->sampledNodes = [];
+        $this->goneAt = [];
         $this->geometryPrimed = false;
         $this->paint = [];
         $this->openPaint = [];
@@ -1645,6 +1678,11 @@ final class Recorder implements PaintObserver
             }
             $this->evicted[$id] = $seen;
             unset($this->nodes[$id], $this->boxless[$id], $this->geometryDigest[$id]);
+        }
+        foreach ($this->goneAt as $node => $gone) {
+            if (!isset($retain[$node]) && $this->frameId - $gone > self::NODE_TTL_FRAMES) {
+                unset($this->goneAt[$node]);
+            }
         }
 
         while (\count($this->evicted) > self::NETWORK_CAPACITY * 2) {
