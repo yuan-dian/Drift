@@ -49,6 +49,7 @@ final class QueryRouter implements SessionQueries
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
         'async' => '异步任务时间线：提交 / 派发 / 结算帧、状态、耗时与落地节点（默认关）',
         'tree' => '结构树：第 N 帧那棵树（按出生/离开帧过滤，已回收节点在它活着的帧里照样画出）',
+        'treeDiff' => '两帧结构对比：出生 / 离开 / 重建事件（区间左开右闭，不假装记录了父与类型的旧值）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）',
@@ -122,6 +123,11 @@ final class QueryRouter implements SessionQueries
             'depth' => ['int', 6],
             'limit' => ['int', 200],
             'frame' => ['?int'],
+        ]],
+        'treeDiff' => ['treeDiff', [
+            'base' => ['int', 0],
+            'frame' => ['?int'],
+            'limit' => ['int', 200],
         ]],
         'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
         'find' => ['find', [

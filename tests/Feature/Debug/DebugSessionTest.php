@@ -85,6 +85,7 @@ final class DebugSessionTest extends SmokeTestCase
                 'networkBody' => ['request' => 999],
                 'async' => [],
                 'tree' => [],
+                'treeDiff' => [],
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'find' => ['pattern' => 'Text'],
                 'props' => ['node' => $nodeId],

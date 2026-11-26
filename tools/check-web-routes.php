@@ -99,7 +99,8 @@ function parseAssets(string $php): array
 function parseRefs(string $js): array
 {
     $refs = [];
-    if (preg_match_all('~/api/[a-z0-9/]*~', $js, $m)) {
+    // 路由可以带连字符（`/api/tree-diff`）；漏掉它就会把真接上的路由误报成死路由。
+    if (preg_match_all('~/api/[a-z0-9/-]*~', $js, $m)) {
         foreach ($m[0] as $path) {
             $refs[] = rtrim($path, '/');
         }

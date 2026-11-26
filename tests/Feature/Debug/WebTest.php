@@ -166,6 +166,21 @@ final class WebTest extends SmokeTestCase
         );
     }
 
+    /** 两帧对比走同一查询面：Web 拿到的事件与 CLI / Query 的口径一致，不从两棵树相减。 */
+    public function testTreeDiffRouteShipsTheSameEvents(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=3']);
+        $web = $this->json($port, '/api/tree-diff?base=0&frame=3&limit=200');
+        $cli = \json_decode($this->runTool('debug-tree-diff.php', ['--page=table', '--frames=3', '--base=0', '--frame=3', '--limit=200', '--json']), true);
+
+        check('Web 与 CLI 的事件逐值相同', ($web['rows'] ?? null) === ($cli['rows'] ?? null), \json_encode([$web['rows'] ?? null, $cli['rows'] ?? null]));
+        check('Web 与 CLI 的覆盖率逐值相同', ($web['coverage'] ?? null) === ($cli['coverage'] ?? null));
+        check('确实有事件（否则上面两条恒绿）', \count($web['rows'] ?? []) > 0, \json_encode($web['coverage'] ?? null));
+
+        $future = $this->json($port, '/api/tree-diff?base=1&frame=99');
+        check('未来帧在 Web 上也明确拒绝', ($future['reason'] ?? '') === 'frame-not-recorded', \json_encode($future));
+    }
+
     /** 报文附件走独立出口：没开采集要说清，不能拿空文本冒充空 body。 */
     public function testBodyRouteKeepsTheCaptureMiss(): void
     {
@@ -342,9 +357,15 @@ final class WebTest extends SmokeTestCase
     /** @param list<string> $args */
     private function runBrief(array $args): string
     {
+        return $this->runTool('debug-brief.php', $args);
+    }
+
+    /** 任何出口的 CLI 往返：Web 的断言要拿同一个出口的 stdout 逐值比，而不是另算一遍。 @param list<string> $args */
+    private function runTool(string $script, array $args): string
+    {
         $root = \dirname(__DIR__, 3);
         $proc = \proc_open(
-            \array_merge([\PHP_BINARY, $root . '/tools/debug-brief.php'], $args),
+            \array_merge([\PHP_BINARY, $root . '/tools/' . $script], $args),
             [0 => ['file', 'NUL', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $root,

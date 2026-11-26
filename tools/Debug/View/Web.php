@@ -142,6 +142,14 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
                 'frame' => (int) ($query['frame'] ?? 0) ?: null,
             ])),
+            // 两帧结构对比是**事件流**：不拿两次 /api/tree 在前端相减（那两份响应
+            // 已被 limit 截断，相减会把截断当成"没变"）。查询层直接给出生 / 离开 /
+            // 重建，前端只画；区间左开右闭，base 用 0 表示从录制开始。
+            '/api/tree-diff' => $this->json($this->queries->query('treeDiff', [
+                'base' => (int) ($query['base'] ?? 0),
+                'frame' => (int) ($query['frame'] ?? 0) ?: null,
+                'limit' => (int) ($query['limit'] ?? 200),
+            ])),
             // 报文是骨架的可选附件，默认不抓；空表与"没抓"必须分开，所以单开一个出口。
             '/api/body' => $this->body($query),
             '/api/node' => $this->node($query),

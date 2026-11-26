@@ -27,7 +27,7 @@ final class CliTest extends SmokeTestCase
             $digests[$name] = Commands::set($name)->parse(self::WORDS)->script()->digest();
             check("{$name} 能由词表建出脚本", $digests[$name] !== '', $name);
         }
-        check('15 个出口', \count($digests) === 15, (string) \count($digests));
+        check('16 个出口', \count($digests) === 16, (string) \count($digests));
         check('同一份词只有一份指纹', \count(\array_unique($digests)) === 1, \implode(' ', $digests));
         $this->flushChecks();
     }
@@ -200,7 +200,7 @@ final class CliTest extends SmokeTestCase
         foreach (Registry::all() as $verb => $entry) {
             check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
         }
-        check('20 个出口', \count(Registry::all()) === 20, (string) \count(Registry::all()));
+        check('21 个出口', \count(Registry::all()) === 21, (string) \count(Registry::all()));
         $this->flushChecks();
     }
 

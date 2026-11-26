@@ -54,6 +54,10 @@ const state = {
   // 结构树：查询层已经按 frame 贴好几何与断链标记，页面只按 depth 缩进。
   tree: [],
   treeCoverage: null,
+  // 两帧对比是显式动作：树跟着帧自动刷新，对比要等用户点"对比"才发请求，
+  // 否则每次轮询都白拿一份没人看的事件流。
+  diff: [],
+  diffCoverage: null,
 };
 
 const colorCache = new Map();
@@ -179,6 +183,8 @@ async function boot() {
   document.getElementById('fit').onclick = () => resetView();
   document.getElementById('actual').onclick = () => actualSize();
   document.getElementById('follow').onclick = () => setFollow(!state.follow);
+  const diffRun = document.getElementById('diffRun');
+  if (diffRun) diffRun.onclick = () => loadDiff();
   document.addEventListener('keydown', (e) => {
     if (e.target === document.getElementById('q')) return;
     if (e.key === '0') { resetView(); return; }
@@ -722,6 +728,55 @@ async function loadTree() {
     if (scope) scope.textContent = e.message;
   }
   renderTree();
+}
+
+/** 两帧对比：base 由用户给，终点取当前帧；数值都来自 /api/tree-diff，页面不自己算。 */
+async function loadDiff() {
+  const scope = document.getElementById('diffscope');
+  const to = document.getElementById('diffTo');
+  const base = Math.max(0, Number(document.getElementById('diffBase').value) || 0);
+  if (to) to.textContent = `帧 #${state.frame || 0}`;
+  try {
+    const answer = await get(`/api/tree-diff?base=${base}&frame=${state.frame}&limit=200`);
+    state.diff = answer.rows || [];
+    state.diffCoverage = answer.coverage || null;
+    if (scope) scope.textContent = answer.reason ? `查不到：${answer.reason}` : '';
+  } catch (e) {
+    state.diff = [];
+    state.diffCoverage = null;
+    if (scope) scope.textContent = e.message;
+  }
+  renderDiff();
+}
+
+function renderDiff() {
+  const host = document.getElementById('diff');
+  const count = document.getElementById('diffCount');
+  const scope = document.getElementById('diffscope');
+  if (!host) return;
+  host.textContent = '';
+  const c = state.diffCoverage || {};
+  if (count) count.textContent = state.diff.length ? `${state.diff.length} 条` : '';
+  if (scope && !scope.textContent && c.events !== undefined) {
+    scope.textContent = `(${c.base || 0}, ${c.frame || 0}] · 出生 ${c.born || 0} / 离开 ${c.gone || 0} / 重建 ${c.rebuilt || 0}`
+      + (c.complete === false ? ' · 对比不完整（未知的不当成没发生）' : '')
+      + (c.omitted ? ` · 还有 ${c.omitted} 条没列` : '');
+  }
+  if (state.diff.length === 0) {
+    host.appendChild(el('div', 'dim small', '（这两帧之间没有结构事件）'));
+    return;
+  }
+  for (const row of state.diff) {
+    const sign = row.change === 'born' ? '+' : row.change === 'gone' ? '-' : '~';
+    const when = row.change === 'rebuilt'
+      ? `重建 ×${row.count || 1} @${row.at || 0}..${row.lastAt || 0}`
+      : `${row.change === 'born' ? '出生' : '离开'} @${row.at || 0}`;
+    const line = el('div', 'treenode', `${sign} #${row.id} ${row.type || '?'}  ${when}  ${row.path || ''}`);
+    line.dataset.node = String(row.id);
+    line.onclick = () => select(Number(row.id));
+    line.onmouseenter = () => setHover(Number(row.id));
+    host.appendChild(line);
+  }
 }
 
 function renderTree() {

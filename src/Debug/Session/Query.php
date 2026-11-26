@@ -269,6 +269,18 @@ final class Query
     }
 
     /**
+     * 两帧之间的结构事件：谁出生、谁离开、谁在中间重建了（A70）。
+     *
+     * @return array<string, mixed>
+     *
+     * @see StructureQuery::treeDiff()
+     */
+    public function treeDiff(int $base = 0, ?int $frame = null, int $limit = 200): array
+    {
+        return $this->structure->treeDiff($base, $frame, $limit);
+    }
+
+    /**
      * 跨域对齐：同一节点、同一显式帧，一次取到因果 / 几何 / 网络三张脸。
      *
      * ## 帧只在一处选

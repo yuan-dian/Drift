@@ -78,7 +78,13 @@ final class Recorder implements PaintObserver
     public const int MAX_PAINT_MISSES = 512;
 
     /** 节点超过这么多帧没再出现就可以回收（仍在窗口里的引用会保住它）。 */
-    private const int NODE_TTL_FRAMES = 120;
+    /**
+     * 节点寿命记录（出生帧 / 离开帧 / 回收表）至少保留多少帧。
+     *
+     * 从 private 提到 public 只为让审查面的 `treeDiff()` 自报"这一对比区间是否
+     * 还在保留期内"——常量不产生机器码，写面的方法面不变（A69）。
+     */
+    public const int NODE_TTL_FRAMES = 120;
 
     /** 每 N 帧扫一次节点表：摊薄扫描成本，上界仍由 TTL + 活动窗口决定。 */
     private const int NODE_RECYCLE_EVERY = 60;

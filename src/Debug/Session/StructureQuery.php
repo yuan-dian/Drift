@@ -334,6 +334,198 @@ final class StructureQuery
     }
 
     /**
+     * 两帧之间的结构**事件**：谁出生、谁离开、谁在中间重建了（A70）。
+     *
+     * ## 为什么不是"两次 tree() 相减"
+     *
+     * `tree()` 的 `depth` / `limit` 会截断，且两个窗口各有缺省帧；拿两次结果相减，
+     * 得到的是"两份被截断的投影之差"，不是证据里的事件。这里直接读生命周期两端
+     * 与帧记录：出生 `f ∈ (base, frame]`、离开 `g ∈ (base, frame]`、重建取该区间
+     * 各帧的 `FrameRecord->rebuilt`。区间**左开右闭**，所以 `diff(A,B)` 与 `diff(B,C)`
+     * 不重不漏——两端都含会把第 B 帧的事件算两次。
+     *
+     * ## 只报能证明的三种事件
+     *
+     * 没有逐帧的父 / 类型快照（A67 明说不做），所以**移位与改型不报**：
+     * 注册表里的 `p` / `c` 是"最后见到时"的值，拿它比较 A 与 B 等于拿现在冒充
+     * 当时。`coverage.structureSnapshot=false` 把这件事写在脸上。
+     *
+     * 一个节点在区间内既出生又离开时会给两条事件（`born` + `gone`）——这是事件
+     * 流水，不是"每节点一行"的清单；按 `at` 排序后 CLI / Web 都能原样画。
+     *
+     * ## 不完整的三种来源，各自单列
+     *
+     * - `lifetimeComplete`：缺 `f`（旧包）、缺 `g`（几何采集关着）、或起点早于
+     *   节点记录保留期（`Recorder::NODE_TTL_FRAMES`）；
+     * - `rebuiltComplete`：区间里有帧记录不在窗口里（可能是空帧被裁，也可能是
+     *   历史被挤出），重建计数只覆盖拿到的帧；
+     * - `unknownRebuilt`：帧记录提到、但节点表与回收表都没有的节点——它确实在
+     *   那帧重建过，只是已经叫不出名字。保留 id，不编类型。
+     *
+     * 三者合成 `coverage.complete`。`false` 不是"空结果"，是"这份对比没看全"。
+     *
+     * @return array<string, mixed>
+     */
+    public function treeDiff(int $base = 0, ?int $frame = null, int $limit = 200): array
+    {
+        $limit = \max(0, \min($limit, 2000));
+        $lastFrame = $this->history->frameId();
+        $frameId = $frame ?? $lastFrame;
+
+        $fail = static fn(int $at, string $reason): array => [
+            'base' => $base,
+            'frame' => $at,
+            'rows' => [],
+            'coverage' => [
+                'base' => $base, 'frame' => $at, 'events' => 0, 'born' => 0, 'gone' => 0,
+                'rebuilt' => 0, 'shown' => 0, 'omitted' => 0, 'nodes' => 0,
+                'unknownBirth' => 0, 'unknownGone' => 0, 'unknownRebuilt' => 0,
+                'goneKnown' => false, 'lifetimeComplete' => false, 'rebuiltComplete' => false,
+                'framesChecked' => 0, 'framesMissing' => 0, 'retentionFloor' => 0,
+                'withinRetention' => false, 'structureSnapshot' => false, 'complete' => false,
+            ],
+            'reason' => $reason,
+        ];
+
+        if ($lastFrame <= 0) {
+            return $fail($frameId, 'timeline-unavailable');
+        }
+        // 与 `tree()` / 各 CLI 出口一致：显式给 0 等于"没给"，取最新帧。协议层把
+        // `frame=0` 也当成这个意思，免得同一份词在两个出口里跑出两种结果。
+        if ($frameId <= 0) {
+            $frameId = $lastFrame;
+        }
+        if ($frameId > $lastFrame) {
+            return $fail($frameId, 'frame-not-recorded');
+        }
+        if ($base < 0 || $base > $frameId) {
+            return $fail($frameId, 'invalid-range');
+        }
+
+        [$nodes, $life] = $this->replayNodes(null);
+        $retentionFloor = \max(0, $lastFrame - Recorder::NODE_TTL_FRAMES);
+        $withinRetention = $base >= $retentionFloor;
+
+        /** @var list<array<string, mixed>> $events */
+        $events = [];
+        $born = 0;
+        $gone = 0;
+        foreach ($nodes as $id => $meta) {
+            $id = (int) $id;
+            $f = (int) ($meta['f'] ?? 0);
+            $g = (int) ($meta['g'] ?? 0);
+            $row = [
+                'id' => $id,
+                'type' => (string) ($meta['c'] ?? ''),
+                'path' => $this->history->pathOf($id),
+                'parent' => (int) ($meta['p'] ?? -2),
+                'evicted' => ($meta['e'] ?? false) === true,
+            ];
+            if ($f > $base && $f <= $frameId) {
+                $events[] = $row + ['change' => 'born', 'at' => $f, 'count' => 1, 'lastAt' => $f, 'known' => true];
+                ++$born;
+            }
+            if ($g > $base && $g <= $frameId) {
+                $events[] = $row + ['change' => 'gone', 'at' => $g, 'count' => 1, 'lastAt' => $g, 'known' => true];
+                ++$gone;
+            }
+        }
+
+        // 重建按节点聚合：一次会话几百帧，逐帧逐节点列会把一份对比变成流水账。
+        // `count` 给次数、`at` / `lastAt` 给首尾帧，够回答"中间动没动"。
+        $rebuild = [];
+        $framesChecked = 0;
+        $knownFrames = $this->history->frames();
+        // 不逐帧推进：帧窗口只有 600 条，而 `base=0` 配上第 10000 帧会白转一万次。
+        // 缺多少条用算术算；重建只从真在窗口里的帧聚合，缺口如实计入 coverage。
+        $framesMissing = \max(0, $frameId - $base - \count(\array_filter(
+            \array_keys($knownFrames),
+            static fn(int $f): bool => $f > $base && $f <= $frameId,
+        )));
+        foreach ($knownFrames as $f => $record) {
+            $f = (int) $f;
+            if ($f <= $base || $f > $frameId) {
+                continue;
+            }
+            ++$framesChecked;
+            foreach ($record->rebuilt as $node) {
+                $id = (int) $node;
+                if (!isset($rebuild[$id])) {
+                    $rebuild[$id] = ['count' => 0, 'first' => $f, 'last' => $f];
+                }
+                ++$rebuild[$id]['count'];
+                $rebuild[$id]['last'] = $f;
+            }
+        }
+
+        $unknownRebuilt = 0;
+        foreach ($rebuild as $id => $stat) {
+            $meta = $nodes[$id] ?? null;
+            $known = $meta !== null;
+            if (!$known) {
+                ++$unknownRebuilt;
+            }
+            $events[] = [
+                'id' => (int) $id,
+                'type' => $known ? (string) ($meta['c'] ?? '') : '',
+                'path' => $known ? $this->history->pathOf((int) $id) : '',
+                'parent' => $known ? (int) ($meta['p'] ?? -2) : -2,
+                'evicted' => $known ? ($meta['e'] ?? false) === true : false,
+                'change' => 'rebuilt',
+                'at' => (int) $stat['first'],
+                'count' => (int) $stat['count'],
+                'lastAt' => (int) $stat['last'],
+                'known' => $known,
+            ];
+        }
+
+        // 事件流水按发生帧排；同一帧里 born → gone → rebuilt，读起来是"先建、再没、
+        // 中间动过"。id 只作最后的稳定次序，避免同帧同类的行随注册表顺序漂移。
+        $rank = ['born' => 0, 'gone' => 1, 'rebuilt' => 2];
+        \usort($events, static function (array $a, array $b) use ($rank): int {
+            return [$a['at'], $rank[$a['change']], $a['id']]
+                <=> [$b['at'], $rank[$b['change']], $b['id']];
+        });
+        $total = \count($events);
+        $shown = $limit > 0 ? \array_slice($events, 0, $limit) : $events;
+
+        $lifetimeComplete = $withinRetention
+            && ($life['unknownBirth'] ?? 0) === 0
+            && ($life['unknownGone'] ?? 0) === 0
+            && ($life['goneKnown'] ?? false) === true;
+
+        return [
+            'base' => $base,
+            'frame' => $frameId,
+            'rows' => $shown,
+            'coverage' => [
+                'base' => $base,
+                'frame' => $frameId,
+                'events' => $total,
+                'born' => $born,
+                'gone' => $gone,
+                'rebuilt' => \count($rebuild),
+                'shown' => \count($shown),
+                'omitted' => $total - \count($shown),
+                'nodes' => \count($nodes),
+                'unknownBirth' => (int) ($life['unknownBirth'] ?? 0),
+                'unknownGone' => (int) ($life['unknownGone'] ?? 0),
+                'unknownRebuilt' => $unknownRebuilt,
+                'goneKnown' => ($life['goneKnown'] ?? false) === true,
+                'lifetimeComplete' => $lifetimeComplete,
+                'rebuiltComplete' => $framesMissing === 0,
+                'framesChecked' => $framesChecked,
+                'framesMissing' => $framesMissing,
+                'retentionFloor' => $retentionFloor,
+                'withinRetention' => $withinRetention,
+                // 没有逐帧父 / 类型快照：移位与改型不在这次对比的能力内。
+                'structureSnapshot' => false,
+                'complete' => $lifetimeComplete && $framesMissing === 0,
+            ],
+        ];
+    }
+
+    /**
      * 第 `$at` 帧的节点表：那时活着的，加上"那时还在、现在已回收"的。
      *
      * `$at === null` 表示**这份证据没有时间轴**（一帧记录都没有）—— 不过滤、原样给
