@@ -377,6 +377,36 @@ async function showRequest(id) {
     }
     host.appendChild(table);
 
+    // 报文是附件，默认不抓；折叠起来避免一打开请求详情就把 8KB 文本铺满侧栏。
+    // miss 用查询层给出的原因，不从"文本是空的"猜 —— 那会把没采集说成空 body。
+    const bodyBox = el('details', 'step');
+    bodyBox.appendChild(el('summary', '', '报文（按需读取 · 脱敏截断）'));
+    const bodyText = el('pre', 'bodytext', '展开后读取…');
+    bodyBox.appendChild(bodyText);
+    bodyBox.addEventListener('toggle', async () => {
+      if (!bodyBox.open || bodyText.dataset.loaded === '1') return;
+      bodyText.dataset.loaded = '1';
+      bodyText.textContent = '读取中…';
+      try {
+        const body = await get(`/api/body?request=${id}`);
+        if (!body.found) {
+          const w = body.window || {};
+          bodyText.textContent = `报文不可用：${body.miss || 'unknown'}`
+            + `（采集 ${w.captured ? '已开' : '未开'} · 容量 ${w.capacity ?? 0}）`;
+          return;
+        }
+        const meta = (m) => m
+          ? `${m.bytes ?? '?'} 字节 · ${m.format || 'text'} · 脱敏 ${m.redacted ?? 0}`
+            + `${m.truncated ? ' · 存档截断' : ''}${m.queryTruncated ? ' · 查询截断' : ''}`
+          : '';
+        bodyText.textContent = `请求  ${meta(body.requestMeta)}\n${body.requestBody ?? ''}`
+          + `\n\n响应  ${meta(body.responseMeta)}\n${body.responseBody ?? ''}`;
+      } catch (e) {
+        bodyText.textContent = e.message;
+      }
+    });
+    host.appendChild(bodyBox);
+
     const landed = el('div', 'step');
     landed.appendChild(el('b', '', '它落到哪个节点'));
     if (Array.isArray(r.landed) && r.landed.length) {
@@ -517,6 +547,13 @@ async function loadNetwork() {
     const page = await get('/api/network?limit=100');
     state.network = page.rows || [];
     state.networkCaptured = page.window?.captured === true;
+    const w = page.window || {};
+    const scope = document.getElementById('netscope');
+    if (scope) {
+      scope.textContent = `${w.captured ? '骨架已采' : '未开网络采集'} · ${w.requests ?? state.network.length} 条`
+        + `（容量 ${w.capacity ?? 0}${w.inFlight ? ` · 在飞 ${w.inFlight}` : ''}）`
+        + ' · 仅经 Drift HTTP 客户端 · 帧轴对齐';
+    }
   } catch (e) {
     state.network = [];
     state.networkCaptured = false;
@@ -587,6 +624,14 @@ async function loadAsync() {
     const page = await get('/api/async?limit=100');
     state.async = page.rows || [];
     state.asyncCaptured = page.captured === true;
+    const scope = document.getElementById('asyncscope');
+    if (scope) {
+      const w = page.window || {};
+      const jobs = page.total ?? state.async.length;
+      scope.textContent = `${page.captured ? '异步已采' : '未开异步采集'} · ${jobs} 个 job`
+        + `（容量 ${w.capacity ?? 0}${w.inFlight ? ` · 在飞 ${w.inFlight}` : ''}）`
+        + ' · 只列后端调度过的任务，await / sleep 不是 job';
+    }
   } catch (e) {
     state.async = [];
     state.asyncCaptured = false;
@@ -708,9 +753,14 @@ function renderTree() {
 function markTreeSelection() {
   const host = document.getElementById('tree');
   if (!host) return;
+  let current = null;
   for (const line of host.querySelectorAll('.treenode')) {
-    line.classList.toggle('on', Number(line.dataset.node) === Number(state.selected));
+    const on = Number(line.dataset.node) === Number(state.selected);
+    line.classList.toggle('on', on);
+    if (on) current = line;
   }
+  // 真窗口拾取回来的节点可能在长树深处；只改 class 会让"选中了但看不到"。
+  if (current && current.scrollIntoView) current.scrollIntoView({ block: 'nearest' });
 }
 
 async function loadFrame(frame, keepSelected) {
@@ -936,6 +986,14 @@ function placeShot(x, y, w, h) {
   if (!state.shotUrl) {
     img.style.display = 'none';
     none.hidden = false;
+    // 没有真机像素时，几何线框就是主视图，不是"出错前的背景"。
+    // 这句话要说清两件事：图为什么没来、下面那些框是什么。
+    const why = document.getElementById('noshotWhy');
+    const how = document.getElementById('noshotHow');
+    if (why) why.textContent = state.boxes.length
+      ? '没有真机画面 · 下面是这一帧的几何线框'
+      : '这一帧没有画面';
+    if (how) how.textContent = state.boxes.length ? '点线框或结构树继续追问' : '离线快照或自己跑的会话可能没有画面';
     none.style.left = `${x}px`;
     none.style.top = `${y}px`;
     none.style.width = `${w}px`;
@@ -1132,7 +1190,7 @@ function renderNode(node) {
   children.textContent = '';
   document.getElementById('selected').textContent = node ? `#${node}` : '';
   if (!node) {
-    document.getElementById('card').textContent = '点画布上的盒，或点左边一条发现';
+    document.getElementById('card').textContent = '点画布线框、结构树节点，或左边一条发现';
     return;
   }
 

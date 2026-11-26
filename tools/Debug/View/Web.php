@@ -141,6 +141,8 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
                 'frame' => (int) ($query['frame'] ?? 0) ?: null,
             ])),
+            // 报文是骨架的可选附件，默认不抓；空表与"没抓"必须分开，所以单开一个出口。
+            '/api/body' => $this->body($query),
             '/api/node' => $this->node($query),
             // 搜索命中 request:N 后的落地页。请求详情走同一个查询面，不另存一份。
             '/api/request' => $this->request($query),
@@ -269,6 +271,21 @@ final class Web
         }
 
         return $this->json($this->tryQuery('network', ['request' => $id]));
+    }
+
+    /** 按 requestId 取报文附件；`bodies-not-captured` 与"抓了但没这条"由查询层区分。 */
+    private function body(array $query): array
+    {
+        $id = (int) ($query['request'] ?? 0);
+        if ($id <= 0) {
+            return $this->error(400, 'bad_request', '缺少 request 参数（从请求详情取）');
+        }
+
+        return $this->json($this->tryQuery('networkBody', [
+            'request' => $id,
+            'part' => (string) ($query['part'] ?? 'both'),
+            'maxBytes' => (int) ($query['maxBytes'] ?? 8192),
+        ]));
     }
 
     /**

@@ -166,6 +166,19 @@ final class WebTest extends SmokeTestCase
         );
     }
 
+    /** 报文附件走独立出口：没开采集要说清，不能拿空文本冒充空 body。 */
+    public function testBodyRouteKeepsTheCaptureMiss(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=1']);
+        $bad = $this->json($port, '/api/body');
+        check('缺 request 是 400', ($bad['error'] ?? '') === 'bad_request', \json_encode($bad));
+
+        $miss = $this->json($port, '/api/body?request=1');
+        check('没开正文采集时明确报 miss', ($miss['found'] ?? true) === false, \json_encode($miss));
+        check('miss 原因不是空 body', ($miss['miss'] ?? '') === 'bodies-not-captured', \json_encode($miss));
+        check('窗口自报未采集', ($miss['window']['captured'] ?? true) === false, \json_encode($miss['window'] ?? []));
+    }
+
     /**
      * 搜索与节点卡是同一个循环：搜到的地址必须能被卡片直接解析。
      *

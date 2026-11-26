@@ -125,8 +125,8 @@ final class Parsed
     /** CLI 的采集预算唯一组装点：正文默认不抓。 */
     public function recordOptions(): RecordOptions
     {
-        // 三个域都是"默认关、显式要"：报文是隐私与体积，绘制是每帧多记一个节点集合，
-        // 异步是后端 tap 的记账成本。采集预算不进脚本，所以不改驱动指纹。
+        // 三个可选域都是"默认关、显式要"：报文是隐私与体积，绘制是每帧多记一个节点集合，
+        // 异步是后端 tap 的记账成本。网络骨架默认开，不在 CLI 暴露开关。预算不进脚本，不改指纹。
         return RecordOptions::of(
             bodies: $this->bool('bodies'),
             paint: $this->bool('paint'),

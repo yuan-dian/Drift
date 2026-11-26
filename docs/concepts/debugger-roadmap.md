@@ -32,7 +32,7 @@
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 结构树 / 检查器 | 已落地（A64）：`tree()` 把节点注册表投影成扁平先序行，几何按帧在查询层贴好；CLI `debug tree` 与 Web 侧栏共用同一查询，`highlight` 仍是选中真相 | Chrome Elements、Flutter Inspector | 是**当前结构导航**，不是逐帧历史树；历史变化仍走 `cascade` |
 | 终端面板 | 切片：时间轴 + 因果树 + why + 结构树 + 节点卡文本 | Flutter DevTools、Chrome | 键盘可用；检查器以文本呈现，不做全屏 TUI |
-| Web 视图 | 切片：几何画布 + 帧 / 网络 / 异步泳道 + 结构树 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 树与节点卡已接；缺逐帧历史树与源码面板 |
+| Web 视图 | 切片：几何画布（无真机图时以线框为主视图）+ 帧 / 网络 / 异步泳道 + 结构树 + 发现 + 节点卡 + 搜索；请求详情可按需展开脱敏报文 | Chrome/Flutter 多标签 | 树、节点卡、报文附件已接；缺逐帧历史树与源码面板 |
 | 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 多 target 并列视图已由 A59 落地；真正跨窗口归因仍未做 |
 | 多窗口 / 多 target | 已落地：每窗口一份录制器互不串证据（A53）；`Discovery` 数组与多会话点名早已生效；`debug targets` 把所有活会话并列成一份只读视图（A59） | 成熟 DevTools 多 target | S2 前置已清；并列看得见，归因要等采集层给全局节点 id |
 | 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
