@@ -27,6 +27,8 @@ if (!class_exists($class)) {
 // dev-only 的 live attach（A57）：`DRIFT_DEBUG_LIVE=1` 才装桥，AOT 组合根一行不改。
 // 安装点在组合根之前 —— `AppEntry::run()` 是 final，应用不该为调试各改一行。
 // 关桥在 `EventLoop` 的 finally，不在这里：关窗有三条出口，漏一条就留发现文件僵尸。
+// `DRIFT_DEBUG_BODIES=1` / `DRIFT_DEBUG_ASYNC=1` 在宿主开场时打开可选采集域；
+// 录制器归宿主，attach 端再传 --bodies / --async 已经晚了。
 if (\getenv('DRIFT_DEBUG_LIVE') === '1') {
     $target = \getenv('DRIFT_DEBUG_TARGET');
     EventLoop::setTickerFactory(static function (array $apps) use ($target): ?\Drift\App\DebugTicker {

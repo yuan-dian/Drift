@@ -112,16 +112,22 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
             $size === null ? 0.0 : $size->height,
         );
 
-        $this->session = DebugSession::open(
-            $app,
-            $constraints,
-            // 几何走 `All` 而不是默认的 `Changed`：live 的用途是"看着画面读结构"，
-            // 而几何是**按帧**配对画面的。Changed 会在静止时一帧都不采，于是
-            // `boxes?frame=<底图那一帧>` 回 `frame-out-of-window`，屏幕上只剩底图没有框。
-            // 省这一份几何换来的是"画面和结构永远对不上"，这个交换不成立。
-            RecordOptions::default()
-                ->withScript($script),
-        );
+        // 预算在宿主开场时定死，会话中途不改（RecordOptions 不可变）。attach 侧传来的
+        // --bodies / --async 到这里已经太晚：录制器是宿主开的，web 只是读它。
+        // 于是把可选域的选择放在真正做选择的地方 —— 启动宿主的环境变量。
+        //
+        // 几何保持默认的 `Changed`：静止帧不重复记整棵树，`geometryBaseline` 负责给
+        // `geometryAt()` 兜底。曾经这里注释写 `All` 而代码是默认档，照注释改成 `All`
+        // 后每帧全树造记录，几十秒就撞上 128MB —— 那份注释是过时的，不是漏实现。
+        $options = RecordOptions::default()->withScript($script);
+        if (\getenv('DRIFT_DEBUG_BODIES') === '1') {
+            $options = $options->withBodies(true);
+        }
+        if (\getenv('DRIFT_DEBUG_ASYNC') === '1') {
+            $options = $options->withAsync(true);
+        }
+
+        $this->session = DebugSession::open($app, $constraints, $options);
         $this->drive = new LiveDrive($script);
         // A58：宿主只翻译协议，拾取状态留在这里独占 —— 两边各存一个布尔必然漂开。
         $this->host = new Host(
