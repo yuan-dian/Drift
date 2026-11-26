@@ -52,7 +52,11 @@ final class TreeRow implements Line
      */
     public function text(): string
     {
-        $line = \sprintf('  %-44s %5d', \str_repeat('  ', $this->depth) . $this->label, $this->subtree);
+        // 标签不截断：它是"这个节点在哪"，截掉就等于把地址删了。补位按**显示宽度**算，
+        // 长标签自己把右边的数字推出去（与 `%-44s` 同义，但中文标签不会错列）。
+        $line = '  '
+            . Fit::pad(\str_repeat('  ', $this->depth) . $this->label, 44)
+            . ' ' . Fit::padStart((string) $this->subtree, 5);
         if ($this->count > 1) {
             $line .= \sprintf('  共 %d 个', $this->instances());
         }

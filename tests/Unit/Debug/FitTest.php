@@ -55,6 +55,31 @@ final class FitTest extends TestCase
         $this->assertSame(1, Fit::width(Fit::pad('a', 1)), '已经够宽就不补');
     }
 
+    /** 右对齐：数字列的个位要能竖着扫（`12` 与 `3` 左对齐就扫不了）。 */
+    public function testPadStartRightAlignsNumbers(): void
+    {
+        $this->assertSame('  12', Fit::padStart('12', 4));
+        $this->assertSame('   3', Fit::padStart('3', 4));
+        $this->assertSame('因果', Fit::padStart('因果', 2), '按显示宽度算：中文两个字的宽度正好 2');
+        $this->assertSame('  因果', Fit::padStart('因果', 6));
+        $this->assertSame('12345', Fit::padStart('12345', 4), '超宽就原样，不截');
+    }
+
+    /**
+     * 按**段数**裁尾部，与按列宽的 {@see Fit::tailPath()} 是两件事。
+     *
+     * 行内只要"认出是哪一支"：完整链路已经在别处摊开了。用列宽去算，短路径一行不裁、
+     * 长路径裁到只剩一个节点，反而看不出结构。
+     */
+    public function testTailSegmentsKeepsTheRequestedNumberOfSegments(): void
+    {
+        $path = 'PageShell > Card > Column > Expanded > Table';
+        $this->assertSame('Expanded > Table', Fit::tailSegments($path));
+        $this->assertSame('Column > Expanded > Table', Fit::tailSegments($path, 3));
+        $this->assertSame($path, Fit::tailSegments($path, 9), '段数够就原样');
+        $this->assertSame('Table', Fit::tailSegments($path, 0), '至少留一段：空串在行里等于没说话');
+    }
+
     /** 左右两段拼一行；放不下时**先丢右段**，左段是"我在看什么"，不能截一半。 */
     public function testSpreadDropsTheRightPartBeforeCuttingTheLeft(): void
     {

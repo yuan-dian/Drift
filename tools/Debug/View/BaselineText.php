@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
+use Drift\Debug\Session\Digest;
+
 /**
  * 基线对比的终端呈现：**只列要修的**，其余只计数。
  *
@@ -144,8 +146,8 @@ final class BaselineText
         if (($digest['same'] ?? false) !== true) {
             $out[] = Fit::clip(\sprintf(
                 '  指纹 %s → %s：应用或脚本变了，差异可能来自它',
-                self::short((string) ($digest['before'] ?? '')),
-                self::short((string) ($digest['after'] ?? '')),
+                self::finger((string) ($digest['before'] ?? '')),
+                self::finger((string) ($digest['after'] ?? '')),
             ), $width);
         }
 
@@ -230,8 +232,9 @@ final class BaselineText
         return Fit::clip(\sprintf('  另有 %d 条超出一屏未列（--json 取全部）', $shortRows), $width);
     }
 
-    private static function short(string $digest): string
+    /** 空指纹印 `—` 而不是空串：那一列空着会被读成"排版错位"。 */
+    private static function finger(string $digest): string
     {
-        return $digest === '' ? '—' : \substr($digest, 0, 12);
+        return $digest === '' ? '—' : Digest::short($digest);
     }
 }

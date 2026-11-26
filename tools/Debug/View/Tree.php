@@ -65,10 +65,10 @@ final class Tree
             $flag = $flag === 'normal' ? '' : " [{$flag}]";
             $stale = ($row['stale'] ?? false) === true ? ' stale' : '';
             $lines[] = \sprintf(
-                '%s#%-5d %-22s 子%-3d %s%s%s%s',
+                '%s#%-5d %s 子%-3d %s%s%s%s',
                 \str_repeat('  ', $depth),
                 (int) ($row['id'] ?? 0),
-                self::clip((string) ($row['type'] ?? ''), 22),
+                Fit::pad(Fit::clip((string) ($row['type'] ?? ''), 22), 22),
                 (int) ($row['children'] ?? 0),
                 ($row['boxed'] ?? false) === true ? '盒' : '无盒',
                 $size,
@@ -92,10 +92,5 @@ final class Tree
         }
 
         return $lines;
-    }
-
-    private static function clip(string $text, int $width): string
-    {
-        return \mb_strlen($text) <= $width ? $text : \mb_substr($text, 0, $width - 1) . '…';
     }
 }

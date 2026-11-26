@@ -44,22 +44,37 @@ final class Async
             return $lines;
         }
 
-        $lines[] = '  ID  后端     任务                   帧(提交→派发→结算)  队列/等待  状态     耗时    来源';
+        // 表头不手写：手写过的那一版把 `ID` / `后端` / `任务` 的宽度按字节数着补空格，
+        // 状态列一出现中文（`在飞`）就整行右移。列宽现在由 `Table` 按显示宽度算。
+        $cols = [
+            ['t' => '#', 'r' => true],
+            ['t' => '后端'],
+            ['t' => '任务', 'w' => 22],
+            ['t' => '提交', 'r' => true],
+            ['t' => '派发', 'r' => true],
+            ['t' => '结算', 'r' => true],
+            ['t' => '队列/等待'],
+            ['t' => '状态'],
+            ['t' => '耗时', 'r' => true],
+            ['t' => '来源'],
+        ];
+        $table = [];
         foreach ($rows as $row) {
-            $lines[] = \sprintf(
-                '  #%-3d %-8s %-22s %4d→%-4d→%-4d %3d/%-3d  %-8s %6.1fms %s',
-                (int) ($row['id'] ?? 0),
+            $table[] = [
+                (string) (int) ($row['id'] ?? 0),
                 (string) ($row['backend'] ?? ''),
-                self::clip((string) ($row['job'] ?? ''), 22),
-                (int) ($row['submittedAtFrame'] ?? 0),
-                (int) ($row['startedAtFrame'] ?? 0),
-                (int) ($row['settledAtFrame'] ?? 0),
-                (int) ($row['queueFrames'] ?? 0),
-                (int) ($row['pendingFrames'] ?? 0),
+                (string) ($row['job'] ?? ''),
+                (string) (int) ($row['submittedAtFrame'] ?? 0),
+                (string) (int) ($row['startedAtFrame'] ?? 0),
+                (string) (int) ($row['settledAtFrame'] ?? 0),
+                \sprintf('%d/%d', (int) ($row['queueFrames'] ?? 0), (int) ($row['pendingFrames'] ?? 0)),
                 (string) ($row['state'] ?? ''),
-                (float) ($row['elapsedMs'] ?? 0.0),
+                \sprintf('%.1fms', (float) ($row['elapsedMs'] ?? 0.0)),
                 (string) ($row['initiator'] ?? ''),
-            );
+            ];
+        }
+        foreach (Table::render($cols, $table) as $line) {
+            $lines[] = $line;
         }
 
         return $lines;
@@ -108,10 +123,5 @@ final class Async
             : '  落地：node:' . \implode(', node:', \array_map('\intval', $landed));
 
         return $lines;
-    }
-
-    private static function clip(string $text, int $width): string
-    {
-        return \mb_strlen($text) <= $width ? $text : \mb_substr($text, 0, $width - 1) . '…';
     }
 }

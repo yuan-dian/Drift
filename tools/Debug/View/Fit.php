@@ -12,6 +12,14 @@ namespace Drift\Dev\Debug\View;
  *
  * 截断必须**按宽度**切，不能按字符切：一个宽字符卡在边界上时，宁可少放一个，
  * 也不能把它劈成半个字节序列（那会输出乱码，还会把终端宽度算错）。
+ *
+ * ## 这里是列宽的**唯一**真相
+ *
+ * `sprintf('%-22s')` 数的是字节，中文一进来就少补几列 —— 它不会报错，只会看起来
+ * "有点歪"。A35 ⑧ 明文禁止，但没人守：`debug-report.php` 的「耗时分布」表里
+ * `（段外）` 显示 18 列、`settle` 显示 22 列，毫秒列差 4 列，就是这么来的。所以对齐
+ * 只走本类：`Table` 拼表、`TreeRow` 拼行、面板排版都从这里取，出口脚本里不许再出现
+ * `%-Ns`。
  */
 final class Fit
 {
@@ -59,6 +67,19 @@ final class Fit
         return $w >= $width ? $s : $s . \str_repeat(' ', $width - $w);
     }
 
+    /**
+     * 左侧补空格到 `$width` 列：数字列右对齐。
+     *
+     * 数字左对齐时 `12` 与 `3` 的个位错开，一列十来个数字就没法竖着扫 —— `ps`、`top`、
+     * lldb 的 `bt` 都是右对齐，理由一样。
+     */
+    public static function padStart(string $s, int $width): string
+    {
+        $w = self::width($s);
+
+        return $w >= $width ? $s : \str_repeat(' ', $width - $w) . $s;
+    }
+
     public static function rule(int $width): string
     {
         return \str_repeat('─', \max(0, $width));
@@ -104,6 +125,23 @@ final class Fit
         }
 
         return $tail === '' ? self::clip($path, $width) : '… > ' . $tail;
+    }
+
+    /**
+     * 只留路径尾部 `$keep` 段，按**段数**而不是列宽。
+     *
+     * 与 {@see self::tailPath()} 分开是因为两者的裁法不同：`tailPath` 是"这一行排版
+     * 放不下多少列"，它是"完整链路已经在别处展开了，行内只要认出是哪一支"。用列宽去
+     * 算后者，遇到短路径会一行不裁、遇到长路径会裁到只剩一个节点，反而看不见结构。
+     */
+    public static function tailSegments(string $path, int $keep = 2): string
+    {
+        $parts = \explode(' > ', $path);
+        if (\count($parts) <= $keep) {
+            return $path;
+        }
+
+        return \implode(' > ', \array_slice($parts, -\max(1, $keep)));
     }
 
     /** @return list<string> */

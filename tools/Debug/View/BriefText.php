@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
+use Drift\Debug\Session\Digest;
 use Drift\Debug\Session\Thresholds;
 
 /**
@@ -118,12 +119,13 @@ final class BriefText
         );
 
         $finger = (string) ($digest['digest'] ?? '');
+        $fingerShort = $finger === '' ? '—' : Digest::short($finger);
         // 过滤过就报"跑了几条"，不报阈值：三个阈值在只跑一条规则时是**假信息**
         // —— 读者会以为那三条也看过，而它们连跑都没跑。
         $line = ($selection['filtered'] ?? false) === true
             ? \sprintf(
                 '指纹 %s · 规则 %d/%d 条%s',
-                $finger === '' ? '—' : \substr($finger, 0, 12),
+                $fingerShort,
                 \count($selection['rules'] ?? []),
                 (int) ($selection['total'] ?? 0),
                 isset($selection['minSeverity']) && $selection['minSeverity'] !== null
@@ -132,7 +134,7 @@ final class BriefText
             )
             : \sprintf(
                 '指纹 %s · 规则 慢帧 %.1fms / 扇出 %d / 重复 %d%%',
-                $finger === '' ? '—' : \substr($finger, 0, 12),
+                $fingerShort,
                 $t->slowMs,
                 $t->fanoutNodes,
                 $t->repeatPercent,

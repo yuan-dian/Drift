@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
+use Drift\Debug\Session\Digest;
+
 /**
  * 高亮视图：把 `highlight` 查询 + 叠加前后的像素指纹压成几行。
  *
@@ -87,15 +89,10 @@ final class Highlight
         return [
             \sprintf(
                 '  像素 %s → %s（%s）',
-                self::short($before),
-                self::short($after),
+                Digest::short($before),
+                Digest::short($after),
                 $before === $after ? '没变：叠加层没画出来' : '变了：叠加层上了屏',
             ),
         ];
-    }
-
-    private static function short(string $hash): string
-    {
-        return \substr($hash, 0, 12);
     }
 }
