@@ -55,6 +55,8 @@
 
 `debug targets` 把所有活会话并列成一份只读视图：发现文件里每个进程一行，给发现数、最慢帧与指纹；连接不上的单独标成不可达并附诊断，其他会话照常。它只并列、不按节点号或帧号合并 —— 两个窗口的节点编号不是同一个节点；深挖仍走既有出口并点名会话。裁决 A59。
 
+`debug tree` 是结构树的导航出口：把节点注册表投影成扁平先序行，按 `--root` / `--depth` / `--limit` 收敛，几何按 `--frame` 在查询层对齐。它是"当前结构导航"，不是逐帧历史树；要问某一帧谁重建了，用 `debug report` / `debug panel`。断父链、孤儿与成环都会单独标出并计入覆盖率，不会静默丢节点。裁决 A64。
+
 <!-- drift-cli-reference:start -->
 下表由 `php tools/gen-cli-doc.php` 从出口注册表与参数 schema 生成，勿手改。
 
@@ -68,6 +70,7 @@
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` `--attach` `--session` |
 | `async` | `debug-async.php` | driver | 异步任务时间线：提交 / 派发 / 结算帧、状态与落地节点 | `--job` `--limit` `--from` `--out` `--attach` `--session` |
+| `tree` | `debug-tree.php` | driver | 结构树：节点注册表的只读投影，按深度展开并对齐几何 | `--root` `--depth` `--limit` `--frame` `--from` `--out` `--attach` `--session` |
 | `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` `--attach` `--session` |
 | `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` `--attach` `--session` |
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |

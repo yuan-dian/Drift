@@ -133,6 +133,14 @@ final class Web
                 'job' => (int) ($query['job'] ?? 0) ?: null,
                 'limit' => (int) ($query['limit'] ?? 100),
             ])),
+            // 树与节点卡分工：树只给可导航的扁平先序行，几何已经按同一帧贴好；
+            // 点中一行再问 /api/node 拿盒模型 / 约束 / 因果，不在前端拼第二棵树。
+            '/api/tree' => $this->json($this->queries->query('tree', [
+                'root' => (int) ($query['root'] ?? 0),
+                'depth' => (int) ($query['depth'] ?? 6),
+                'limit' => (int) ($query['limit'] ?? 200),
+                'frame' => (int) ($query['frame'] ?? 0) ?: null,
+            ])),
             '/api/node' => $this->node($query),
             // 搜索命中 request:N 后的落地页。请求详情走同一个查询面，不另存一份。
             '/api/request' => $this->request($query),

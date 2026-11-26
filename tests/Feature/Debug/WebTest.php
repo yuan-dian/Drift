@@ -127,6 +127,45 @@ final class WebTest extends SmokeTestCase
         check('不给 node 说清缺什么', ($bad['error'] ?? '') === 'bad_request', \json_encode($bad));
     }
 
+    /** 树的行与几何来自同一帧、同一查询面；页面不再自己走 parent 指针。 */
+    public function testTreeRouteShipsTheSameFrameFacts(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=2']);
+        $tree = $this->json($port, '/api/tree?frame=1&limit=40');
+        $boxes = $this->json($port, '/api/boxes?frame=1');
+        $rows = $tree['rows'] ?? [];
+        check('树有行', $rows !== [], \json_encode($tree));
+
+        $boxByNode = [];
+        foreach ($boxes['rows'] ?? [] as $row) {
+            $boxByNode[(int) $row['node']] = $row;
+        }
+        $joined = 0;
+        foreach ($rows as $row) {
+            $id = (int) ($row['id'] ?? 0);
+            if (!isset($boxByNode[$id])) {
+                continue;
+            }
+            ++$joined;
+            check(
+                "树上节点 #{$id} 的几何与 /api/boxes 同一份",
+                ($row['geometry']['size'] ?? null) === ($boxByNode[$id]['size'] ?? null)
+                    && ($row['geometry']['rect'] ?? null) === ($boxByNode[$id]['rect'] ?? null),
+                \json_encode($row['geometry'] ?? null),
+            );
+        }
+        check('确实对齐了盒节点', $joined > 0, 'joined=' . $joined);
+        check('覆盖率随树自报', isset($tree['coverage']['active'], $tree['coverage']['roots']));
+
+        $node = (int) ($rows[0]['id'] ?? 0);
+        $sub = $this->json($port, "/api/tree?frame=1&root={$node}");
+        check(
+            '按根取子树仍从该节点开始',
+            (int) ($sub['rows'][0]['id'] ?? 0) === $node,
+            \json_encode($sub['rows'][0] ?? []),
+        );
+    }
+
     /**
      * 搜索与节点卡是同一个循环：搜到的地址必须能被卡片直接解析。
      *

@@ -1280,6 +1280,207 @@ final class Query
     }
 
     /**
+     * 结构树：节点注册表的当前只读投影（A64）。
+     *
+     * 这不是"第 N 帧的完整 Widget 树"。注册表只记每个节点的父、类型与最近见到帧，
+     * 没有逐帧结构快照；`frame` 只决定几何注解与 stale 判定。把它说成历史树，
+     * 就会拿"这一帧没采到"冒充"这一帧不存在"。真正要问历史变化，用 `cascade()`。
+     *
+     * 行按**先序扁平**给：树控件按 `depth` 缩进即可，不必在前端再走一遍父子链。
+     * 兄弟顺序取注册表的首次发现顺序（几何采样本来就是先序）；它不是布局顺序的
+     * 承诺，只保证同一份证据每次展开顺序相同。
+     *
+     * 三种"父不可用"必须分开：`unresolved` 是父号还没解析，`orphan` 是父已被回收，
+     * `cycle` 是父链成环。它们都挂到根上而不是静默丢 —— 树少一块而覆盖率不说，
+     * 读者会以为自己看全了。
+     *
+     * @return array<string, mixed>
+     */
+    public function tree(int $root = 0, int $depth = 6, int $limit = 200, ?int $frame = null): array
+    {
+        $depth = \max(0, \min($depth, 32));
+        $limit = \max(0, \min($limit, 2000));
+        $window = $this->recorder->geometryCoverage();
+        $frameId = $frame ?? (int) ($window['to'] ?? 0);
+        if ($frameId <= 0) {
+            $frameId = $this->recorder->frameId();
+        }
+
+        // 几何只查一次，按节点贴到结构上。逐行调 boxModel() 会把一次查询变成 N 次，
+        // 远端会话尤其明显；而树要的只是"有没有盒、多大"，不需要完整盒模型。
+        $boxes = $this->boxes($frameId);
+        $boxByNode = [];
+        foreach ($boxes['rows'] ?? [] as $row) {
+            $boxByNode[(int) $row['node']] = $row;
+        }
+
+        $nodes = $this->recorder->nodeIndex();
+        $evicted = $this->recorder->evictedNodes();
+        $boxless = [];
+        foreach ($this->recorder->boxlessNodes() as $id) {
+            $boxless[(int) $id] = true;
+        }
+
+        $active = \count($nodes);
+        $coverage = static fn(): array => [
+            'active' => $active,
+            'evicted' => \count($evicted),
+            'roots' => 0,
+            'boxless' => \count($boxless),
+            'unresolved' => 0,
+            'orphan' => 0,
+            'cycle' => 0,
+            'shown' => 0,
+            'omittedDepth' => 0,
+            'omittedLimit' => 0,
+            'geometryFrame' => (int) ($boxes['frame'] ?? 0),
+            'geometryEffective' => (int) ($boxes['effective'] ?? 0),
+            'geometryStale' => ($boxes['stale'] ?? false) === true,
+            'geometryReason' => (string) ($boxes['reason'] ?? ''),
+        ];
+
+        if ($root > 0 && !isset($nodes[$root])) {
+            return [
+                'frame' => $frameId,
+                'root' => $root,
+                'rows' => [],
+                'coverage' => $coverage(),
+                'reason' => isset($evicted[$root]) ? 'node-evicted' : 'unknown-node',
+            ];
+        }
+
+        /** @var array<int, list<int>> $children */
+        $children = [];
+        /** @var list<int> $roots */
+        $roots = [];
+        /** @var array<int, string> $flags */
+        $flags = [];
+        $unresolved = 0;
+        $orphan = 0;
+        foreach ($nodes as $key => $meta) {
+            $id = (int) $key;
+            $parent = isset($meta['p']) ? (int) $meta['p'] : -2;
+            if ($parent === -2) {
+                ++$unresolved;
+                $roots[] = $id;
+                $flags[$id] = 'unresolved';
+                continue;
+            }
+            if ($parent === -1 || !isset($nodes[$parent])) {
+                if ($parent !== -1) {
+                    ++$orphan;
+                }
+                $roots[] = $id;
+                $flags[$id] = $parent === -1 ? 'root' : 'orphan';
+                continue;
+            }
+            $children[$parent][] = $id;
+            $flags[$id] = 'normal';
+        }
+
+        if ($root > 0) {
+            $roots = [$root];
+            $flags[$root] = 'root';
+        }
+
+        // 先算可达，再把不可达的环单独挂到根。只从 invalid-parent 根出发会让整个环
+        // 消失：每个节点都有"活跃父"，谁都不是根，读者却只看到一棵看着完整的树。
+        $reachable = [];
+        $stack = $roots;
+        while ($stack !== []) {
+            $id = (int) \array_pop($stack);
+            if (isset($reachable[$id])) {
+                continue;
+            }
+            $reachable[$id] = true;
+            foreach ($children[$id] ?? [] as $child) {
+                $stack[] = $child;
+            }
+        }
+        $cycles = [];
+        if ($root === 0) {
+            foreach ($nodes as $key => $_) {
+                if (!isset($reachable[(int) $key])) {
+                    $cycles[] = (int) $key;
+                    $flags[(int) $key] = 'cycle';
+                }
+            }
+        }
+
+        /** @var list<array<string, mixed>> $rows */
+        $rows = [];
+        $emitted = 0;
+        $omittedDepth = 0;
+        $omittedLimit = 0;
+        $seen = [];
+        $stack = [];
+        foreach (\array_reverse(\array_merge($roots, $cycles)) as $id) {
+            $stack[] = [(int) $id, 0];
+        }
+        while ($stack !== []) {
+            /** @var array{0: int, 1: int} $task */
+            $task = (array) \array_pop($stack);
+            $id = $task[0];
+            $level = $task[1];
+            if (isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+
+            $kids = $children[$id] ?? [];
+            for ($i = \count($kids) - 1; $i >= 0; --$i) {
+                $stack[] = [$kids[$i], $level + 1];
+            }
+            if ($level > $depth) {
+                ++$omittedDepth;
+                continue;
+            }
+            if ($limit > 0 && $emitted >= $limit) {
+                ++$omittedLimit;
+                continue;
+            }
+
+            $meta = $nodes[$id];
+            $lastSeen = (int) ($meta['s'] ?? 0);
+            $geo = $boxByNode[$id] ?? null;
+            $rows[] = [
+                'id' => $id,
+                'parent' => isset($meta['p']) ? (int) $meta['p'] : -2,
+                'type' => (string) ($meta['c'] ?? ''),
+                'path' => $this->recorder->pathOf($id),
+                'depth' => $level,
+                'children' => \count($kids),
+                'boxed' => !isset($boxless[$id]),
+                'flex' => ($meta['x'] ?? false) === true,
+                'lastSeen' => $lastSeen,
+                'age' => $lastSeen > 0 ? \max(0, $frameId - $lastSeen) : 0,
+                'stale' => $lastSeen > 0 && $frameId > $lastSeen,
+                'flag' => $flags[$id] ?? 'normal',
+                'geometry' => $geo === null
+                    ? null
+                    : ['size' => $geo['size'] ?? [], 'rect' => $geo['rect'] ?? []],
+            ];
+            ++$emitted;
+        }
+
+        $cov = $coverage();
+        $cov['roots'] = \count($roots);
+        $cov['unresolved'] = $unresolved;
+        $cov['orphan'] = $orphan;
+        $cov['cycle'] = \count($cycles);
+        $cov['shown'] = \count($rows);
+        $cov['omittedDepth'] = $omittedDepth;
+        $cov['omittedLimit'] = $omittedLimit;
+
+        return [
+            'frame' => $frameId,
+            'root' => $root,
+            'rows' => $rows,
+            'coverage' => $cov,
+        ];
+    }
+
+    /**
      * 网络请求骨架：请求 → 帧对齐 → 落地节点，与帧因果共用同一条时间轴。
      *
      * ## 为什么是骨架而不是报文

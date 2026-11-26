@@ -51,6 +51,9 @@ const state = {
   // 异步泳道：和 network 一样只画查询面的 rows，不在前端重算队列/等待帧。
   async: [],
   asyncCaptured: false,
+  // 结构树：查询层已经按 frame 贴好几何与断链标记，页面只按 depth 缩进。
+  tree: [],
+  treeCoverage: null,
 };
 
 const colorCache = new Map();
@@ -656,6 +659,60 @@ async function showJob(id) {
   }
 }
 
+/** 树与画面同帧刷新；查询层已经把几何贴到行上，这里只负责取回和画。 */
+async function loadTree() {
+  const scope = document.getElementById('treescope');
+  try {
+    const answer = await get(`/api/tree?frame=${state.frame}&limit=200`);
+    state.tree = answer.rows || [];
+    state.treeCoverage = answer.coverage || null;
+  } catch (e) {
+    state.tree = [];
+    state.treeCoverage = null;
+    if (scope) scope.textContent = e.message;
+  }
+  renderTree();
+}
+
+function renderTree() {
+  const host = document.getElementById('tree');
+  const count = document.getElementById('treeCount');
+  const scope = document.getElementById('treescope');
+  if (!host) return;
+  host.textContent = '';
+  if (count) count.textContent = state.tree.length ? `${state.tree.length} 行` : '';
+  if (scope && state.treeCoverage) {
+    const c = state.treeCoverage;
+    scope.textContent = `活动 ${c.active} · 根 ${c.roots} · 无盒 ${c.boxless}`
+      + ` · 断链 ${c.unresolved}/${c.orphan}/${c.cycle}`
+      + (c.omittedDepth || c.omittedLimit ? ` · 截断 ${c.omittedDepth}/${c.omittedLimit}` : '')
+      + (c.geometryStale ? ' · 几何沿用旧记录' : '');
+  }
+
+  for (const row of state.tree) {
+    const id = Number(row.id);
+    const line = el('div', 'treenode', (row.type || '?') + '  #' + id
+      + (row.boxed ? '' : ' · 无盒')
+      + (row.flex ? ' · flex' : '')
+      + (row.flag && row.flag !== 'normal' ? ' · ' + row.flag : '')
+      + (row.stale ? ' · stale' : ''));
+    line.style.paddingLeft = `${4 + Number(row.depth || 0) * 12}px`;
+    line.dataset.node = String(id);
+    line.onclick = () => select(id);
+    host.appendChild(line);
+  }
+  markTreeSelection();
+}
+
+/** 选中态只有一个真相；轮询改了 selected 时树只是跟着改一个 class。 */
+function markTreeSelection() {
+  const host = document.getElementById('tree');
+  if (!host) return;
+  for (const line of host.querySelectorAll('.treenode')) {
+    line.classList.toggle('on', Number(line.dataset.node) === Number(state.selected));
+  }
+}
+
 async function loadFrame(frame, keepSelected) {
   // `0` = 服务端缺省（几何窗口最新）。
   //
@@ -669,6 +726,7 @@ async function loadFrame(frame, keepSelected) {
   // 绘制是**这一帧**的事实，与几何同一次刷新取回；`captured:false` 表示预算没开，
   // 页面据此显示"未采集"而不是"没重画"——后者是一个会骗人的结论。
   state.paint = await get(`/api/paint?frame=${state.frame}`).catch(() => null);
+  await loadTree();
   if (!keepSelected) state.selected = 0;
 
   // 轮询刷新时保住选中：否则"点一下盒子、一秒后选中没了"，而用户以为自己点错了。
@@ -1024,6 +1082,7 @@ function showSelection(node, note) {
   state.selectionNote = note || '';
   scheduleDraw();
   renderNode(node);
+  markTreeSelection();
   updateSelectionSource();
 }
 

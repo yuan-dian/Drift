@@ -363,6 +363,28 @@ h2 {
 #crumbs { color: var(--dim); margin-bottom: 8px; word-break: break-all; }
 #crumbs b { color: var(--text); cursor: pointer; font-weight: 500; }
 #crumbs b:hover { color: var(--accent); }
+
+/* 结构树：节点注册表的导航，不是第二份几何画布。 */
+#treePanel { margin-bottom: 10px; }
+#treePanel summary { cursor: pointer; color: var(--dim); }
+#treePanel summary:hover { color: var(--text); }
+#tree {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 6px 0 2px;
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+.treenode {
+  cursor: pointer;
+  padding: 1px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 3px;
+}
+.treenode:hover { color: var(--accent); background: #272c2b; }
+.treenode.on { background: #1d3b36; color: var(--accent); }
 #children { margin-bottom: 12px; }
 #children .child {
   display: block;
