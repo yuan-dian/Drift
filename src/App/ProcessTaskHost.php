@@ -5,6 +5,8 @@ namespace Drift\App;
 
 use Drift\Async\Failure;
 use Drift\Async\Future;
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\Recorder;
 use Drift\Errors;
 
 /**
@@ -57,6 +59,9 @@ final class ProcessTaskHost implements TaskHost
     private CompletionQueue $failed;
 
     private int $seq = 0;
+
+    /** @var array<int, array{id: int, startedAt: int}> Future 号 => trace */
+    private array $traces = [];
 
     /** 上次 reap() 的时刻（µs，hrtime 单调）—— 空闲期降频用 */
     private int $lastReapUs = 0;
@@ -144,6 +149,10 @@ final class ProcessTaskHost implements TaskHost
         $future = Future::pending(function () use ($id): void {
             $this->cancelTask($id);
         });
+        $trace = Recorder::tapAsyncSubmit('process', $job instanceof NamedJob ? $job->name() : \get_class($job), 0);
+        if ($trace > 0) {
+            $this->traces[\spl_object_id($future)] = ['id' => $trace, 'startedAt' => 0];
+        }
 
         if (!$job instanceof NamedJob) {
             $this->fail($future, 'ProcessTaskHost 只能跑 NamedJob —— ' . get_class($job)
@@ -210,6 +219,7 @@ final class ProcessTaskHost implements TaskHost
     {
         $item = $this->inflight[$id] ?? null;
         if ($item !== null) {
+            $this->noteCancelled($item['future']);
             unset($this->inflight[$id]);
             $this->dropWorker((int) $item['worker'], true);
 
@@ -224,6 +234,7 @@ final class ProcessTaskHost implements TaskHost
     {
         foreach ($this->queue as $k => $item) {
             if ($item['id'] === $id) {
+                $this->noteCancelled($item['future']);
                 unset($this->queue[$k]);
                 $this->queue = array_values($this->queue);
 
@@ -252,18 +263,22 @@ final class ProcessTaskHost implements TaskHost
     {
         // 预算基准点只取一次（failed / readReplies / 簿记 共用），否则总耗时是预算的三倍。
         $deadline = CompletionQueue::deadline($budgetMs);
+        $traced = function (Completion $completion) use ($onEach): void {
+            $this->noteCompletion($completion);
+            $onEach($completion);
+        };
 
         // 发不出去的先结算（submit() 时就定，顺序影响同帧内谁先看到失败）；
         // 超预算后仍继续：readReplies / 簿记无条件必须跑，预算限"交多少"不限"干多少"。
-        $this->failed->drain($onEach, $deadline);
+        $this->failed->drain($traced, $deadline);
 
-        $this->readReplies($onEach, $deadline);
+        $this->readReplies($traced, $deadline);
 
         // 契约③：下面两段不受预算约束，无条件跑。
         // flush() 跳过 ⇒ 任务永远发不出去 ⇒ 页面永远转圈；
         // reap() 跳过 ⇒ 死者名下在途永不结算 ⇒ 同样永挂。预算限"交多少"不限"干多少"。
-        $this->sweepTimeouts($onEach);
-        $this->reap($onEach);
+        $this->sweepTimeouts($traced);
+        $this->reap($traced);
         $this->flush();
     }
 
@@ -392,6 +407,39 @@ final class ProcessTaskHost implements TaskHost
         $this->inflight = [];
     }
 
+    private function noteCompletion(Completion $completion): void
+    {
+        $key = \spl_object_id($completion->future);
+        $record = $this->traces[$key] ?? null;
+        if ($record === null) {
+            return;
+        }
+        unset($this->traces[$key]);
+        $error = $completion->error;
+        $code = $error === null ? '' : Failure::codeOf($error);
+        $state = $error === null
+            ? AsyncRecord::OK
+            : ($code === Failure::CODE_TIMEOUT ? AsyncRecord::TIMEOUT : AsyncRecord::FAILED);
+        $elapsed = $record['startedAt'] > 0
+            ? (\hrtime(true) - $record['startedAt']) / 1_000_000.0
+            : 0.0;
+        Recorder::tapAsyncSettle($record['id'], $state, $code, $elapsed);
+    }
+
+    private function noteCancelled(Future $future): void
+    {
+        $key = \spl_object_id($future);
+        $record = $this->traces[$key] ?? null;
+        if ($record === null) {
+            return;
+        }
+        unset($this->traces[$key]);
+        $elapsed = $record['startedAt'] > 0
+            ? (\hrtime(true) - $record['startedAt']) / 1_000_000.0
+            : 0.0;
+        Recorder::tapAsyncSettle($record['id'], AsyncRecord::CANCELLED, '', $elapsed);
+    }
+
     // ── 内部实现 ────────────────────────────────────────────────────────────
 
     /** 起一个 worker，返回它的索引（失败 ⇒ null，Errors 已报过） */
@@ -506,6 +554,7 @@ final class ProcessTaskHost implements TaskHost
         }
         @fflush($worker['in']);
 
+        $startedAt = \hrtime(true);
         $this->inflight[$item['id']] = [
             'future' => $item['future'],
             'worker' => $index,
@@ -513,8 +562,13 @@ final class ProcessTaskHost implements TaskHost
             'limitMs' => $item['limitMs'],
             // 超时计时从这一刻（派发给 worker）开始：排队等空闲不是"卡住"。
             // 刚 spawn 的 worker 此刻早于它能干活，首条任务预算含启动时间；默认 30s 无感，故不加启动宽限。
-            'startedAt' => \hrtime(true),
+            'startedAt' => $startedAt,
         ];
+        $key = \spl_object_id($item['future']);
+        if (isset($this->traces[$key])) {
+            $this->traces[$key]['startedAt'] = $startedAt;
+            Recorder::tapAsyncStart($this->traces[$key]['id'], $index);
+        }
 
         return true;
     }

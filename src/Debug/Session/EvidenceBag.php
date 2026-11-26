@@ -35,6 +35,8 @@ final readonly class EvidenceBag
         public array $paint = [],
         /** @var array<int, NetworkRecord> requestId ⇒ 骨架 */
         public array $network = [],
+        /** @var array<int, AsyncRecord> id => 任务状态跃迁 */
+        public array $async = [],
         /** @var array<int, NetworkBodyRecord> requestId ⇒ 报文 */
         public array $bodies = [],
         /** @var array<int, true> 没有自己盒的节点（复合控件） */

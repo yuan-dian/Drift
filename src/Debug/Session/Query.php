@@ -1378,6 +1378,66 @@ final class Query
     }
 
     /**
+     * 异步任务时间线：任务 → 派发 → 结算 → 落地节点，与帧因果共用同一条时间轴。
+     *
+     * ## 这里记录的是"后端调度过的工作"
+     *
+     * `AsyncScope::sleep()` 与裸 `Future` 是等待点，不是 job。把它们列进来会让
+     * 队列深度失去意义 —— 排队等 worker 与 await 一个定时器根本不是一回事。
+     *
+     * ## `captured=false` 必须显式回
+     *
+     * 异步域默认关。空 `rows` 既可能是"没有任务"，也可能是"没装这个域"；
+     * 两者下一步动作相反，所以窗口自报 `captured`，单任务未命中也分开说。
+     *
+     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int, frame: int, captured: bool}
+     */
+    public function async(?int $job = null, int $limit = 50): array
+    {
+        $window = $this->recorder->asyncCoverage();
+        $captured = ($window['captured'] ?? false) === true;
+        // 挂起任务的 pendingFrames 要有一个"问的这一刻"，不能拿 0 当现在。
+        $frame = $this->recorder->frameId() > 0 ? $this->recorder->frameId() : $this->recorder->lastFrameId();
+
+        if ($job !== null) {
+            $record = $this->recorder->asyncAt($job);
+            if ($record === null) {
+                return [
+                    'rows' => [],
+                    'window' => $window,
+                    'total' => 0,
+                    'frame' => $frame,
+                    'captured' => $captured,
+                    'miss' => $this->asyncMissReason($job, $window),
+                ];
+            }
+
+            return [
+                'rows' => [$record->select($frame)],
+                'window' => $window,
+                'total' => 1,
+                'frame' => $frame,
+                'captured' => $captured,
+            ];
+        }
+
+        $rows = \array_map(
+            static fn(AsyncRecord $r): array => $r->select($frame),
+            $this->recorder->asyncRows(),
+        );
+        $total = \count($rows);
+
+        return [
+            // 取最新的 N 条：看异步面板的人要先看到刚提交的工作。
+            'rows' => $limit > 0 ? \array_slice($rows, -$limit) : $rows,
+            'window' => $window,
+            'total' => $total,
+            'frame' => $frame,
+            'captured' => $captured,
+        ];
+    }
+
+    /**
      * 在**证据**里找东西：给一段文本，回一串**地址**。
      *
      * ## 为什么不叫"全文检索"
@@ -1538,6 +1598,18 @@ final class Query
         return (int) ($window['requests'] ?? 0) === 0 || $request < (int) ($window['from'] ?? 0)
             ? 'outside-network-window'
             : 'unknown-request';
+    }
+
+    /** @param array<string, mixed> $window */
+    private function asyncMissReason(int $job, array $window): string
+    {
+        if (($window['captured'] ?? false) !== true) {
+            return 'async-not-captured';
+        }
+
+        return (int) ($window['jobs'] ?? 0) === 0 || $job < (int) ($window['from'] ?? 0)
+            ? 'outside-async-window'
+            : 'unknown-job';
     }
 
     /**

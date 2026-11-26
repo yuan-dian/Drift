@@ -59,6 +59,9 @@ final class Recorder implements PaintObserver
     /** 网络请求保留的条数：不受帧数约束（600 帧里可能上万次请求），独立窗口。 */
     public const int NETWORK_CAPACITY = 500;
 
+    /** 异步任务保留的条数：独立于帧窗口，和任务数而非帧数成正比。 */
+    public const int ASYNC_CAPACITY = 200;
+
     /**
      * 报文存档条数：比骨架短得多（每条最大 64KB，500 条就是 32MB）。
      * 报文是**按需查的附件**，不是默认证据面；这个窗口只保证"最近几百次"可回看。
@@ -277,6 +280,14 @@ final class Recorder implements PaintObserver
 
     private int $networkSeq = 0;
 
+    /** @var array<int, AsyncRecord> 任务 id => 状态跃迁（独立 200 条窗口） */
+    private array $async = [];
+
+    /** 当前正在结算的任务 id，供 `noteStateWrite` 把落地节点写进它的记录。 */
+    private int $activeJob = 0;
+
+    private int $asyncSeq = 0;
+
     /**
      * 本会话发出的节点号序列（每个会话从 1 开始）。
      *
@@ -474,6 +485,9 @@ final class Recorder implements PaintObserver
         if ($bag->paint !== [] && !$options->paint()) {
             $options = $options->withPaint(true);
         }
+        if ($bag->async !== [] && !$options->async()) {
+            $options = $options->withAsync(true);
+        }
         $recorder = new self($options);
 
         $recorder->nodes = $bag->nodes;
@@ -487,6 +501,7 @@ final class Recorder implements PaintObserver
         $recorder->geometryPrimed = $bag->geometry !== [];
         $recorder->paint = $bag->paint;
         $recorder->network = $bag->network;
+        $recorder->async = $bag->async;
         $recorder->bodies = $bag->bodies;
         $recorder->boxless = $bag->boxless;
 
@@ -508,6 +523,11 @@ final class Recorder implements PaintObserver
             $networkSeq = \max($networkSeq, (int) $requestId);
         }
         $recorder->networkSeq = $networkSeq;
+        $asyncSeq = 0;
+        foreach ($bag->async as $id => $_) {
+            $asyncSeq = \max($asyncSeq, (int) $id);
+        }
+        $recorder->asyncSeq = $asyncSeq;
 
         return $recorder;
     }
@@ -657,6 +677,7 @@ final class Recorder implements PaintObserver
         // 归因标记只在结算的同步段内有效：跨帧残留会把下一帧无关的 setState
         // 写进上一帧的响应，制造一条看起来合理、实际不存在的因果边。
         $this->activeRequest = 0;
+        $this->activeJob = 0;
 
         // 叠加层：**画成功才算**。壳在 afterPaint 里真的描了边才把这一笔报上来；
         // 帧被跳过、paint 抛异常、元素已卸载 ⇒ 这里收不到 ⇒ `overlayDrawn` 停在
@@ -752,6 +773,15 @@ final class Recorder implements PaintObserver
                 $landed = $request->landed;
                 $landed[] = $id;
                 $this->network[$request->requestId] = $request->withLanded($landed);
+            }
+        }
+        if ($this->activeJob > 0 && isset($this->async[$this->activeJob])) {
+            $job = $this->async[$this->activeJob];
+            $detail .= ' <- job:' . $job->id;
+            if (!\in_array($id, $job->landed, true)) {
+                $landed = $job->landed;
+                $landed[] = $id;
+                $this->async[$job->id] = $job->withLanded($landed);
             }
         }
 
@@ -1245,6 +1275,93 @@ final class Recorder implements PaintObserver
         ];
     }
 
+    // ------------------------------------------------------------------ 异步任务
+
+    public function noteAsyncSubmit(string $backend, string $job, int $worker): int
+    {
+        $id = ++$this->asyncSeq;
+        $this->async[$id] = new AsyncRecord(
+            $id,
+            $backend,
+            $job,
+            $worker,
+            $this->frameId,
+            0,
+            0,
+            AsyncRecord::QUEUED,
+            '',
+            0.0,
+            // 异步发起者允许回方法名：业务 handler 常由框架反射调用，那一帧的 file
+            // 在调用者身上，退回 vendor/TestCase.php 会把归因指到工具而不是业务。
+            self::callSite(['Drift\\App\\'], true),
+        );
+
+        return $id;
+    }
+
+    public function noteAsyncStart(int $id, int $worker): void
+    {
+        $record = $this->async[$id] ?? null;
+        if ($record === null || $record->startedAtFrame > 0) {
+            return;
+        }
+        $this->async[$id] = new AsyncRecord(
+            $id, $record->backend, $record->job, $worker,
+            $record->submittedAtFrame, $this->frameId, $record->settledAtFrame,
+            AsyncRecord::RUNNING, $record->code, $record->elapsedMs, $record->initiator, $record->landed,
+        );
+    }
+
+    public function noteAsyncSettle(int $id, string $state, string $code, float $elapsedMs): void
+    {
+        $record = $this->async[$id] ?? null;
+        if ($record === null || $record->settledAtFrame > 0) {
+            return; // 迟到 / 重复结算不复活旧任务
+        }
+        $this->async[$id] = new AsyncRecord(
+            $id, $record->backend, $record->job, $record->worker,
+            $record->submittedAtFrame, $record->startedAtFrame, $this->frameId,
+            $state, $code, $elapsedMs, $record->initiator, $record->landed,
+        );
+        // 结算同帧的 setState 属于这条任务，与 request 落地同款归因。
+        $this->activeJob = $id;
+    }
+
+    /** @return list<AsyncRecord> 按 id 升序 */
+    public function asyncRows(): array
+    {
+        $rows = \array_values($this->async);
+        \usort($rows, static fn(AsyncRecord $a, AsyncRecord $b): int => $a->id <=> $b->id);
+
+        return $rows;
+    }
+
+    public function asyncAt(int $id): ?AsyncRecord
+    {
+        return $this->async[$id] ?? null;
+    }
+
+    /** @return array{captured: bool, jobs: int, capacity: int, from: int, to: int, inFlight: int} */
+    public function asyncCoverage(): array
+    {
+        $keys = \array_keys($this->async);
+        $inFlight = 0;
+        foreach ($this->async as $record) {
+            if ($record->settledAtFrame === 0) {
+                ++$inFlight;
+            }
+        }
+
+        return [
+            'captured' => $this->options->async(),
+            'jobs' => \count($keys),
+            'capacity' => self::ASYNC_CAPACITY,
+            'from' => $keys === [] ? 0 : \min($keys),
+            'to' => $keys === [] ? 0 : \max($keys),
+            'inFlight' => $inFlight,
+        ];
+    }
+
     private static function hostOf(string $url): string
     {
         $pos = \strpos($url, '://');
@@ -1339,8 +1456,7 @@ final class Recorder implements PaintObserver
             unset($this->geometryDigest[$node]);
         }
 
-        $seen = [];
-        $this->sampleOne($root, $frame, -1, $seen);
+        $seen = $this->sampleOne($root, $frame, -1);
         foreach ($this->sampledNodes as $node => $_) {
             if (!isset($seen[$node])) {
                 $this->goneAt[$node] = $frame;
@@ -1352,9 +1468,18 @@ final class Recorder implements PaintObserver
         $this->sampledNodes = $seen;
     }
 
-    /** @param array<int, true> $seen 本帧树里的节点，逐级累积后由 {@see sampleGeometry()} 收账 */
-    private function sampleOne(Element $element, int $frame, int $parentBoxId, array &$seen): void
+    /**
+     * 采一棵子树，返回子树里的节点号。
+     *
+     * ★ 不收 `array &$seen`：tpc 把按引用传入的数组钉成 fixed `php::Array`，
+     *   递归闭包再取引用就编不过。改成"子树自己收账、父级合并"后语义不变，
+     *   也没有把一次性采样状态挂到会话对象上。
+     *
+     * @return array<int, true> 本子树里的节点，由 {@see sampleGeometry()} 收账
+     */
+    private function sampleOne(Element $element, int $frame, int $parentBoxId): array
     {
+        $seen = [];
         $id = $this->idOf($element);
         $seen[$id] = true;
         $boxId = $parentBoxId;
@@ -1377,9 +1502,17 @@ final class Recorder implements PaintObserver
             $boxId = $id;
         }
 
-        $element->visitChildren(function (Element $child) use ($frame, $boxId, &$seen): void {
-            $this->sampleOne($child, $frame, $boxId, $seen);
+        $children = [];
+        $element->visitChildren(function (Element $child) use (&$children): void {
+            $children[] = $child;
         });
+        foreach ($children as $child) {
+            foreach ($this->sampleOne($child, $frame, $boxId) as $node => $_) {
+                $seen[$node] = true;
+            }
+        }
+
+        return $seen;
     }
 
     /**
@@ -1589,6 +1722,9 @@ final class Recorder implements PaintObserver
         $this->bodies = [];
         $this->networkSeq = 0;
         $this->activeRequest = 0;
+        $this->async = [];
+        $this->asyncSeq = 0;
+        $this->activeJob = 0;
         // ★ 几何与签名必须一起清。`trim()` 里"签名不清"说的是**窗口滚动**
         //   （记录被裁掉了，但这份几何确实记过）；`reset()` 是"重新开始录"，
         //   语义不同。不清签名的话，下一帧 `frameId` 从 1 重新开始，签名说
@@ -1680,6 +1816,26 @@ final class Recorder implements PaintObserver
         self::$current?->noteNetworkBody($requestId, $requestRaw, $responseRaw);
     }
 
+    public static function tapAsyncSubmit(string $backend, string $job, int $worker): int
+    {
+        $recorder = self::$current;
+        if ($recorder === null || !$recorder->options->async()) {
+            return 0;
+        }
+
+        return $recorder->noteAsyncSubmit($backend, $job, $worker);
+    }
+
+    public static function tapAsyncStart(int $id, int $worker): void
+    {
+        self::$current?->noteAsyncStart($id, $worker);
+    }
+
+    public static function tapAsyncSettle(int $id, string $state, string $code, float $elapsedMs): void
+    {
+        self::$current?->noteAsyncSettle($id, $state, $code, $elapsedMs);
+    }
+
     // ------------------------------------------------------------------ 内部
 
     /**
@@ -1708,6 +1864,11 @@ final class Recorder implements PaintObserver
             }
         }
         foreach ($this->network as $record) {
+            foreach ($record->landed as $node) {
+                $retain[(int) $node] = true;
+            }
+        }
+        foreach ($this->async as $record) {
             foreach ($record->landed as $node) {
                 $retain[(int) $node] = true;
             }
@@ -1788,6 +1949,13 @@ final class Recorder implements PaintObserver
             }
             unset($this->network[$oldest]);
         }
+        while (\count($this->async) > self::ASYNC_CAPACITY) {
+            $oldest = \array_key_first($this->async);
+            if ($oldest === null) {
+                return;
+            }
+            unset($this->async[$oldest]);
+        }
         // 报文是网络的附件：骨架裁掉后报文留着就是没人能按 requestId 索引的孤儿。
         while (\count($this->bodies) > self::BODY_CAPACITY) {
             $oldest = \array_key_first($this->bodies);
@@ -1813,8 +1981,10 @@ final class Recorder implements PaintObserver
      * 也不要为了它让热路径报错。
      *
      * @param list<string> $extraSkip 额外跳过的类名前缀（网络发起要跳过 IO 门面自身）
+     * @param bool $methodFallback file/line 缺失时退回 `Class::method`；异步发起者用，
+     *                             业务 handler 常由框架反射调用，否则会指到 vendor 调用者
      */
-    private static function callSite(array $extraSkip = []): string
+    private static function callSite(array $extraSkip = [], bool $methodFallback = false): string
     {
         if (!\function_exists('debug_backtrace')) {
             return '';
@@ -1834,7 +2004,16 @@ final class Recorder implements PaintObserver
             }
             $file = isset($frame['file']) ? (string) $frame['file'] : '';
             if ($file === '') {
+                if ($methodFallback && $class !== '' && isset($frame['function'])) {
+                    return $class . '::' . (string) $frame['function'];
+                }
                 continue;
+            }
+            // 反射调用的那一帧，`file` 指向调用者（测试里就是 vendor/TestCase.php）。
+            // 对异步发起者而言，"哪个业务方法交的活"比"框架哪一行调的它"更有用。
+            if ($methodFallback && $class !== '' && isset($frame['function'])
+                && \str_contains(\str_replace('\\', '/', $file), '/vendor/')) {
+                return $class . '::' . (string) $frame['function'];
             }
             $cwd = \getcwd();
             if ($cwd !== false && \str_starts_with($file, $cwd)) {

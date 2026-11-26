@@ -125,10 +125,12 @@ final class Parsed
     /** CLI 的采集预算唯一组装点：正文默认不抓。 */
     public function recordOptions(): RecordOptions
     {
-        // 两个域都是"默认关、显式要"：报文是隐私与体积，绘制是每帧多记一个节点集合。
+        // 三个域都是"默认关、显式要"：报文是隐私与体积，绘制是每帧多记一个节点集合，
+        // 异步是后端 tap 的记账成本。采集预算不进脚本，所以不改驱动指纹。
         return RecordOptions::of(
             bodies: $this->bool('bodies'),
             paint: $this->bool('paint'),
+            async: $this->bool('async'),
         );
     }
 

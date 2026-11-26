@@ -60,6 +60,7 @@ final class Evidence
     public const string D_GEOMETRY = 'geometry';
     public const string D_PAINT = 'paint';
     public const string D_NETWORK = 'network';
+    public const string D_ASYNC = 'async';
     public const string D_BODIES = 'bodies';
     public const string D_SCRIPT = 'script';
 
@@ -94,6 +95,7 @@ final class Evidence
         self::D_GEOMETRY,
         self::D_PAINT,
         self::D_NETWORK,
+        self::D_ASYNC,
         self::D_BODIES,
         self::D_SCRIPT,
     ];
@@ -106,6 +108,7 @@ final class Evidence
     private const string K_GEOMETRY = 'geometry';
     private const string K_PAINT = 'paint';
     private const string K_NETWORK = 'network';
+    private const string K_ASYNC = 'async';
     private const string K_BODY = 'body';
     private const string K_SCRIPT = 'script';
 
@@ -131,6 +134,7 @@ final class Evidence
         // `truncated` 也算必需：缺了按 false 走，一份被截断的集合会被读成完整集合。
         self::K_PAINT => ['domain' => self::D_PAINT, 'keys' => ['frame', 'painted', 'misses', 'paintedTotal', 'hits', 'truncated']],
         self::K_NETWORK => ['domain' => self::D_NETWORK, 'keys' => ['request', 'method', 'url']],
+        self::K_ASYNC => ['domain' => self::D_ASYNC, 'keys' => ['id', 'backend', 'job', 'state']],
         self::K_BODY => ['domain' => self::D_BODIES, 'keys' => ['request']],
         self::K_SCRIPT => ['domain' => self::D_SCRIPT, 'keys' => ['version', 'target', 'viewport']],
     ];
@@ -227,6 +231,12 @@ final class Evidence
                 }
             }
 
+            if (\in_array(self::D_ASYNC, $domains, true)) {
+                foreach ($recorder->asyncRows() as $row) {
+                    self::put($handle, ['kind' => self::K_ASYNC] + $row->encode());
+                }
+            }
+
             if (\in_array(self::D_BODIES, $domains, true)) {
                 foreach ($recorder->bodyRequests() as $requestId) {
                     $body = $recorder->bodyAt($requestId);
@@ -282,6 +292,8 @@ final class Evidence
         $paint = [];
         /** @var array<int, NetworkRecord> $network */
         $network = [];
+        /** @var array<int, AsyncRecord> $async */
+        $async = [];
         /** @var array<int, NetworkBodyRecord> $bodies */
         $bodies = [];
         /** @var array<int, true> $boxless */
@@ -397,6 +409,11 @@ final class Evidence
                     $network[$networkRow->requestId] = $networkRow;
                     break;
 
+                case self::K_ASYNC:
+                    $asyncRow = AsyncRecord::decode($raw);
+                    $async[$asyncRow->id] = $asyncRow;
+                    break;
+
                 case self::K_BODY:
                     $bodyRow = NetworkBodyRecord::decode($raw);
                     $bodies[$bodyRow->requestId] = $bodyRow;
@@ -434,6 +451,7 @@ final class Evidence
             geometry: $geometry,
             paint: $paint,
             network: $network,
+            async: $async,
             bodies: $bodies,
             boxless: $boxless,
             evicted: $evicted,
@@ -495,6 +513,7 @@ final class Evidence
                 'network' => \in_array(self::D_NETWORK, $domains, true),
                 'bodies' => \in_array(self::D_BODIES, $domains, true),
                 'paint' => \in_array(self::D_PAINT, $domains, true),
+                'async' => \in_array(self::D_ASYNC, $domains, true),
             ];
         }
 
@@ -526,6 +545,7 @@ final class Evidence
             self::K_GEOMETRY => [self::D_GEOMETRY, $recorder->geometryCoverage()['nodes']],
             self::K_PAINT => [self::D_PAINT, \count($recorder->paintFrames())],
             self::K_NETWORK => [self::D_NETWORK, \count($recorder->networkRows())],
+            self::K_ASYNC => [self::D_ASYNC, \count($recorder->asyncRows())],
             self::K_BODY => [self::D_BODIES, \count($recorder->bodyRequests())],
         ];
         foreach ($plan as $kind => [$domain, $count]) {

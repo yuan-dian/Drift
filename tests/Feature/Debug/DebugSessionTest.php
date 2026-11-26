@@ -83,6 +83,7 @@ final class DebugSessionTest extends SmokeTestCase
                 'constraints' => ['node' => $nodeId],
                 'network' => [],
                 'networkBody' => ['request' => 999],
+                'async' => [],
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'find' => ['pattern' => 'Text'],
                 'props' => ['node' => $nodeId],

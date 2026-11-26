@@ -27,6 +27,7 @@ declare(strict_types=1);
 function writeFace(): array
 {
     return [
+        'src/Debug/Session/AsyncRecord.php',
         'src/Debug/Session/Edge.php',
         'src/Debug/Session/EvidenceBag.php',
         'src/Debug/Session/FrameRecord.php',

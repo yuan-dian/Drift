@@ -35,6 +35,7 @@ final class OptionSet
         $set->add(Opt::flag('remote', '用宿主进程跑，跨进程读同一份证据'));
         $set->add(Opt::flag('bodies', '采集请求 / 响应正文（脱敏，默认关）'));
         $set->add(Opt::flag('paint', '采集每帧重画集合与层缓存命中（默认关）'));
+        $set->add(Opt::flag('async', '采集 TaskHost 任务状态跃迁（默认关）'));
         $set->add(Opt::flag('help', '打印本出口的选项清单'));
         foreach ($extras as $opt) {
             $set->add($opt);

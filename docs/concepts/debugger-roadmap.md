@@ -31,7 +31,7 @@
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
 | 终端面板 | 切片：时间轴 + 因果树 + why | Flutter DevTools、Chrome | 键盘可用；缺检查器与网络视图 |
-| Web 视图 | 切片：几何画布 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树、时间轴 |
+| Web 视图 | 切片：几何画布 + 帧 / 网络 / 异步泳道 + 发现 + 节点卡 + 搜索 | Chrome/Flutter 多标签 | 缺树与检查器 |
 | 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 多 target 并列视图已由 A59 落地；真正跨窗口归因仍未做 |
 | 多窗口 / 多 target | 已落地：每窗口一份录制器互不串证据（A53）；`Discovery` 数组与多会话点名早已生效；`debug targets` 把所有活会话并列成一份只读视图（A59） | 成熟 DevTools 多 target | S2 前置已清；并列看得见，归因要等采集层给全局节点 id |
 | 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
@@ -39,7 +39,7 @@
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
 | 内存 / 泄漏 | 已落地：`debug probe --what=memory` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账给每个类型的对象存活跨度（跨查询累积，不阻止 GC）；AOT 侧不采、不进包、不进指纹（A55） | Chrome Memory、Flutter Memory、Tracy | 不做堆转储与字节数（PHP 无此 API），只给能站得住的存活跨度 |
 | 源码位置 | 已落地：`debug probe --what=source` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把 `site` 翻成"哪个方法、定义第几行"；只看已加载类、当场反射、不是证据（A55） | Chrome Sources、LLDB `image lookup` | 补上从因果 site 跳到方法定义的最后一跳 |
-| 异步 / worker 时间线 | 未做：只有 HTTP 骨架 | Chrome async stacks、Perfetto | 对 Drift 异步模型很关键 |
+| 异步 / worker 时间线 | 已落地（A63）：三个 TaskHost 后端内侧 tap，记提交 / 派发 / 结算帧、状态、耗时、发起者与落地节点；默认关，`debug async` + Web 异步泳道读同一查询面 | Chrome async stacks、Perfetto | 只记后端调度过的 job；await 每步成为 span 要另立 trace |
 | 崩溃 / 生产黑匣子 | 已落地：每应用一份 Core 标量环，帧末写一条，Frame 异常边界先留现场再响亮失败；release 可恢复错误另记独立面包屑环，不顶掉致命现场（A61）；sidecar 每 30 帧原子替换，native 过滤器崩溃时原样附加（A62）；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留（A60） | Sentry breadcrumb、Chrome trace | 已覆盖 PHP 异常、可恢复告警与 native context；符号化仍靠 `/MAP` + `rva2sym` |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
@@ -48,11 +48,11 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 15 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 19 出口        Web 视图         AI / CI          IDE（未来）
                     \              |               |               /
-L2 投影        Brief / Findings  Inspector     Timeline     Network     Loop     Paint     Memory
+L2 投影        Brief / Findings  Inspector     Timeline     Network     Async     Loop     Paint     Memory
                     \              |               |               /
-L1 证据        FrameStore   NodeRegistry   GeometryStore   NetworkStore   PropStore   Script   Digest   Evidence
+L1 证据        FrameStore   NodeRegistry   GeometryStore   NetworkStore   AsyncRecord   Script   Digest   Evidence
                     \              |               |               /
 L0 采集        frame  state-write  rebuild  input  network  geometry  props  pick  paint  memory  async
 ```
@@ -206,7 +206,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 这三个域都重要，但不与 S3d / S2 同期做；先按“预算 + 独立窗口 + 独立查询”的形状评估：
 
 - **内存**（已落地，A55）：不做证据域，做 **dev 内省** —— `MemoryProbe` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账记对象首次见到的帧、给存活跨度。台账弱持有，观察本身不成为泄漏源；不报"单对象字节数"（PHP 无此 API，报了就是编的），不报"已消失对象数"（GC 时机不由我们定，报了就是说谎）。`debug probe --what=memory`（P8）。只有在"跨帧泄漏趋势要进 CI"这个真实需求出现时，才考虑升成 L1 域。
-- **异步**：Future / worker job 的时间线、队列深度、结算延迟、取消；网络只是其中一个子域。
+- **异步**：A63 只记三个 TaskHost 后端真实调度过的 job——帧号由 `submitted` / `started` / `settled` 给出，队列深度现算，结算同帧的 state 写入回填 `landed` 并写进因果 detail；`await` / `sleep` 是等待点，不在 job 表里。
 - **无障碍**：语义树 + UIA 属性；已有 UIA 实现，缺的是查询面与投影。
 
 每个域进入主线前必须回答：采集点在哪、窗口多大、进不进 digest、AOT 是否可用、消费者是谁。

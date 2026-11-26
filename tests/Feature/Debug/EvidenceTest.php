@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 use Drift\App\Application;
 use Drift\Debug\Json;
 use Drift\Debug\Session\Digest;
+use Drift\Debug\Session\AsyncRecord;
 use Drift\Debug\Session\Edge;
 use Drift\Debug\Session\Evidence;
 use Drift\Debug\Session\EvidenceBag;
@@ -136,6 +137,14 @@ final class EvidenceTest extends SmokeTestCase
             NetworkRecord::decode(self::throughJson($network->encode()))->encode() === $network->encode(),
         );
 
+        $async = new AsyncRecord(
+            4, 'process', 'load.page', 2, 3, 5, 9, AsyncRecord::OK, '', 12.5, 'PageStore.php:31', [11, 12],
+        );
+        check(
+            '异步往返（状态 / worker / 落地都在，派生的队列帧不落盘）',
+            AsyncRecord::decode(self::throughJson($async->encode()))->encode() === $async->encode(),
+        );
+
         $script = new Script('table', 800.0, 600.0, ['rows' => 6]);
         check(
             '脚本往返',
@@ -221,6 +230,42 @@ final class EvidenceTest extends SmokeTestCase
             check('帧因果仍在', \count($recorder->frames()) === 1, (string) \count($recorder->frames()));
         } finally {
             Recorder::uninstall();
+        }
+
+        $this->flushChecks();
+    }
+
+    /** 异步域默认不导出，显式要时往返稳定，且导入后仍认得自己开过这个预算。 */
+    public function testAsyncIsOptInAndRoundTrips(): void
+    {
+        $recorder = Recorder::install(RecordOptions::of(async: true));
+        $path = self::tempFile('.evidence');
+
+        try {
+            $id = $recorder->noteAsyncSubmit('process', 'load.page', 0);
+            $recorder->noteAsyncStart($id, 1);
+            $recorder->noteAsyncSettle($id, AsyncRecord::OK, '', 3.5);
+
+            $default = Evidence::write($recorder, $path);
+            check('默认包不声明异步域', !\in_array(Evidence::D_ASYNC, $default['domains'], true));
+            check('默认包没有 async 记录', !\array_key_exists('async', $default['counts']));
+
+            $all = Evidence::write($recorder, $path, Evidence::ALL_DOMAINS);
+            check('显式要才带上异步域', \in_array(Evidence::D_ASYNC, $all['domains'], true));
+            check('异步条数自报', ($all['counts']['async'] ?? 0) === 1);
+
+            $bag = Evidence::read($path);
+            $offline = Recorder::hydrate($bag);
+            check('导入后预算仍说采过异步', $offline->options()->async() === true);
+            check('导入后任务 id 不重发', $offline->asyncAt($id)?->job === 'load.page');
+
+            $onlineQuery = new Query($recorder);
+            $offlineQuery = new Query($offline);
+            check('异步查询导入后逐值相同', $onlineQuery->async() === $offlineQuery->async());
+            check('单任务查询也逐值相同', $onlineQuery->async($id) === $offlineQuery->async($id));
+        } finally {
+            Recorder::uninstall();
+            @\unlink($path);
         }
 
         $this->flushChecks();

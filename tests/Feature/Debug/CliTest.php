@@ -27,7 +27,7 @@ final class CliTest extends SmokeTestCase
             $digests[$name] = Commands::set($name)->parse(self::WORDS)->script()->digest();
             check("{$name} 能由词表建出脚本", $digests[$name] !== '', $name);
         }
-        check('13 个出口', \count($digests) === 13, (string) \count($digests));
+        check('14 个出口', \count($digests) === 14, (string) \count($digests));
         check('同一份词只有一份指纹', \count(\array_unique($digests)) === 1, \implode(' ', $digests));
         $this->flushChecks();
     }
@@ -78,9 +78,14 @@ final class CliTest extends SmokeTestCase
         $off = Commands::set('network')->parse($base);
         $on = Commands::set('network')->parse([...$base, '--bodies']);
 
+        $async = Commands::set('network')->parse([...$base, '--async']);
+
         check('默认不抓正文', $off->recordOptions()->bodies() === false);
+        check('默认不记异步任务', $off->recordOptions()->async() === false);
         check('--bodies 显式开启', $on->recordOptions()->bodies() === true);
-        check('采集预算不改驱动指纹', $off->script()->digest() === $on->script()->digest());
+        check('--async 显式开启', $async->recordOptions()->async() === true);
+        check('采集预算不改驱动指纹', $off->script()->digest() === $on->script()->digest()
+            && $off->script()->digest() === $async->script()->digest());
         $this->flushChecks();
     }
 
@@ -165,6 +170,7 @@ final class CliTest extends SmokeTestCase
         $cases = [
             'brief' => ['--page=table', '--frames=1', '--json'],
             'network' => ['--page=table', '--frames=1', '--json'],
+            'async' => ['--page=table', '--frames=1', '--json'],
             'loop' => ['--page=table', '--runs=1', '--json'],
             'node' => ['--page=table', '--frames=1', '--node=1', '--frame=1', '--json'],
             'pick' => ['--page=table', '--frames=1', '--x=1', '--y=1', '--json'],
@@ -193,7 +199,7 @@ final class CliTest extends SmokeTestCase
         foreach (Registry::all() as $verb => $entry) {
             check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
         }
-        check('18 个出口', \count(Registry::all()) === 18, (string) \count(Registry::all()));
+        check('19 个出口', \count(Registry::all()) === 19, (string) \count(Registry::all()));
         $this->flushChecks();
     }
 

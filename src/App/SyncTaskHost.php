@@ -3,7 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Async\Failure;
 use Drift\Async\Future;
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\Recorder;
 use Drift\Errors;
 
 /**
@@ -61,6 +64,9 @@ final class SyncTaskHost implements TaskHost
     /** 慢任务诊断只报一次（否则每个慢请求一条，日志被刷满就没人看） */
     private bool $slowReported = false;
 
+    /** @var array<int, array{id: int, elapsed: float}> 任务 Future 号 => trace */
+    private array $traces = [];
+
     public function __construct()
     {
         $this->queue = new CompletionQueue();
@@ -75,14 +81,23 @@ final class SyncTaskHost implements TaskHost
         //   若让它冒出去，`submit()` 的调用点（往往是 Store 的一个方法）就得处理
         //   后台错误，端口的意义就没了。
         $startedAt = \hrtime(true);
-
+        $value = null;
+        $error = null;
         try {
-            $this->queue->push(new Completion($job->run(), null, $future));
+            $value = $job->run();
         } catch (\Throwable $e) {
-            $this->queue->push(new Completion(null, $e, $future));
+            $error = $e;
         }
+        $this->queue->push(new Completion($value, $error, $future));
 
-        $this->reportIfSlow($job, (\hrtime(true) - $startedAt) / 1_000_000);
+        $costMs = (\hrtime(true) - $startedAt) / 1_000_000;
+        $name = $job instanceof NamedJob ? $job->name() : \get_class($job);
+        $trace = Recorder::tapAsyncSubmit('sync', $name, 0);
+        if ($trace > 0) {
+            $this->traces[\spl_object_id($future)] = ['id' => $trace, 'elapsed' => $costMs];
+            Recorder::tapAsyncStart($trace, 0);
+        }
+        $this->reportIfSlow($job, $costMs);
 
         return $future;
     }
@@ -156,9 +171,24 @@ final class SyncTaskHost implements TaskHost
         // ★ 预算基准点只取一次（三段共用，否则是预算的三倍）；换算式见
         //   `CompletionQueue::deadline()`（三个后端同一处）。
         $deadline = CompletionQueue::deadline($budgetMs);
+        $traced = function (Completion $completion) use ($onEach): void {
+            $key = \spl_object_id($completion->future);
+            $record = $this->traces[$key] ?? null;
+            if ($record !== null) {
+                unset($this->traces[$key]);
+                $error = $completion->error;
+                Recorder::tapAsyncSettle(
+                    $record['id'],
+                    $error === null ? AsyncRecord::OK : AsyncRecord::FAILED,
+                    $error === null ? '' : Failure::codeOf($error),
+                    $record['elapsed'],
+                );
+            }
+            $onEach($completion);
+        };
 
         // ★ 三条规则（至少交一条 / 剩余回队头 / 回调抛异常也不丢）全在
         //   `CompletionQueue::drain()` —— 三个后端共用**同一份**算法。
-        $this->queue->drain($onEach, $deadline);
+        $this->queue->drain($traced, $deadline);
     }
 }

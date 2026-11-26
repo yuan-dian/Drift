@@ -18,6 +18,7 @@ final readonly class RecordOptions
      * @param bool $network 记网络骨架（方法 / URL / 状态 / 帧号 / 发起者）
      * @param bool $bodies 抓请求 / 响应体；默认关，隐私与体积理由见证据模型
      * @param bool $paint 记每帧重画集合与层缓存命中 / 未命中；默认关，先证明预算
+     * @param bool $async 记 TaskHost 任务状态跃迁；默认关，先证明预算
      * @param bool $redact 报文脱敏；关掉时 manifest 必须说"含明文"
      */
     public function __construct(
@@ -28,6 +29,7 @@ final readonly class RecordOptions
         private bool $network = true,
         private bool $bodies = false,
         private bool $paint = false,
+        private bool $async = false,
     ) {
         if ($this->capacity < 1) {
             throw new \InvalidArgumentException('录制帧窗口至少为 1');
@@ -66,6 +68,7 @@ final readonly class RecordOptions
             network: true,
             bodies: true,
             paint: true,
+            async: true,
         );
     }
 
@@ -80,8 +83,9 @@ final readonly class RecordOptions
         bool $network = true,
         bool $bodies = false,
         bool $paint = false,
+        bool $async = false,
     ): self {
-        return new self($capacity, $script, $redact, $geometry, $network, $bodies, $paint);
+        return new self($capacity, $script, $redact, $geometry, $network, $bodies, $paint, $async);
     }
 
     /** 兼容旧的 `install(int, ?Script, bool)` / `open(int, ?Script, bool)` 调用。 */
@@ -100,7 +104,7 @@ final readonly class RecordOptions
         return self::of(capacity: $capacity, script: $script, redact: $redact);
     }
 
-    /** @return array{capacity: int, geometry: string, network: bool, bodies: bool, paint: bool, redact: bool} */
+    /** @return array{capacity: int, geometry: string, network: bool, bodies: bool, paint: bool, async: bool, redact: bool} */
     public function toManifest(): array
     {
         return [
@@ -109,6 +113,7 @@ final readonly class RecordOptions
             'network' => $this->network,
             'bodies' => $this->bodies,
             'paint' => $this->paint,
+            'async' => $this->async,
             'redact' => $this->redact,
         ];
     }
@@ -128,6 +133,7 @@ final readonly class RecordOptions
             network: (bool) ($raw['network'] ?? true),
             bodies: (bool) ($raw['bodies'] ?? false),
             paint: (bool) ($raw['paint'] ?? false),
+            async: (bool) ($raw['async'] ?? false),
         );
     }
 
@@ -166,6 +172,11 @@ final readonly class RecordOptions
         return $this->paint;
     }
 
+    public function async(): bool
+    {
+        return $this->async;
+    }
+
     /** 段耗时量具只在需要分段归因的档位开；frames-only 不付这笔税。 */
     public function profileStages(): bool
     {
@@ -176,36 +187,41 @@ final readonly class RecordOptions
 
     public function withCapacity(int $capacity): self
     {
-        return new self($capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint);
+        return new self($capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint, $this->async);
     }
 
     public function withScript(?Script $script): self
     {
-        return new self($this->capacity, $script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint);
+        return new self($this->capacity, $script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint, $this->async);
     }
 
     public function withRedact(bool $redact): self
     {
-        return new self($this->capacity, $this->script, $redact, $this->geometry, $this->network, $this->bodies, $this->paint);
+        return new self($this->capacity, $this->script, $redact, $this->geometry, $this->network, $this->bodies, $this->paint, $this->async);
     }
 
     public function withGeometry(GeometryCapture $geometry): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $geometry, $this->network, $this->bodies, $this->paint);
+        return new self($this->capacity, $this->script, $this->redact, $geometry, $this->network, $this->bodies, $this->paint, $this->async);
     }
 
     public function withNetwork(bool $network): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $network, $this->bodies, $this->paint);
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $network, $this->bodies, $this->paint, $this->async);
     }
 
     public function withBodies(bool $bodies): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $bodies, $this->paint);
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $bodies, $this->paint, $this->async);
     }
 
     public function withPaint(bool $paint): self
     {
-        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $paint);
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $paint, $this->async);
+    }
+
+    public function withAsync(bool $async): self
+    {
+        return new self($this->capacity, $this->script, $this->redact, $this->geometry, $this->network, $this->bodies, $this->paint, $async);
     }
 }

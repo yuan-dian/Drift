@@ -48,6 +48,9 @@ const state = {
   network: [],
   networkCaptured: false,
   activeRequest: 0,
+  // 异步泳道：和 network 一样只画查询面的 rows，不在前端重算队列/等待帧。
+  async: [],
+  asyncCaptured: false,
 };
 
 const colorCache = new Map();
@@ -188,7 +191,7 @@ async function boot() {
     }
   });
 
-  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
 
   // 第一屏：有底图就跟"最新"（服务端缺省帧 = 几何窗口最新），画面也是最新的，
   // 两者同源；没有底图（离线包 / 自己跑的会话）才退回"最值得看的一帧"。
@@ -494,8 +497,9 @@ function renderFrames(rows) {
     host.appendChild(b);
   }
   markCurrentFrame();
-  // 帧条重建后 DOM 位置全变了，网络条要跟着重贴。
+  // 帧条重建后 DOM 位置全变了，网络与异步条都要跟着重贴。
   placeNetwork();
+  placeAsync();
 }
 
 function markCurrentFrame() {
@@ -571,6 +575,84 @@ function placeNetwork() {
 function markActiveRequest() {
   for (const bar of document.querySelectorAll('#netlane .req')) {
     bar.classList.toggle('active', Number(bar.dataset.request) === state.activeRequest);
+  }
+}
+
+/** 异步泳道：列表原样取自 /api/async，只把 job 的帧区间贴到帧条上。 */
+async function loadAsync() {
+  try {
+    const page = await get('/api/async?limit=100');
+    state.async = page.rows || [];
+    state.asyncCaptured = page.captured === true;
+  } catch (e) {
+    state.async = [];
+    state.asyncCaptured = false;
+  }
+  renderAsync();
+}
+
+function renderAsync() {
+  const host = document.getElementById('joblane');
+  if (!host) return;
+  host.textContent = '';
+  if (state.async.length === 0) {
+    host.appendChild(el('div', 'empty',
+      state.asyncCaptured ? '这段证据没有后端调度过任务' : '这份证据没有开异步采集'));
+    return;
+  }
+
+  for (const r of state.async) {
+    const bad = ['failed', 'timeout', 'cancelled'].includes(String(r.state || ''));
+    const bar = el('div', `job ${bad ? 'failed' : ''} ${r.state || ''}`);
+    bar.dataset.job = String(r.id);
+    bar.textContent = `${r.backend || '?'} ${r.job || ''}`;
+    bar.title = `#${r.id} ${r.backend || ''} / ${r.job || ''} · ${r.state || '?'}`
+      + ` · 帧 #${r.submittedAtFrame ?? '?'}→#${r.startedAtFrame ?? '?'}→#${r.settledAtFrame || '在飞'}`
+      + ` · 队列 ${r.queueFrames ?? 0} / 等待 ${r.pendingFrames ?? 0} 帧`
+      + ` · ${r.elapsedMs ?? '?'}ms`;
+    bar.onclick = () => showJob(Number(r.id));
+    host.appendChild(bar);
+  }
+  placeAsync();
+}
+
+function placeAsync() {
+  const host = document.getElementById('joblane');
+  if (!host) return;
+  const cells = new Map();
+  for (const b of document.querySelectorAll('#frameList .frame')) {
+    cells.set(Number(b.dataset.frame), b);
+  }
+  for (const bar of host.querySelectorAll('.job')) {
+    const r = state.async.find((one) => Number(one.id) === Number(bar.dataset.job));
+    if (!r) continue;
+    const a = cells.get(Number(r.submittedAtFrame));
+    const z = cells.get(Number(r.settledAtFrame));
+    const left = a ? a.offsetLeft : (z ? z.offsetLeft : 0);
+    const right = z ? z.offsetLeft + z.offsetWidth : (a ? a.offsetLeft + a.offsetWidth : 0);
+    bar.style.left = `${left}px`;
+    bar.style.width = `${Math.max(8, right - left)}px`;
+    bar.classList.toggle('outside', !a || !z);
+  }
+}
+
+async function showJob(id) {
+  const scope = document.getElementById('asyncscope');
+  if (!scope) return;
+  try {
+    const answer = await get(`/api/async?job=${id}`);
+    const r = (answer.rows || [])[0];
+    if (!r) {
+      scope.textContent = `任务 #${id}：${answer.miss || 'unknown-job'}`;
+      return;
+    }
+    scope.textContent = `任务 #${id} ${r.backend || ''} / ${r.job || ''} · ${r.state || '?'}`
+      + ` · 提交 #${r.submittedAtFrame} → 派发 #${r.startedAtFrame} → 结算 #${r.settledAtFrame || '在飞'}`
+      + ` · 队列 ${r.queueFrames} / 等待 ${r.pendingFrames} 帧 · ${r.elapsedMs}ms`
+      + ` · 落地 ${(r.landed || []).map((n) => 'node:' + n).join(', ') || '无'}`
+      + ` · 发起 ${r.initiator || '?'}`;
+  } catch (e) {
+    scope.textContent = e.message;
   }
 }
 
@@ -1291,7 +1373,7 @@ async function pollShot() {
 }
 
 async function refresh() {
-  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
   await loadFrame(state.frame);
   await poll();
 }

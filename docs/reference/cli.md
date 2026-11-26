@@ -67,6 +67,7 @@
 | `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` `--attach` `--session` |
+| `async` | `debug-async.php` | driver | 异步任务时间线：提交 / 派发 / 结算帧、状态与落地节点 | `--job` `--limit` `--from` `--out` `--attach` `--session` |
 | `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` `--attach` `--session` |
 | `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` `--attach` `--session` |
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |
@@ -101,7 +102,7 @@
 > 每个出口的完整参数以 `php bin/drift debug <动词> --help` 为准；两级 help 与这张表同源。
 <!-- drift-cli-reference:end -->
 
-`network` 看网络骨架与报文，`node` 把一个节点的因果 / 几何 / 网络三域对齐，`find` 在证据里按字面文本找出一串可追问的地址，`pick` 按视口坐标给出命中链，`props` 读 Widget / State 配置，`highlight` 让一个节点在屏上被描边并用像素回答"真的上屏了没"，`loop` 用重开同一页来证明等价；这七个出口的参数见上表与各自的 `--help`。
+`network` 看网络骨架与报文，`async` 看三个 TaskHost 后端调度过的 job 时间线（默认关，用 `--async` 开），`node` 把一个节点的因果 / 几何 / 网络三域对齐，`find` 在证据里按字面文本找出一串可追问的地址，`pick` 按视口坐标给出命中链，`props` 读 Widget / State 配置，`highlight` 让一个节点在屏上被描边并用像素回答"真的上屏了没"，`loop` 用重开同一页来证明等价；这八个出口的参数见上表与各自的 `--help`。
 
 | composer 脚本 | 作用 |
 |---|---|

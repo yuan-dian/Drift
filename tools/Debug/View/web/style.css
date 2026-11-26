@@ -313,6 +313,37 @@ h2 {
 #netlane .empty { padding-top: 3px; }
 #netscope { margin: 4px 0 0; }
 
+/* 异步泳道：与网络泳道共用帧轴，颜色更冷；终态失败的任务用红色边框。 */
+#joblane {
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+  height: 22px;
+  border-top: 1px dashed var(--line);
+}
+#joblane .job {
+  position: absolute;
+  top: 3px;
+  height: 14px;
+  min-width: 3px;
+  padding: 0 3px;
+  border: 1px solid #6d6a9c;
+  border-radius: 2px;
+  background: #333154;
+  color: var(--text);
+  font-size: 10px;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+#joblane .job:hover { border-color: var(--accent); color: var(--accent); }
+#joblane .job.failed { border-color: var(--bad); background: #4b2e33; }
+#joblane .job.queued { border-style: dashed; }
+#joblane .job.outside { opacity: 0.62; }
+#joblane .empty { padding-top: 3px; }
+#asyncscope { margin: 2px 0 0; }
+
 /* 请求详情的四段链：落地节点与帧都能点回主时间轴，不是一行死文本。 */
 #card .step {
   margin: 8px 0;

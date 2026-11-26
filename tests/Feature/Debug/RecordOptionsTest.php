@@ -25,7 +25,8 @@ final class RecordOptionsTest extends SmokeTestCase
         check('常驻档仍保留窗口与脱敏', $resident->capacity() === 12 && $resident->redact());
 
         $full = RecordOptions::full(9);
-        check('完整档开几何全量与正文', $full->geometry() === GeometryCapture::All && $full->bodies());
+        check('完整档开几何全量、正文与异步', $full->geometry() === GeometryCapture::All
+            && $full->bodies() && $full->async());
 
         $this->flushChecks();
     }
@@ -70,12 +71,22 @@ final class RecordOptionsTest extends SmokeTestCase
             geometry: GeometryCapture::Off,
             network: true,
             bodies: true,
+            async: true,
         );
         $back = RecordOptions::fromManifest($source->toManifest());
 
         check('预算逐项往返一致', $back->toManifest() === $source->toManifest(),
             \json_encode([$source->toManifest(), $back->toManifest()]));
         check('脚本不进 manifest（它有自己的证据域）', !\array_key_exists('script', $source->toManifest()));
+
+        $this->flushChecks();
+    }
+
+    public function testDerivedOptionsKeepTheAsyncBudget(): void
+    {
+        $source = RecordOptions::of(paint: true, async: true);
+        check('withPaint 不把 async 冲回默认', $source->withPaint(false)->async() === true);
+        check('withAsync 不把 paint 冲回默认', $source->withAsync(false)->paint() === true);
 
         $this->flushChecks();
     }

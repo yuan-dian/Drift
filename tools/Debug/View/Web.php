@@ -129,6 +129,10 @@ final class Web
             '/api/network' => $this->json($this->queries->query('network', [
                 'limit' => (int) ($query['limit'] ?? 100),
             ])),
+            '/api/async' => $this->json($this->queries->query('async', [
+                'job' => (int) ($query['job'] ?? 0) ?: null,
+                'limit' => (int) ($query['limit'] ?? 100),
+            ])),
             '/api/node' => $this->node($query),
             // 搜索命中 request:N 后的落地页。请求详情走同一个查询面，不另存一份。
             '/api/request' => $this->request($query),

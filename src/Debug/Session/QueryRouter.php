@@ -47,6 +47,7 @@ final class QueryRouter implements SessionQueries
         'repaints' => '跨帧重画聚合：谁每帧都在画、哪些边界反复重录、按原因分布与命中率',
         'network' => '网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文，独立 500 条窗口）',
         'networkBody' => '按 requestId 取请求 / 响应报文（脱敏 + 截断，独立 200 条窗口，默认不进证据面）',
+        'async' => '异步任务时间线：提交 / 派发 / 结算帧、状态、耗时与落地节点（默认关）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）',
@@ -114,6 +115,7 @@ final class QueryRouter implements SessionQueries
             'part' => ['string', 'both'],
             'maxBytes' => ['int', 8192],
         ]],
+        'async' => ['async', ['job' => ['?int'], 'limit' => ['int', 50]]],
         'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
         'find' => ['find', [
             'pattern' => ['string'],

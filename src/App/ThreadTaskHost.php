@@ -5,6 +5,8 @@ namespace Drift\App;
 
 use Drift\Async\Failure;
 use Drift\Async\Future;
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\Recorder;
 
 use function drift_io_handled;
 use function drift_io_poll;
@@ -49,6 +51,9 @@ final class ThreadTaskHost implements TaskHost
     /** 任务号（只增不减；结果行里的 `id` 原样来回，靠它对账） */
     private int $seq = 0;
 
+    /** @var array<int, array{id: int, startedAt: int}> Future 号 => trace */
+    private array $traces = [];
+
     /** 池起了没（懒启动：第一条任务才建线程 + 唤醒窗） */
     private bool $started = false;
 
@@ -69,6 +74,11 @@ final class ThreadTaskHost implements TaskHost
         // 钩子只标记（`Future::isCancelled()` 即标记），不从 `$inflight` 摘 —— 见类注释"记账不减"。
         $future = Future::pending();
         $this->inflight[$id] = $future;
+        $trace = Recorder::tapAsyncSubmit('thread', $job instanceof NamedJob ? $job->name() : \get_class($job), 0);
+        if ($trace > 0) {
+            $this->traces[\spl_object_id($future)] = ['id' => $trace, 'startedAt' => \hrtime(true)];
+            Recorder::tapAsyncStart($trace, 0);
+        }
 
         if (!$job instanceof NamedJob) {
             $this->fail($id, $future, 'ThreadTaskHost 只能跑 NamedJob —— ' . get_class($job)
@@ -137,12 +147,16 @@ final class ThreadTaskHost implements TaskHost
     {
         // 预算基准点只取一次：failed / 积压 / 新批次三段共用，否则是预算的三倍。
         $deadline = CompletionQueue::deadline($budgetMs);
+        $traced = function (Completion $completion) use ($onEach): void {
+            $this->noteCompletion($completion);
+            $onEach($completion);
+        };
 
         // 发不出去的先结算：它们比在途的更早（`submit()` 时就定）。超预算后仍往下走（积压 / 新批次），不是 `return`。
-        $this->failed->drain($onEach, $deadline);
+        $this->failed->drain($traced, $deadline);
 
         // ① 先交上一帧的积压：它们完成更早，顺序必须优先于新批次；交不完 ⇒ 这一帧到此为止。
-        if (!$this->backlog->drain($onEach, $deadline)) {
+        if (!$this->backlog->drain($traced, $deadline)) {
             return;
         }
 
@@ -170,7 +184,7 @@ final class ThreadTaskHost implements TaskHost
             }
         }
 
-        $this->backlog->drain($onEach, $deadline);
+        $this->backlog->drain($traced, $deadline);
     }
 
     /**
@@ -192,6 +206,8 @@ final class ThreadTaskHost implements TaskHost
 
         // 取消 = "不交付"，不是"没发生"。清完账再判，顺序不能反。
         if ($future->isCancelled()) {
+            $this->noteCancelled($future);
+
             return null;
         }
 
@@ -207,6 +223,33 @@ final class ThreadTaskHost implements TaskHost
             ),
             $future,
         );
+    }
+
+    private function noteCompletion(Completion $completion): void
+    {
+        $key = \spl_object_id($completion->future);
+        $record = $this->traces[$key] ?? null;
+        if ($record === null) {
+            return;
+        }
+        unset($this->traces[$key]);
+        $error = $completion->error;
+        $code = $error === null ? '' : Failure::codeOf($error);
+        $state = $error === null ? AsyncRecord::OK : AsyncRecord::FAILED;
+        $elapsed = (\hrtime(true) - $record['startedAt']) / 1_000_000.0;
+        Recorder::tapAsyncSettle($record['id'], $state, $code, $elapsed);
+    }
+
+    private function noteCancelled(Future $future): void
+    {
+        $key = \spl_object_id($future);
+        $record = $this->traces[$key] ?? null;
+        if ($record === null) {
+            return;
+        }
+        unset($this->traces[$key]);
+        $elapsed = (\hrtime(true) - $record['startedAt']) / 1_000_000.0;
+        Recorder::tapAsyncSettle($record['id'], AsyncRecord::CANCELLED, '', $elapsed);
     }
 
     /**

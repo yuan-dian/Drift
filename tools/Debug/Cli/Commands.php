@@ -56,6 +56,13 @@ final class Commands
                 Opt::str('out', null, '导出证据包'),
                 ...$live(),
             ],
+            'async' => [
+                Opt::int('job', 0, 1, null, '按 jobId 取一条任务'),
+                Opt::int('limit', 50, 0, null, '任务条数，0=不截断'),
+                Opt::str('from', null, '读证据包'),
+                Opt::str('out', null, '导出证据包'),
+                ...$live(),
+            ],
             'serve' => [
                 Opt::float('speed', 0.0, 0.0, null, '两次推进之间等多久（0=尽快）'),
                 // 安全开关，默认关：eval 让宿主执行任意 PHP。与 loopback 是两道独立的门。
