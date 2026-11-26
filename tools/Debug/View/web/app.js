@@ -11,6 +11,14 @@ const state = {
   paint: null,
   selected: 0,
   hover: 0,
+  // 选中的真相在宿主 `query('highlight')`：页面里的 selected 只是它的镜像。
+  // 点击画布写宿主、真窗口拾取由轮询读回，两个方向都只认那一份状态。
+  controllable: false,
+  writePending: false,
+  selectionNote: '',
+  picking: false,
+  pickBase: 0,
+  pickUntil: 0,
   // 视图：`scale` 是最终像素/逻辑单位（= 适配比例 × 用户缩放），`offset` 是视口原点在画布里的位置。
   scale: 0,
   fit: 0,
@@ -160,7 +168,10 @@ async function boot() {
     if (e.key === '0') { resetView(); return; }
     if (e.key === '1') { actualSize(); return; }
     if (e.key === 'f' || e.key === 'F') { setFollow(!state.follow); return; }
-    if (e.key === 'Escape') { select(0); return; }
+    if (e.key === 'Escape') {
+      if (state.picking) stopPicking(); else select(0);
+      return;
+    }
   });
 
   const q = document.getElementById('q');
@@ -186,6 +197,9 @@ async function boot() {
   // 地址里点名了帧 = 用户要看那一帧，就别让轮询把他拽回最新。
   if (urlFrame) state.follow = false;
   await loadFrame(urlFrame || (hasShot ? 0 : ((state.brief && state.brief.worst) || 0)));
+  // 先问宿主选中与干预能力，再处理 `?node=`：否则带链接打开时 controllable 还是初值，
+  // 节点卡出来了，真机上却什么都没亮。
+  await pollSelection();
   // `?zoom=1` 直接开 1:1：贴给别人"看这个像素"时，比让他自己滚轮找更靠谱。
   state.applyActual = params.get('zoom') === '1';
   const node = Number(params.get('node') || 0);
@@ -677,18 +691,57 @@ function hover(event) {
   hint.textContent = `#${row.node} ${row.type || '?'} · ${row.rect.w}×${row.rect.h} @ ${row.rect.x},${row.rect.y}`;
 }
 
-async function select(node) {
+function updateSelectionSource() {
+  document.getElementById('selSource').textContent =
+    state.selectionNote ? `（${state.selectionNote}）` : '';
+}
+
+/** 只改页面镜像。轮询从宿主同步时走这里 —— 回写宿主会形成两个方向互相追。 */
+function showSelection(node, note) {
   state.selected = node;
+  state.selectionNote = note || '';
   scheduleDraw();
   renderNode(node);
+  updateSelectionSource();
+}
 
-  if (!node) return;
+async function loadCard(node) {
+  if (!node) return;   // renderNode(0) 已经写了空态文案
   try {
     const card = await get(`/api/node?node=${node}&frame=${state.frame}`);
     renderCard(card);
   } catch (e) {
     document.getElementById('card').textContent = e.message;
   }
+}
+
+/** 页面点选落到真机高亮；失败时图上照选，但把原因写在节点标题旁。 */
+async function writeHighlight(node) {
+  if (!state.controllable) {
+    state.selectionNote = '本地选中';
+    updateSelectionSource();
+    return;
+  }
+  state.writePending = true;
+  try {
+    const answer = await post('/api/ctl', { action: 'highlight', node });
+    const h = answer.highlight || {};
+    state.selectionNote = Number(h.node || 0) !== node
+      ? '真机没能高亮'
+      : (h.onScreen === true ? '真机已高亮' : '真机待上屏');
+  } catch (e) {
+    // 历史帧的节点可能已经从活树上卸掉：图上看得到，真机高亮不了。
+    state.selectionNote = '真机不高亮（' + String(e.message).slice(0, 40) + '）';
+  } finally {
+    state.writePending = false;
+  }
+  updateSelectionSource();
+}
+
+async function select(node) {
+  showSelection(node, '');
+  await loadCard(node);
+  await writeHighlight(node);
 }
 
 function renderNode(node) {
@@ -799,7 +852,48 @@ function renderCard(card) {
   }
 }
 
+function updatePickButton() {
+  const btn = document.getElementById('pickbtn');
+  btn.textContent = state.picking ? '拾取中…' : '拾取';
+  btn.classList.toggle('on', state.picking);
+}
+
+async function stopPicking() {
+  if (!state.picking) return;
+  state.picking = false;
+  updatePickButton();
+  try {
+    await post('/api/ctl', { action: 'pick', enabled: false });
+  } catch (e) {
+    // 宿主点完会自动撤防；再撤一次是幂等的，失败也不该让按钮卡在"拾取中"。
+  }
+}
+
 async function act(action, btn) {
+  if (action === 'pick') {
+    if (state.picking) {
+      await stopPicking();
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const answer = await post('/api/ctl', { action: 'pick', enabled: true });
+      if (answer.armed !== true) {
+        alert(answer.reason === 'paused' ? '先继续运行，再拾取' : '这个宿主没有可拾取的活窗口');
+        return;
+      }
+      state.picking = true;
+      state.pickBase = state.selected;
+      state.pickUntil = Date.now() + 30000;
+      updatePickButton();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      btn.disabled = false;
+    }
+    return;
+  }
+
   const payload = action === 'step' ? { action: 'resume', frames: 1 } : { action };
   btn.disabled = true;
   try {
@@ -809,6 +903,29 @@ async function act(action, btn) {
   } finally {
     btn.disabled = false;
     await refresh();
+  }
+}
+
+/** 宿主选中的轮询校正。真窗口拾取与别的出口改的高亮都从这里进页面。 */
+async function pollSelection() {
+  let data;
+  try {
+    data = await get('/api/highlight');
+  } catch (e) {
+    return;
+  }
+
+  if (typeof data.controllable === 'boolean') state.controllable = data.controllable;
+  const node = Number((data.highlight || {}).node || 0);
+
+  // 正在写高亮时宿主还来得及不更新，轮询不能把刚点中的选中又抹成旧的。
+  if (!state.writePending && node !== state.selected) {
+    showSelection(node, node ? '真机选中' : '');
+    await loadCard(node);
+  }
+  if (state.picking && (node !== state.pickBase || Date.now() > state.pickUntil)) {
+    state.picking = false;
+    updatePickButton();
   }
 }
 
@@ -829,6 +946,7 @@ async function poll() {
   }
 
   await pollShot();
+  await pollSelection();
 }
 
 /**

@@ -21,7 +21,7 @@ declare(strict_types=1);
  *                     与 brief / panel 同一套驱动词表
  *   --at=N            只重放到第 N 帧
  *   --from=<文件>     不跑会话，直接读证据包（与 --page / 驱动参数互斥）
- *   --attach          接一个已经在跑的会话（只读；`--ctl` 需要宿主自走）
+ *   --attach          接一个已经在跑的会话（可暂停/高亮/真机拾取，需宿主自走）
  *   --session=<id>    同一目录有多个会话时点名
  *   --slow= / --fanout= / --repeat=  阈值（与 brief 同义，表头显示哪三项就能配哪三项）
  *   --port=N          监听端口（默认 0 = 系统挑一个）
@@ -104,12 +104,21 @@ try {
     );
     $label = $source->label();
 
-    // 只有接上自走宿主时才有驱动面：`pause` / `resume` 是那个进程的动作，
-    // 离线读包与从属宿主都没有。没有就不给按钮 —— 给了按钮再回 501，比没有按钮更糟。
+    // 只有接上自走宿主时才有干预面：`pause` / `resume` 推节奏，`highlight` / `pick`
+    // 改"下一帧画什么"。离线读包与从属宿主都没有，没有就不给按钮 —— 给了按钮再回
+    // 501，比没有按钮更糟。
     $live = $source->remote();
     $control = $live === null ? null : static function (string $action, array $body) use ($live): array {
         if ($action === 'pause') {
             return $live->pause();
+        }
+        if ($action === 'highlight') {
+            $live->highlight((int) $body['node']);
+            // 回执取宿主侧的真相：请求与上屏之间隔着一帧，页面不该把回执当成"已经画了"。
+            return $live->query('highlight');
+        }
+        if ($action === 'pick') {
+            return $live->pick((bool) $body['enabled']);
         }
 
         $frames = $body['frames'] ?? null;

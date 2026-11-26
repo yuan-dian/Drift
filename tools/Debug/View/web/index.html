@@ -18,6 +18,7 @@
     <button data-act="pause">暂停</button>
     <button data-act="step">单步</button>
     <button data-act="resume">继续</button>
+    <button id="pickbtn" data-act="pick" title="布防后到真窗口点一下控件；再点一次或 Esc 撤防">拾取</button>
   </span>
   <button id="refresh">刷新</button>
 </header>
@@ -54,7 +55,7 @@
   </section>
 
   <section id="side">
-    <h2>节点 <span id="selected" class="mono"></span></h2>
+    <h2>节点 <span id="selected" class="mono"></span> <span id="selSource" class="dim small"></span></h2>
     <div id="crumbs" class="small"></div>
     <div id="children" class="small"></div>
     <div id="card"></div>

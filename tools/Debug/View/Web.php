@@ -37,8 +37,8 @@ final class Web
 
     /**
      * @param null|\Closure(string, array<string, mixed>): array<string, mixed> $control
-     *   `pause` / `resume` 的落地：`(动作, 参数)` 进，回执数组出。`null` = 这个会话
-     *   没有驱动面（离线读包 / 从属宿主），`/api/ctl` 一律 501。
+     *   `pause` / `resume` / `highlight` / `pick` 的落地：`(动作, 参数)` 进，回执数组出。
+     *   `null` = 这个会话没有干预面（离线读包 / 从属宿主），`/api/ctl` 一律 501。
      */
     public function __construct(
         private readonly SessionQueries $queries,
@@ -104,6 +104,9 @@ final class Web
             '/style.css' => $this->asset('style.css', 'text/css; charset=utf-8'),
             '/api/brief' => $this->briefResponse($query),
             '/api/state' => $this->json($this->queries->query('state')),
+            // 选中只有宿主那一份真相。页面自己的高亮只是它的镜像，轮询这里校正；
+            // 若让页面自己记"我选了谁"，真窗口拾取和别的观察者改的选中永远传不进来。
+            '/api/highlight' => $this->json($this->selection()),
             '/api/script' => $this->json($this->queries->query('script')),
             '/api/frames' => $this->json($this->queries->query('frames', [
                 'since' => (int) ($query['since'] ?? 0),
@@ -292,8 +295,14 @@ final class Web
         }
 
         $action = (string) ($body['action'] ?? '');
-        if ($action !== 'pause' && $action !== 'resume') {
-            return $this->error(400, 'bad_request', 'action 只能是 pause 或 resume');
+        if (!\in_array($action, ['pause', 'resume', 'highlight', 'pick'], true)) {
+            return $this->error(400, 'bad_request', 'action 只能是 pause / resume / highlight / pick');
+        }
+        if ($action === 'highlight' && (!\is_int($body['node'] ?? null) || $body['node'] < 0)) {
+            return $this->error(400, 'bad_request', 'highlight 需要非负整数 node（0 = 清除）');
+        }
+        if ($action === 'pick' && !\is_bool($body['enabled'] ?? null)) {
+            return $this->error(400, 'bad_request', 'pick 需要布尔 enabled');
         }
 
         try {
@@ -322,6 +331,22 @@ final class Web
         }
 
         return $this->json($result);
+    }
+
+    /**
+     * 选中真相 + 这个会话能不能写它。
+     *
+     * `controllable` 复用驱动面的有无：真窗口拾取与高亮都只对活宿主有意义，
+     * 而能 pause/resume 的会话正是这类宿主。离线包读得到选中，但改不了。
+     *
+     * @return array<string, mixed>
+     */
+    private function selection(): array
+    {
+        return [
+            'highlight' => $this->tryQuery('highlight', []),
+            'controllable' => $this->control !== null,
+        ];
     }
 
     /**
