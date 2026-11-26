@@ -734,10 +734,15 @@ function renderTree() {
   if (count) count.textContent = state.tree.length ? `${state.tree.length} 行` : '';
   if (scope && state.treeCoverage) {
     const c = state.treeCoverage;
-    scope.textContent = `活动 ${c.active} · 根 ${c.roots} · 无盒 ${c.boxless}`
+    const life = c.lifecycle || {};
+    scope.textContent = `回放 #${state.frame || '最新'} · 节点 ${c.active}`
+      + (c.evicted ? `（已回收 ${c.evicted}）` : '')
+      + ` · 根 ${c.roots} · 无盒 ${c.boxless}`
       + ` · 断链 ${c.unresolved}/${c.orphan}/${c.cycle}`
       + (c.omittedDepth || c.omittedLimit ? ` · 截断 ${c.omittedDepth}/${c.omittedLimit}` : '')
-      + (c.geometryStale ? ' · 几何沿用旧记录' : '');
+      + (c.geometryStale ? ' · 几何沿用旧记录' : '')
+      // 回放不可信时必须当场说：缺出生帧的旧证据会把"不知道"画成"那时没有"。
+      + (life.complete === false ? ' · 生命周期不完整（有节点出生/离开帧未知）' : '');
   }
 
   for (const row of state.tree) {
@@ -746,7 +751,10 @@ function renderTree() {
       + (row.boxed ? '' : ' · 无盒')
       + (row.flex ? ' · flex' : '')
       + (row.flag && row.flag !== 'normal' ? ' · ' + row.flag : '')
-      + (row.stale ? ' · stale' : ''));
+      // `rebuilt` 只说"这一帧重建过"，`null` 是帧记录不在窗口里（未知，不打记号）。
+      // 不印 `stale`：它几乎每行都成立，一整片标记等于没有信息。
+      + (row.rebuilt === true ? ' · 重建' : '')
+      + (row.evicted ? ' · 已回收' : ''));
     line.style.paddingLeft = `${4 + Number(row.depth || 0) * 12}px`;
     line.dataset.node = String(id);
     line.onclick = () => select(id);

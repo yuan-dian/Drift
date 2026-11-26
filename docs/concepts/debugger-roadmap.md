@@ -9,7 +9,7 @@
 但它还不是一个成熟的 DevTools 产品。差距不在面板数量，而在三条能力线：
 
 1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
-2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照与历史树回放。
+2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），并已能**按帧回放**（A67：出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照 —— 它只在"当时的类型 / 父与现在不同"时才值得立预算。
 3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
 
 这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。
@@ -30,9 +30,9 @@
 | 网络 | 切片：骨架 + 发起者 + 落地帧（证据）；报文原文走 `bodies` 开关 + `networkBody` 独立出口（脱敏 + 截断，不进默认包） | Chrome Network、Flutter Network | 骨架领先；缺瀑布图与 headers/throttle |
 | 确定性发现 | 切片：9 条规则 / 10 个编号、三级严重度、可按编号开关、10 个阈值可覆盖、基线回归进 CI | Lighthouse audits、Flutter perf | 缺规则权重 |
 | 证据搜索 | 已落地：节点类型 / 网络骨架按字面子串找，产物是地址 | Chrome 全局搜索、Flutter Inspector 搜索 | 未覆盖属性与绘制域 |
-| 结构树 / 检查器 | 已落地（A64）：`tree()` 把节点注册表投影成扁平先序行，几何按帧在查询层贴好；CLI `debug tree` 与 Web 侧栏共用同一查询，`highlight` 仍是选中真相 | Chrome Elements、Flutter Inspector | 是**当前结构导航**，不是逐帧历史树；历史变化仍走 `cascade` |
+| 结构树 / 检查器 | 已落地（A64/A67）：`tree()` 把节点注册表投影成扁平先序行，`frame` 决定**回放哪一帧**（出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出并标注），几何按帧在查询层贴好；CLI `debug tree` 与 Web 侧栏共用同一查询，`highlight` 仍是选中真相 | Chrome Elements、Flutter Inspector | 不复制逐帧结构；回放靠生命周期两端反推，缺 `f`/`g` 时自报 `lifecycle.complete=false` |
 | 终端面板 | 切片：时间轴 + 因果树 + why + 结构树 + 节点卡文本 | Flutter DevTools、Chrome | 键盘可用；检查器以文本呈现，不做全屏 TUI |
-| Web 视图 | 切片：几何画布（无真机图时以线框为主视图）+ 帧 / 网络 / 异步泳道 + 结构树 + 发现 + 节点卡 + 搜索；请求详情可按需展开脱敏报文；结构树 ↔ 画布双向悬停联动（`state.hover` 单一真相，Chrome Elements 同款），悬停事实写在同一行 hint 里 | Chrome/Flutter 多标签 | 树、节点卡、报文附件已接；缺逐帧历史树与源码面板 |
+| Web 视图 | 切片：几何画布（无真机图时以线框为主视图）+ 帧 / 网络 / 异步泳道 + 结构树（按帧回放，标出这一帧重建的节点）+ 发现 + 节点卡 + 搜索；请求详情可按需展开脱敏报文；结构树 ↔ 画布双向悬停联动（`state.hover` 单一真相，Chrome Elements 同款），悬停事实写在同一行 hint 里 | Chrome/Flutter 多标签 | 树、节点卡、报文附件已接；缺源码面板与两帧结构对比 |
 | 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 多 target 并列视图已由 A59 落地；真正跨窗口归因仍未做 |
 | 多窗口 / 多 target | 已落地：每窗口一份录制器互不串证据（A53）；`Discovery` 数组与多会话点名早已生效；`debug targets` 把所有活会话并列成一份只读视图（A59） | 成熟 DevTools 多 target | S2 前置已清；并列看得见，归因要等采集层给全局节点 id |
 | 编译归属（哪些调试代码进产物） | 已落地：`ignore` 唯一声明在 `build/base.yml`，实测排掉审查面（showcase −7,931 行 / −39%）；`check-debug-scope` 守“编译进产物的调试侧文件集合恰好等于写面白名单”，接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
@@ -241,6 +241,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 16 项写面白名单”（属性降级后 PropSnapshot 移除），多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
 | **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
 | **P8** | 结构树导航 | 已落地（A64）：`tree(root, depth, limit, frame)` 从节点注册表投影扁平先序行；断父 / 孤儿 / 环与深度 / 条数截断都自报；几何从 `boxes(frame)` 一次对齐，CLI `debug tree` 与 Web 侧栏共用查询，选中写宿主 `highlight` 并轮询校正。不新增证据域 / 预算 / 指纹 | A55、A64 |
+| **P8** | 逐帧历史树回放 | 已落地（A67）：`frame` 从"几何对齐帧"升级成"回放这一帧"——注册表补 `f`（出生帧，登记一次）、`goneAt` 给离开帧，`[f, g)` 做集合过滤；已回收节点在它活着的帧里照样画出（回收表留住父与类型，`pathOf()` 认它）；`rebuilt` 取该帧 `FrameRecord` 而非从 `s` 倒推，帧记录滚出窗口给 `null`；缺 `f`/`g` 时 `lifecycle.complete=false` 并给条数。结构与几何各有默认帧（帧 600 / 几何 60 两个窗口）。证据包字段级扩展（node 行加 `f`/`gone`，evicted 行加 `first`/`gone`/`p`/`c`/`x`），旧包缺 `f` 归一为"未知"而不是猜。7 条判据分钉出生 / 离开 / 回收可见 / 重建来源 / 未知自报 / 未来帧拒绝 / 默认帧不变 | A64、A67 | M |
 | **P8** | 属性域降到 L2 | 已落地：`ObjectDump` 用 ReflectionProperty 逐层读所有声明层的 private（含基类 `mods`、State 私有字段），与 `eval $node` 共用一份编码；`Query::props()` 只读当场活树、**不写快照窗口**；删 `PropReader`/`PropSnapshot` 与证据 `props` 段（`DEFAULT_DOMAINS`/`ALL_DOMAINS`/读写/counts 全清），白名单 17→16 项。**不升版本**：逐 kind 显式拒绝已是证据格式的演进机制，绝大多数从没采过 props 的老包仍可读，升 v2 会无谓拒绝它们；也没有补 `RecordOptions::props` 开关——不进包就无从采集。判据：含 `mods`、不含 `sealed`、循环回 `ref`、NAN 安全、脱敏、属性永不进包；7 组变异全咬红 | A55 | M |
 | **P8** | dev 转交三件 | 已落地（收敛成**一个**出口 `debug probe`，不是三个）：`--what=memory` 用 `gc_status()` + `memory_get_usage()` + `WeakMap` 台账给存活跨度（跨查询累积、弱持有、不进包）；`--what=source --source=file:line` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把因果 site 翻成方法定义位置，三种 miss 分开说。**报文旁路这一件撤销**：设计稿原写 `stream_wrapper_register` + `AsyncHttp` 不改，但 `AsyncHttp` 实际走 curl（`CurlMultiTransport` / `Http.php`），curl 不经过 PHP stream 层，wrapper 抓不到任何真实请求 —— 那是假实现。报文原文由既有 `bodies` 开关 + `networkBody` 出口覆盖，不重复造抓不到东西的通路。两件都是 L2 内省：不进包、不进指纹；7 条判据 + 7 组变异全咬红 | A55 | M |
 

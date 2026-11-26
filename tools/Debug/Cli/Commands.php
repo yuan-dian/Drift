@@ -67,7 +67,7 @@ final class Commands
                 Opt::int('root', 0, 0, null, '只看这个子树（默认 0 = 全部根）'),
                 Opt::int('depth', 6, 0, 32, '展开层数'),
                 Opt::int('limit', 200, 0, null, '列出的行数，0=不截断'),
-                Opt::int('frame', 0, 0, null, '几何对齐帧（默认取几何窗口最新帧）'),
+                Opt::int('frame', 0, 0, null, '回放这一帧：那时在的节点才出现（默认最新帧）'),
                 Opt::str('from', null, '读证据包'),
                 Opt::str('out', null, '导出证据包'),
                 ...$live(),

@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\Debug\Session\EvidenceBag;
+use Drift\Debug\Session\FrameRecord;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -35,7 +36,17 @@ final class TreeTest extends SmokeTestCase
                 6 => ['p' => 7, 'c' => 'CycleA', 'x' => false, 's' => 3],
                 7 => ['p' => 6, 'c' => 'CycleB', 'x' => false, 's' => 3],
             ],
-            evicted: [99 => 2],
+            // 99 号在第 2 帧离开树（`g=2`）：回放第 3 帧时它已经不在了，于是它那个
+            // 还活着的孩子 4 号必须是 `orphan`。旧夹具只写了"它被回收了"——回收是
+            // **现在**的状态，而"父链在那一帧断没断"要看它**那时**走没走。
+            evicted: [99 => ['p' => -1, 'c' => 'Page', 'x' => false, 'f' => 1, 's' => 2, 'g' => 2]],
+            // 三帧空记录：没有时间轴就谈不上"回放"，`tree(frame:)` 会退化成纯结构投影
+            // （那时"父已回收"和"父当时还在"分不开）。判据要钉的是回放，所以先给轴。
+            frames: [
+                new FrameRecord(1, 16.0, 1.0, [], [], [], [], false, false),
+                new FrameRecord(2, 32.0, 1.0, [], [], [], [], false, false),
+                new FrameRecord(3, 48.0, 1.0, [], [], [], [], false, false),
+            ],
         ));
         $query = new Query($recorder);
 
@@ -67,7 +78,7 @@ final class TreeTest extends SmokeTestCase
         check('子树里不把外面的节点冒充成环', ($sub['coverage']['cycle'] ?? -1) === 0);
 
         $evicted = $query->tree(root: 99);
-        check('已回收节点不是空树而是明确 miss', ($evicted['reason'] ?? '') === 'node-evicted');
+        check('回放已消失的节点是明确 miss 且说清"那时已经不在"', ($evicted['reason'] ?? '') === 'node-gone', 'reason=' . \json_encode($evicted['reason'] ?? null));
         $unknown = $query->tree(root: 12345);
         check('从未发号的节点不是空树而是明确 miss', ($unknown['reason'] ?? '') === 'unknown-node');
 

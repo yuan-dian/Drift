@@ -493,7 +493,8 @@ final class RecorderTest extends SmokeTestCase
             check('过期且未被引用的节点被回收', $recorder->nodeStatus(1) === 'evicted');
             check('最近出现的节点保留', $recorder->nodeStatus(2) === 'active');
             check('帧窗口仍引用的节点保留', $recorder->nodeStatus(3) === 'active');
-            check('回收地址记下最后见到的帧', ($recorder->evictedNodes()[1] ?? -1) === 1);
+            check('回收地址记下生命周期两端', ($recorder->evictedNodes()[1]['s'] ?? -1) === 1
+                && ($recorder->evictedNodes()[1]['f'] ?? -1) === 1, \json_encode($recorder->evictedNodes()[1] ?? null));
             check('伴随元数据一起回收', !\in_array(1, $recorder->boxlessNodes(), true),
                 \json_encode($recorder->boxlessNodes()));
         } finally {

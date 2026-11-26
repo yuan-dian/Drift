@@ -167,6 +167,11 @@ final class Evidence
             self::put($handle, $manifest);
 
             if (\in_array(self::D_NODES, $domains, true)) {
+                // 生命周期两端（`f` 出生 / `gone` 离开）是**字段级扩展**，不是新 kind：
+                // 旧读者忽略不认识的字段，新读者见到缺失就报"不可回放"，两边都不用改
+                // 解码骨架。新增 kind 会让所有旧工具读新包直接报错 —— 那对"加一域"
+                // 是对的，对"给已有记录补一个可选字段"就过头了。
+                $goneAt = $recorder->goneNodes();
                 foreach ($recorder->nodeIndex() as $id => $meta) {
                     self::put($handle, [
                         'kind' => self::K_NODE,
@@ -175,6 +180,8 @@ final class Evidence
                         'c' => $meta['c'],
                         'x' => $meta['x'],
                         's' => (int) ($meta['s'] ?? 0),
+                        'f' => (int) ($meta['f'] ?? 0),
+                        'gone' => (int) ($goneAt[(int) $id] ?? 0),
                     ]);
                 }
             }
@@ -188,8 +195,17 @@ final class Evidence
             }
 
             if (\in_array(self::D_EVICTED, $domains, true)) {
-                foreach ($recorder->evictedNodes() as $id => $seen) {
-                    self::put($handle, ['kind' => self::K_EVICTED, 'node' => (int) $id, 'seen' => $seen]);
+                foreach ($recorder->evictedNodes() as $id => $meta) {
+                    self::put($handle, [
+                        'kind' => self::K_EVICTED,
+                        'node' => (int) $id,
+                        'seen' => $meta['s'],
+                        'first' => $meta['f'],
+                        'gone' => $meta['g'],
+                        'p' => $meta['p'],
+                        'c' => $meta['c'],
+                        'x' => $meta['x'],
+                    ]);
                 }
             }
 
@@ -282,8 +298,10 @@ final class Evidence
         $manifest = null;
         /** @var array<string, int> $seen */
         $seen = [];
-        /** @var array<int, array{p: int, c: string, x: bool}> $nodes */
+        /** @var array<int, array{p: int, c: string, x: bool, s: int, f: int}> $nodes */
         $nodes = [];
+        /** @var array<int, int> $gone 节点 ⇒ 离开树的那一帧；缺省表示"没记录到" */
+        $gone = [];
         /** @var list<FrameRecord> $frames */
         $frames = [];
         /** @var array<int, array<int, GeometryRecord>> $geometry */
@@ -298,7 +316,7 @@ final class Evidence
         $bodies = [];
         /** @var array<int, true> $boxless */
         $boxless = [];
-        /** @var array<int, int> $evicted */
+        /** @var array<int, array{f: int, s: int, g: int}|int> $evicted */
         $evicted = [];
         $script = null;
         $lineNo = 0;
@@ -361,7 +379,13 @@ final class Evidence
                         'c' => (string) $raw['c'],
                         'x' => (bool) ($raw['x'] ?? false),
                         's' => (int) ($raw['s'] ?? 0),
+                        // 缺 `f` 的旧包不补一个猜测值：`0` 表示"出生帧未知"，由查询层
+                        // 报"这一帧不可回放"。拿 `s` 顶上会让静止节点只在最后一帧存在。
+                        'f' => (int) ($raw['f'] ?? 0),
                     ];
+                    if ((int) ($raw['gone'] ?? 0) > 0) {
+                        $gone[(int) $raw['id']] = (int) $raw['gone'];
+                    }
                     break;
 
                 case self::K_BOXLESS:
@@ -369,7 +393,14 @@ final class Evidence
                     break;
 
                 case self::K_EVICTED:
-                    $evicted[(int) $raw['node']] = (int) ($raw['seen'] ?? 0);
+                    $evicted[(int) $raw['node']] = [
+                        'p' => (int) ($raw['p'] ?? -2),
+                        'c' => (string) ($raw['c'] ?? ''),
+                        'x' => (bool) ($raw['x'] ?? false),
+                        'f' => (int) ($raw['first'] ?? $raw['seen'] ?? 0),
+                        's' => (int) ($raw['seen'] ?? 0),
+                        'g' => (int) ($raw['gone'] ?? 0),
+                    ];
                     break;
 
                 case self::K_SCRIPT:
@@ -455,6 +486,7 @@ final class Evidence
             bodies: $bodies,
             boxless: $boxless,
             evicted: $evicted,
+            gone: $gone,
             script: $script,
             options: RecordOptions::fromManifest($manifest['options']),
             domains: $manifest['domains'],

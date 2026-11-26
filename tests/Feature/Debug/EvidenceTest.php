@@ -326,6 +326,10 @@ final class EvidenceTest extends SmokeTestCase
             );
             check('节点表相同', $recorder->nodeIndex() === $offline->nodeIndex());
             check('几何相同', $recorder->geometryFrames() === $offline->geometryFrames());
+            // 生命周期两端也要逐值过包：少了它们，离线回放会把整棵树当成"一直在"，
+            // 而在线时它明明删对了一半 —— 这是最典型的"导出即失真"。
+            check('回收表相同（含父 / 类型 / 寿命两端）', $recorder->evictedNodes() === $offline->evictedNodes());
+            check('离开帧相同', $recorder->goneNodes() === $offline->goneNodes());
 
             $online = new Query($recorder);
             $remote = new Query($offline);
@@ -337,6 +341,7 @@ final class EvidenceTest extends SmokeTestCase
             check('hotspots 相同', $online->hotspots(0, 0) === $remote->hotspots(0, 0));
             check('nodes 相同', $online->nodes(0, 0) === $remote->nodes(0, 0));
             check('boxes 相同', $online->boxes(2) === $remote->boxes(2));
+            check('tree 回放相同', $online->tree(frame: 1) === $remote->tree(frame: 1), '离线回放与在线不一致');
 
             $node = (int) ($offline->frames()[2]->rebuilt[0] ?? 0);
             if ($node > 0) {

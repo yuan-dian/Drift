@@ -31,7 +31,7 @@ final class Registry
             ['panel', 'debug-panel.php', '同一个会话上反复追问：时间轴 + 因果树 + 原因', true],
             ['network', 'debug-network.php', '网络骨架与报文（按 requestId 取，脱敏 + 截断）', true],
             ['async', 'debug-async.php', '异步任务时间线：提交 / 派发 / 结算帧、状态与落地节点', true],
-            ['tree', 'debug-tree.php', '结构树：节点注册表的只读投影，按深度展开并对齐几何', true],
+            ['tree', 'debug-tree.php', '结构树：第 N 帧那棵树（谁在、谁已消失、谁这一帧重建了）', true],
             ['node', 'debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络', true],
             ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
             ['eval', 'debug-eval.php', 'dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据）', false],

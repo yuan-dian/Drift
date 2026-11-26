@@ -25,7 +25,7 @@ namespace Drift\Debug\Session;
 final readonly class EvidenceBag
 {
     public function __construct(
-        /** @var array<int, array{p: int, c: string, x: bool}> 节点号 ⇒ 父 / 短类名 / 是否 Flex */
+        /** @var array<int, array{p: int, c: string, x: bool, s?: int, f?: int}> 节点号 ⇒ 父 / 短类名 / 是否 Flex / 寿命两端 */
         public array $nodes = [],
         /** @var list<FrameRecord> 按帧号升序 */
         public array $frames = [],
@@ -41,8 +41,24 @@ final readonly class EvidenceBag
         public array $bodies = [],
         /** @var array<int, true> 没有自己盒的节点（复合控件） */
         public array $boxless = [],
-        /** @var array<int, int> 已回收节点 id => 最后见到的帧 */
+        /**
+         * 已回收节点：`['f' => 出生帧, 's' => 最后见到帧, 'g' => 离开树的那帧]`。
+         *
+         * 旧证据包里是单个 int（最后见到帧）；读取方一律经
+         * {@see Recorder::evictedNodes()} 归一，不要在这里各自判类型。
+         *
+         * @var array<int, array{f: int, s: int, g: int}|int>
+         */
         public array $evicted = [],
+        /**
+         * 节点 ⇒ 离开树的那一帧（几何采样里再也看不到它的那一帧）。
+         *
+         * 空表有两个意思：真没有节点离开过，或者这份证据没采几何、根本不知道。
+         * 调用方不能只看"空"就断定"全活着"，要结合 `options->geometry()`。
+         *
+         * @var array<int, int>
+         */
+        public array $gone = [],
         public ?Script $script = null,
         /**
          * 采集预算。脱敏开关也在这里：包里存的是明文时若一律报"已脱敏"，读者会把

@@ -139,10 +139,28 @@ final class Recorder implements PaintObserver
     /** @var array<int, FrameRecord> 帧号 => 记录，键升序 */
     private array $frames = [];
 
-    /** @var array<int, array{p: int, c: string, x: bool, s: int}> 节点 id => 父 / 类名 / Flex / 最后见到的帧 */
+    /**
+     * 节点 id => 父 / 类名 / Flex / 最后见到的帧 / 出生帧。
+     *
+     * `s` 是"最后一次被重建或采样到的那帧"，`f` 是"第一次登记的那帧"。两个合起来
+     * 才是一条**生命周期**：回放第 N 帧时，"当时它在不在"只能由它们回答（见
+     * {@see Query::tree()}）。只看 `s` 会把静止不动的节点当成刚出生。
+     *
+     * @var array<int, array{p: int, c: string, x: bool, s: int, f?: int}>
+     */
     private array $nodes = [];
 
-    /** @var array<int, int> 已回收节点 id => 最后见到的帧；id 永不复用 */
+    /**
+     * 已回收节点 id => `['p' => 父, 'c' => 类名, 'x' => Flex, 'f' => 出生帧,
+     * 's' => 最后见到帧, 'g' => 离开树的那帧]`。
+     *
+     * 旧包里这个值是单个 int（最后见到帧），{@see self::evictedRow()} 在入口归一。
+     * 回收之后**节点仍在历史里活着** ——"这个按钮第 40 帧还在、第 60 帧没了"正是
+     * 回放最想看的，只留 `s` 就答不了；父与类型也要留，否则能查出它存在过、却画不出
+     * 它在哪儿。id 永不复用。
+     *
+     * @var array<int, array{p: int, c: string, x: bool, f: int, s: int, g: int}|int>
+     */
     private array $evicted = [];
 
     private int $lastRecycleFrame = 0;
@@ -491,7 +509,13 @@ final class Recorder implements PaintObserver
         $recorder = new self($options);
 
         $recorder->nodes = $bag->nodes;
-        $recorder->evicted = $bag->evicted;
+        // 回收表在**入口**归一成一种形状：`pathOf()` / `why()` 这类热路径要在循环里
+        // 逐层读父与类名，不能每次调用都先扫一遍整张表判"这条是 int 还是数组"。
+        $recorder->evicted = [];
+        foreach ($bag->evicted as $id => $meta) {
+            $recorder->evicted[(int) $id] = self::evictedRow($meta);
+        }
+        $recorder->goneAt = $bag->gone;
         $recorder->frames = [];
         foreach ($bag->frames as $frame) {
             $recorder->frames[$frame->id] = $frame;
@@ -921,21 +945,82 @@ final class Recorder implements PaintObserver
     }
 
     /**
-     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名 + 是否 Flex 容器。
+     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名 + 是否 Flex
+     * 容器 + 最后见到帧 `s` + 出生帧 `f`（旧证据包没有 `f`）。
      *
      * 摘要与将来的跨进程传输都要它：光有一串 id，换台机器就不知道是谁。
      *
-     * @return array<int, array{p: int, c: string, x: bool}>
+     * 摘要只取 `c` 与 `p`（见 {@see Digest::ofMode()}）—— `s` / `f` 是时间轴上的
+     * 位置，不是结构，进指纹会让"同一棵树多跑一帧"看起来像另一个应用。
+     *
+     * @return array<int, array{p: int, c: string, x: bool, s: int, f?: int}>
      */
     public function nodeIndex(): array
     {
         return $this->nodes;
     }
 
-    /** @return array<int, int> 已回收节点 id => 最后见到的帧 */
+    /**
+     * 已回收节点：id ⇒ `['p' => 父, 'c' => 类名, 'x' => Flex, 'f' => 出生帧,
+     * 's' => 最后见到帧, 'g' => 离开树的那帧]`。
+     *
+     * `g = 0` 表示"没有离开树的记录"（几何采集关着时无从得知）。旧证据包里这个值
+     * 是单个 int，{@see self::hydrate()} 已归一。
+     *
+     * @return array<int, array{p: int, c: string, x: bool, f: int, s: int, g: int}>
+     */
     public function evictedNodes(): array
     {
-        return $this->evicted;
+        /** @var array<int, array{p: int, c: string, x: bool, f: int, s: int, g: int}> $rows */
+        $rows = [];
+        foreach ($this->evicted as $id => $meta) {
+            $rows[(int) $id] = self::evictedRow($meta);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * 回收记录的形状归一。
+     *
+     * 两种形状都必须能读：新的是数组（父 / 类型 / 寿命三端），旧证据包与
+     * "直接往属性里塞 int"的测试路径只有最后见到帧。归一放在读取口，不要在
+     * 每个消费者里各判一次类型 —— `pathOf()` 在父链循环里逐层读它，多一个分支
+     * 就是每条路径多一次判断。
+     *
+     * @param array<string, mixed>|int $meta
+     * @return array{p: int, c: string, x: bool, f: int, s: int, g: int}
+     */
+    private static function evictedRow(array|int $meta): array
+    {
+        if (\is_array($meta)) {
+            return [
+                'p' => (int) ($meta['p'] ?? -2),
+                'c' => (string) ($meta['c'] ?? ''),
+                'x' => (bool) ($meta['x'] ?? false),
+                // 旧包里没有 `f`：拿 `s` 顶上而不是 0 —— 0 会被读成"出生帧未知"，
+                // 让整张表报"不可回放"，而它其实是"只知道活到 `s`"。
+                'f' => (int) ($meta['f'] ?? $meta['s'] ?? 0),
+                's' => (int) ($meta['s'] ?? 0),
+                'g' => (int) ($meta['g'] ?? 0),
+            ];
+        }
+
+        return ['p' => -2, 'c' => '', 'x' => false, 'f' => $meta, 's' => $meta, 'g' => 0];
+    }
+
+    /**
+     * 节点 ⇒ 离开树的那一帧。
+     *
+     * 只在几何采样的先序遍历里写（`sampleGeometry()`），所以它答的是"那一帧的树上
+     * 已经看不到它了"，不是"它被 GC 了"。几何采集关着时这份表是空的 —— 回放必须
+     * 把这种情况报成"未知"而不是"一直活着"（见 {@see Query::tree()}）。
+     *
+     * @return array<int, int>
+     */
+    public function goneNodes(): array
+    {
+        return $this->goneAt;
     }
 
     /** 查询侧的单一出口：活动 / 已回收 / 从未发号，三者不可混。 */
@@ -972,6 +1057,12 @@ final class Recorder implements PaintObserver
      *   会拿到 `frame=1` 的记录并报 `found=true` —— 一个根本没采样过的帧看起来
      *   有几何。这类答案比"没查到"危险得多，因为它自洽、可读、且完全错。
      *
+     *   上界是**最新几何记录**而不是最新帧，这是刻意的：它同时是"这一帧真的采过
+     *   几何吗"的答案。静止 140 帧后主循环帧号会跑出窗口，而快照锚点必须落在
+     *   窗口内（否则底图套上另一帧的线框）—— `LiveTicker` 就靠这个空表判锚点。
+     *   要"该帧生效的几何"而不是"该帧采过几何"，调用方自己把帧号夹到窗口内
+     *   （见 {@see Query::tree()}）。
+     *
      *   修在这里而不是修在每个查询里：四个查询（`boxModel` / `boxes` /
      *   `constraints` / `align`）各判一遍窗口，必然只修到其中几处 —— 之前就是
      *   只有 `align` 判了，另外三个照样返回旧帧。
@@ -986,7 +1077,7 @@ final class Recorder implements PaintObserver
         $min = \min($keys);
         $max = \max($keys);
         if ($frame > $max) {
-            return null; // 未来帧：窗口里没有这一帧的采样，往前找等于伪造
+            return null; // 窗口里没有这一帧的采样：往前找等于把"没采"说成"采了"
         }
         if (($this->goneAt[$node] ?? \PHP_INT_MAX) <= $frame) {
             return null; // 这一帧时节点已经离开树；旧记录只属于更早的帧
@@ -1040,6 +1131,7 @@ final class Recorder implements PaintObserver
     {
         // 未来帧不给"每节点最近一次"：那会把窗口末端的一整套几何当成"该帧生效"，
         // 与 `geometryAt()` 的 clamp 是同一个错误，只是从单节点变成整张表。
+        // 上界取最新几何记录的理由同 {@see self::geometryAt()}：它同时是"采过没有"。
         if ($this->geometry === [] || $frame > \max(\array_keys($this->geometry))) {
             return [];
         }
@@ -1543,6 +1635,10 @@ final class Recorder implements PaintObserver
                 'c' => self::shortClass($element->widget()),
                 'x' => $element->widget() instanceof Flex,
                 's' => $this->frameId,
+                // 出生帧只写一次。它不能从 `s` 反推：静止节点（容器、没换过状态的
+                // 文本）的 `s` 一直不动，而它其实从第一帧就在 —— 拿 `s` 当出生帧会
+                // 让回放早期帧时整棵静止树凭空消失。
+                'f' => $this->frameId,
             ];
         }
 
@@ -1591,9 +1687,20 @@ final class Recorder implements PaintObserver
         $parts = [];
         $cursor = $nodeId;
         $guard = 0;
-        while ($cursor > 0 && isset($this->nodes[$cursor]) && $guard++ < 32) {
-            \array_unshift($parts, $this->nodes[$cursor]['c']);
-            $cursor = $this->nodes[$cursor]['p'];
+        // 已回收节点也走这条链：回放早期帧时，画面上大半是"后来消失了的东西"，
+        // 它们的路径正是"它当时在哪"的答案。只在注册表里找会让它们集体变成空串，
+        // 而空串看起来跟"这是个根"一模一样。
+        while ($cursor > 0 && $guard++ < 32) {
+            $meta = $this->nodes[$cursor] ?? $this->evicted[$cursor] ?? null;
+            if ($meta === null) {
+                break;
+            }
+            $type = (string) ($meta['c'] ?? '');
+            if ($type === '') {
+                break; // 旧证据包里的回收节点没有类型：给半截路径不如给空，别编
+            }
+            \array_unshift($parts, $type);
+            $cursor = (int) ($meta['p'] ?? -1);
         }
 
         return \implode(' > ', $parts);
@@ -1879,7 +1986,25 @@ final class Recorder implements PaintObserver
             if (isset($retain[$id]) || $this->frameId - $seen <= self::NODE_TTL_FRAMES) {
                 continue;
             }
-            $this->evicted[$id] = $seen;
+            // `g` = 真离树的那一帧，**没有就给 0（未离开）而不是拿 `s` 顶替**。
+            //
+            // 两种"回收"必须分开：
+            //   · 节点确实从树上消失了 ⇒ `goneAt` 有值，回放时它在 `g` 之后就不该出现；
+            //   · 只是连续 120 帧没被触达（几何采集关着、或连续静止帧）⇒ `goneAt`
+            //     从没写过，节点其实还在树上，回放时必须一直算活着。
+            // 拿 `s` 顶替会把后者整批判死，于是关掉几何采集后回放早期帧，整棵树
+            // 从某一帧起集体消失 —— 而每个环节看起来都正常。
+            //
+            // 父与类型也一起留下：回放的**主角**恰恰是"后来消失了的东西"，
+            // 只留寿命的话，能查出它曾经存在、却画不出它在哪儿。
+            $this->evicted[$id] = [
+                'p' => (int) ($meta['p'] ?? -2),
+                'c' => (string) ($meta['c'] ?? ''),
+                'x' => (bool) ($meta['x'] ?? false),
+                'f' => (int) ($meta['f'] ?? $seen),
+                's' => $seen,
+                'g' => (int) ($this->goneAt[$id] ?? 0),
+            ];
             unset($this->nodes[$id], $this->boxless[$id], $this->geometryDigest[$id], $this->geometryBaseline[$id]);
         }
         foreach ($this->goneAt as $node => $gone) {
