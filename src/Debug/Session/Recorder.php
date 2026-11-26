@@ -334,7 +334,7 @@ final class Recorder implements PaintObserver
      * 代际号：每次 {@see self::reset()} 自增。
      *
      * `reset()` 会把帧号归零，于是下一帧又从 1 开始；任何"按帧号缓存"的派生物
-     * （`Query::$shapeCache`）都会命中上一轮同号帧。缓存以代际为键，
+     * （`CausalQuery::$shapeCache`）都会命中上一轮同号帧。缓存以代际为键，
      * 与 A41 的 `debugSession` 戳同源 —— 那条裁决处理的正是"号码重用"。
      */
     private int $generation = 0;

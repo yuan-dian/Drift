@@ -3,12 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\Debug\Session;
 
-use Drift\Geometry\BoxConstraints;
-use Drift\Geometry\EdgeInsets;
-use Drift\Geometry\Size;
-use Drift\Widget\Element;
-use Drift\Widget\StatefulElement;
-
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。
  *
@@ -19,66 +13,64 @@ use Drift\Widget\StatefulElement;
  *   继续追问。`props()` 曾经也是例外（把字段读数存进快照窗口、写进证据包），
  *   按 A55 已降为纯内省：只读当场活树、不写任何记录 —— 属性复算不了，不是证据。
  *
+ * ## 这层只剩"协议面"与"跨域组合"
+ *
+ * 二十三个查询分属六个域，实现各在**自己的类**里，按它读的那份记录分：
+ *
+ * | 域 | 类 | 读什么 | 回答 |
+ * |---|---|---|---|
+ * | 因果 | {@see CausalQuery} | 帧窗口（600） | 这帧变了什么、因为谁 |
+ * | 几何 | {@see GeometryQuery} | 几何窗口（60） | 盒在哪、多大、约束怎么传 |
+ * | 绘制 | {@see PaintQuery} | 绘制窗口（60） | 画了谁、省了谁 |
+ * | 外部工作 | {@see TrafficQuery} | 网络 500 / 异步 200 | 请求与任务落在哪一帧 |
+ * | 结构 | {@see StructureQuery} | 节点注册表 + 几何注解 | 第 N 帧谁在树上 |
+ * | 内省 | {@see LiveQuery} | 活树（不是证据） | 现在这个对象是什么样 |
+ *
+ * 分开的理由不是行数：六个域各有**只对自己成立**的口径（几个窗口宽度不同、
+ * 缺省帧该落在哪个窗口、"往前找"对谁成立），混在一个类里最容易被下一个改动的
+ * 人按邻居的口径顺手改掉 —— 而每一处这类漂移的表现都是"答案自洽、可读、全错"。
+ * 于是**读侧的分界线与写侧（{@see Recorder} 的那几份记录）一一对应**：将来写侧
+ * 真要拆，每个域类正好对着一个 store，不用重新切一遍。
+ *
+ * 留在门面上的只有三件：
+ *
+ * - **协议面**：23 个签名与 {@see QueryRouter::QUERY_SPECS} 逐参一致（判据用反射钉住）。
+ *   门面只分派，不带状态 —— 带状态的门面就是下一轮上帝类的种子。
+ * - **跨域组合** {@see self::align()}：一帧里同时取因果 / 几何 / 网络，它必须同时
+ *   知道三个域，这正说明它是组合者而不是某一域的主人。
+ * - **跨域搜索** {@see self::find()}：给一段文本，回一串**地址**，横跨节点与请求。
+ *
  * ## 两个聚合的口径不同，不要合并
  *
- * - `hotspots()` 回答"谁在写"：只聚合 `kind=state` 的根因边，按调用点 + State 类排名。
- * - `nodes()` 回答"谁在重建"：按节点聚合，含父传播。
- *
- * 一个 `setState` 会让整棵子树逐层产生 `parent` 边。把传播算进根因，排名会全是
- * 下游节点，真正的原因反而沉底。反过来只看根因，又看不出"哪个子树被牵连最重"。
+ * `hotspots()` 答"谁在写"（只算 `kind=state` 的根因边），`nodes()` 答"谁在重建"
+ * （含父传播）。把传播算进根因，排名会全是下游节点；只看根因，又看不出哪个子树
+ * 被牵连最重。两条口径的完整理由见 {@see CausalQuery}。
  *
  * @api
  */
 final class Query
 {
-    /** @var array<int, array<string, mixed>> 帧号 => 该帧的森林骨架（复用于 cascade / 聚合） */
-    private array $shapeCache = [];
+    private readonly CausalQuery $causal;
 
-    /** `shapeCache` 属于哪一代；与 `Recorder::generation()` 不一致就整体丢弃。 */
-    private int $cacheGeneration = -1;
+    private readonly GeometryQuery $geometry;
 
-    /** L2 内存台账：跨多次 memory() 查询累积同一本 WeakMap，不进证据包（A55）。 */
-    private ?MemoryProbe $memoryProbe = null;
+    private readonly PaintQuery $paint;
+
+    private readonly TrafficQuery $traffic;
+
+    private readonly StructureQuery $structure;
+
+    private readonly LiveQuery $live;
 
     public function __construct(private readonly Recorder $recorder)
     {
-    }
-
-    /**
-     * 进程内存 + 活树对象的跨帧内省（L2，不是证据）。
-     *
-     * ★ 必须注入活树：内存看的是**现在**有哪些对象、活了多久；离线包没有活树，
-     *   返回空会读成"没有对象"，所以由派发层在注入回调缺失时明确拒绝。
-     * ★ 不写 Recorder、不进包、不进指纹：这是 A55 的 L2 内省，只有结构上可复算的
-     *   标量才能进证据，而"对象活了几帧"离开当下就无法重算。
-     *
-     * @param list<Element> $roots
-     * @return array<string, mixed>
-     */
-    public function memory(array $roots, int $limit = 40): array
-    {
-        if (!MemoryProbe::available()) {
-            return ['found' => false, 'reason' => 'memory-unavailable'];
-        }
-        $this->memoryProbe ??= new MemoryProbe();
-        $answer = $this->memoryProbe->sample($roots, $this->recorder->lastFrameId(), $limit);
-        $answer['found'] = true;
-        $answer['limit'] = $limit;
-
-        return $answer;
-    }
-
-    /**
-     * 把 `site`（`file:line`）解释成方法定义位置（L2，不是证据）。
-     *
-     * 与 `why()` / `hotspots()` 给出的 `site` 同源：那些输出里的是一个地址字符串，
-     * 这里把它翻译成"在哪个类的哪个方法里、定义在第几行"。纯读，不碰活树与记录。
-     *
-     * @return array<string, mixed>
-     */
-    public function source(string $site): array
-    {
-        return SourceLocator::locate($site);
+        $this->causal = new CausalQuery($recorder);
+        $this->geometry = new GeometryQuery($recorder);
+        $this->paint = new PaintQuery($recorder);
+        $this->traffic = new TrafficQuery($recorder);
+        // 结构依赖几何：树行上的盒大小与矩形是几何域的注解，不是结构域自己采的。
+        $this->structure = new StructureQuery($recorder, $this->geometry);
+        $this->live = new LiveQuery($recorder);
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
@@ -88,967 +80,183 @@ final class Query
     }
 
     /**
-     * 按节点读 Widget / State 配置（dev 反射，纯内省，不是证据）。
+     * 最近 N 帧的摘要，按帧号升序；`since` 是增量游标。
      *
-     * ★ 帧号不是参数：属性读的是**现在**的活树，给一个历史帧号却返回当前值
-     *   就是"伪称对齐"。返回值里的 `liveFrame` 明说这是哪一帧读到的。
-     *
-     * ★ 不写任何记录（A55）：这一帧过去后对象已变，把字段写进证据包等于声称
-     *   一件无法复算的事。字段用 {@see ObjectDump} 的反射原语现读，与 `eval`
-     *   的 `$node` 同源 —— 同一个对象在两个入口看到同一份字段。
-     *
-     * @param list<Element> $roots 全部树根（主树 + 浮层），由派发层给 —— Debug 层不依赖 App
-     * @return array<string, mixed>
-     */
-    public function props(int $node, array $roots, int $maxDepth = 3, int $maxFields = 120): array
-    {
-        if (!ObjectDump::available()) {
-            return ['found' => false, 'node' => $node, 'reason' => 'reflection-unavailable'];
-        }
-
-        $element = $this->findElement($roots, $node);
-        if ($element === null) {
-            // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，后者是活树里已经没有它。
-            $status = $this->recorder->nodeStatus($node);
-            $known = $this->recorder->nodeIndex()[$node] ?? null;
-
-            return [
-                'found' => false,
-                'node' => $node,
-                'reason' => match ($status) {
-                    'evicted' => 'node-evicted',
-                    'active' => 'node-unmounted',
-                    default => 'unknown-node',
-                },
-                'type' => $known['c'] ?? null,
-            ];
-        }
-
-        $t0 = \hrtime(true);
-        $widget = $element->widget();
-        $state = $element instanceof StatefulElement ? $element->state() : null;
-        $redact = $this->recorder->redactionEnabled();
-
-        $w = ObjectDump::fields($widget, $maxDepth, $maxFields, $redact);
-        $s = $state === null
-            ? ['fields' => [], 'omitted' => 0, 'cut' => 0, 'cycles' => 0, 'redacted' => 0, 'redact' => $redact]
-            : ObjectDump::fields($state, $maxDepth, $maxFields, $redact);
-
-        return [
-            'found' => true,
-            'liveFrame' => $this->recorder->lastFrameId(),
-            'widget' => self::shortClass($widget::class),
-            'element' => self::shortClass($element::class),
-            'state' => $state === null ? null : self::shortClass($state::class),
-            'fields' => \array_merge($w['fields'], $s['fields']),
-            'omitted' => $w['omitted'] + $s['omitted'],
-            'cut' => $w['cut'] + $s['cut'],
-            'cycles' => $w['cycles'] + $s['cycles'],
-            'redacted' => $w['redacted'] + $s['redacted'],
-            'redact' => $redact,
-            'costMs' => (\hrtime(true) - $t0) / 1e6,
-        ];
-    }
-
-    /**
-     * 在多棵树里按节点号找活元素。
-     *
-     * 查找本身住 {@see Element::findInRoots()}：叠加层（高亮）也要同一个查找，
-     * 而它拿不到 `Query`。两份递归迟早漂，且漂出来的表现是"某个深度以外永远
-     * 查不到"——正是这次修掉的那类静默。
-     *
-     * @param list<Element> $roots
-     */
-    private function findElement(array $roots, int $node): ?Element
-    {
-        return Element::findInRoots($roots, $node, fn(Element $e): bool => $this->recorder->owns($e));
-    }
-
-    /**
-     * 点选反查：视口坐标 ⇒ 命中链（根 → 最深的命中盒）。
-     *
-     * ★ 不写生产盒字段：命中走 `RenderBox::hitTest()` 的唯一实现，反查走
-     *   `Element::boxOwners()` 的按需映射（焦点链已用的那一份）。这两样都只在
-     *   查询发生时跑，录制没开也能用，AOT 可达面不变（A44）。
-     *
-     * ★ `chain` 给的是**完整盒链**，不是只给最底层盒：包装层是谁、自绘内容落在
-     *   哪个盒里，正是布局调试要回答的问题。没有 Element 认领的盒照实列出
-     *   （`node = null`），不悄悄跳过，也不把父节点冒充成它的拥有者。
-     *
-     * ★ 未命中与没树根分开报：点空了不是"点到了根节点"。
-     *
-     * @param list<array{element: Element, x: float, y: float}> $roots 主树在前、浮层在后
-     * @return array<string, mixed>
-     */
-    public function pick(float $x, float $y, array $roots): array
-    {
-        $base = [
-            'x' => $x,
-            'y' => $y,
-            'liveFrame' => $this->recorder->lastFrameId(),
-            'roots' => 0,
-        ];
-
-        $elements = [];
-        foreach ($roots as $entry) {
-            $element = $entry['element'] ?? null;
-            if ($element instanceof Element) {
-                $elements[] = $element;
-            }
-        }
-        $base['roots'] = \count($elements);
-        if ($elements === []) {
-            return $base + [
-                'found' => false,
-                'reason' => 'no-roots',
-                'tree' => null,
-                'scope' => null,
-                'hit' => null,
-                'chain' => [],
-                'ownerless' => 0,
-            ];
-        }
-
-        // 映射建一次，链上每个盒共用；焦点反查走同一个方法，口径不会分叉。
-        $owners = Element::boxOwners($elements);
-
-        // 浮层在上、主树在下：与 InputRouter 的命中顺序一致。
-        for ($i = \count($roots) - 1; $i >= 0; $i--) {
-            $root = $roots[$i];
-            $element = $root['element'] ?? null;
-            if (!$element instanceof Element) {
-                continue;
-            }
-
-            // 视口坐标减根原点：浮层不是从 (0,0) 起画，漏了就整体偏一个锚点。
-            $hit = $element->effectiveBox()?->hitTest(
-                $x - (float) ($root['x'] ?? 0.0),
-                $y - (float) ($root['y'] ?? 0.0),
-            );
-            if ($hit === null) {
-                continue;
-            }
-
-            $chain = [];
-            $ownerless = 0;
-            // Debug 层不 import Layout：沿渲染父链走，遇到没有 size() 的对象（sliver 等）
-            // 就停。事实仍来自生产盒本身，查询只把它们压成标量。
-            for ($box = $hit; $box !== null && \method_exists($box, 'size'); $box = $box->parent()) {
-                $owner = $owners[\spl_object_id($box)] ?? null;
-                if ($owner === null) {
-                    $ownerless++;
-                }
-                $chain[] = self::boxFact($box, $owner, $this->recorder);
-            }
-            $chain = \array_reverse($chain);
-            $last = $chain[\count($chain) - 1];
-
-            return $base + [
-                'found' => true,
-                'reason' => null,
-                'tree' => $i,
-                'scope' => $i === 0 ? 'main' : 'overlay',
-                'hit' => $last,
-                'chain' => $chain,
-                'ownerless' => $ownerless,
-            ];
-        }
-
-        return $base + [
-            'found' => false,
-            'reason' => 'no-hit',
-            'tree' => null,
-            'scope' => null,
-            'hit' => null,
-            'chain' => [],
-            'ownerless' => 0,
-        ];
-    }
-
-    /**
-     * 链上一环的标量事实；`node` 只由会话发号，查询不自造地址。
-     */
-    private static function boxFact(object $box, ?Element $owner, Recorder $recorder): array
-    {
-        $size = $box->size();
-        $fact = [
-            'box' => self::shortClass($box::class),
-            'size' => $size === null ? null : ['width' => $size->width, 'height' => $size->height],
-            'node' => null,
-            'widget' => null,
-            'element' => null,
-            'state' => null,
-            'path' => null,
-        ];
-        if ($owner === null) {
-            return $fact;
-        }
-
-        $node = $recorder->idOf($owner);
-        $state = $owner instanceof StatefulElement ? $owner->state() : null;
-        $fact['node'] = $node;
-        $fact['widget'] = $recorder->typeOf($node);
-        $fact['element'] = self::shortClass($owner::class);
-        $fact['state'] = $state === null ? null : self::shortClass($state::class);
-        $fact['path'] = $recorder->pathOf($node);
-
-        return $fact;
-    }
-
-    private static function shortClass(string $class): string
-    {
-        $pos = \strrpos($class, '\\');
-
-        return $pos === false ? $class : \substr($class, $pos + 1);
-    }
-
-    /**
-     * 高亮状态：**现在高亮谁、什么时候请求的、最后一次真的上屏在哪一帧**。
-     *
-     * ## 为什么 `onScreen` 要单独算
-     *
-     * "请求了高亮"与"高亮到了屏幕上"是两件事，中间隔着一次绘制。元素已卸载、
-     * 盒没有尺寸、帧被整段跳过，都会让请求停在第一件上 —— 而屏幕上什么都没有，
-     * 静默。三个字段一起给，读者能自己判断失败在哪一环：
-     *
-     * | `node` | `drawnFrame` | 含义 |
-     * |---|---|---|
-     * | `0` | 任意 | 没有高亮（`drawnFrame` 是历史上最后一次画的，只作参考） |
-     * | `>0` | `null` | 请求了，但一帧都还没画过 |
-     * | `>0` | `< askedFrame` | 请求了，但还没画到它（`onScreen=false`） |
-     * | `>0` | `>= askedFrame` 且 `drawnNode` 相同 | 就在屏幕上（`onScreen=true`） |
-     *
-     * ★ 号对得上还不够：清掉再一次高亮同一个号时，`drawnFrame` 会停在**上一次**
-     *   那个号上屏的帧。比 `askedFrame` 就是为了把这种"旧画"与"新请求"分开。
-     *
-     * ★ `frame` 是当前帧号（`beginFrame()` 数出来的），不是末个落盘帧：查询发生在
-     *   两帧之间时两者相同，而 `frames` 窗口一帧都没落盘时后者是 0。
-     *
-     * @return array<string, mixed>
-     */
-    public function highlight(): array
-    {
-        $node = $this->recorder->highlightedNode();
-        $askedFrame = $this->recorder->highlightFrame();
-        $drawn = $this->recorder->overlayDrawn();
-
-        return [
-            'node' => $node,
-            'type' => $node > 0 ? $this->recorder->typeOf($node) : null,
-            'path' => $node > 0 ? $this->recorder->pathOf($node) : null,
-            'askedFrame' => $askedFrame,
-            'drawnNode' => $drawn === null ? null : $drawn['node'],
-            'drawnFrame' => $drawn === null ? null : $drawn['frame'],
-            'onScreen' => $node > 0
-                && $drawn !== null
-                && $drawn['node'] === $node
-                && $drawn['frame'] >= $askedFrame,
-            'frame' => $this->recorder->frameId(),
-        ];
-    }
-
-    /**
-     * 最近 N 帧的摘要，按帧号升序。
-     *
-     * `since` 是**增量游标**：只要帧号大于它的帧。游标由调用方持有（记最后一条的
-     * `id`），服务端不记"你看到哪了" —— 无状态的读可以重试、可以并行、可以
-     * 两个消费者各拿一份互不干扰。这也正是"订阅"给不了的东西：订阅一旦漏一条，
-     * 之后每一条都是错的，而游标只是"再问一次"。
-     *
-     * @return list<array<string, mixed>>
-     */
-    /**
      * @return array{frames: list<array<string, mixed>>, window: array<string, mixed>, dropped: int, since: int|null}
+     *
+     * @see CausalQuery::frames()
      */
     public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
-        $all = $this->recorder->frames();
-        $from = $all === [] ? 0 : (int) \array_key_first($all);
-        $to = $all === [] ? 0 : (int) \array_key_last($all);
-        $window = [
-            'from' => $from,
-            'to' => $to,
-            'capacity' => (int) ($this->recorder->stats()['capacity'] ?? 0),
-            'frames' => \count($all),
-            // 帧号跨度比保留条数多出来的那段 = 静止期整段跳过的帧，被窗口让位淘汰了。
-            // 不给这个数，`#12–#12573` 配 `600` 会被读成"窗口有一万两千帧"。
-            'folded' => \max(0, $to - $from + 1 - \count($all)),
-        ];
-
-        $out = [];
-        $dropped = 0;
-        if ($since !== null) {
-            // 游标落后到窗口外：中间那段真的没了，不是"这段没有重建"。
-            $dropped = $window['from'] > 0 ? \max(0, $window['from'] - $since - 1) : 0;
-            foreach ($all as $id => $frame) {
-                if ($id <= $since) {
-                    continue;
-                }
-                if ($rebuiltOnly && $frame->rebuilt === []) {
-                    continue;
-                }
-                $out[] = $this->frameSummary($frame);
-            }
-
-            // 游标语义下 `limit` 是"最多给这么多"，从**最老的未读**开始：
-            // 丢弃最新的会让读者以为"就这些"，而最老的丢不掉才是真相。
-            $out = $limit > 0 ? \array_slice($out, 0, $limit) : $out;
-        } else {
-            foreach ($this->window($limit) as $frame) {
-                if ($rebuiltOnly && $frame->rebuilt === []) {
-                    continue;
-                }
-                $out[] = $this->frameSummary($frame);
-            }
-        }
-
-        return ['frames' => $out, 'window' => $window, 'dropped' => $dropped, 'since' => $since];
-    }
-
-    /** @return array<string, mixed> */
-    private function frameSummary(FrameRecord $frame): array
-    {
-        return [
-            'id' => $frame->id,
-            't' => $frame->t,
-            'cost' => $frame->costMs,
-            'rebuilt' => \count($frame->rebuilt),
-            'causes' => \count($frame->causes),
-            'stageMs' => FrameRecord::toMs($frame->stageNs),
-            'unattributedMs' => $frame->unattributedMs(),
-            'settleSkipped' => $frame->settleSkipped,
-            'paintSkipped' => $frame->paintSkipped,
-        ];
+        return $this->causal->frames($limit, $rebuiltOnly, $since);
     }
 
     /**
      * 单帧展开：谁重建了、根因怎么分布。
      *
-     * 参数名与协议键同名（`frame`）：`query('explain', ['frame' => 2])` 里的键、
-     * 这里的变量、`explain(2)` 的地址，三处必须是同一个词 —— 否则规格表要靠一张
-     * 别名映射才能核对，而别名表本身就会漂。
-     *
      * @return array<string, mixed>
+     *
+     * @see CausalQuery::explain()
      */
     public function explain(int $frame): array
     {
-        $record = $this->recorder->frame($frame);
-        if ($record === null) {
-            throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
-        }
-
-        $rebuilt = [];
-        foreach ($record->rebuilt as $id) {
-            $rebuilt[] = ['id' => $id, 'path' => $this->recorder->pathOf($id)];
-        }
-
-        $byKind = ['state' => 0, 'parent' => 0, 'unknown' => 0];
-        $byRoot = [];
-        foreach ($record->causes as $edge) {
-            if (isset($byKind[$edge->kind])) {
-                ++$byKind[$edge->kind];
-            }
-            if ($edge->kind !== 'state') {
-                continue;
-            }
-            $key = $edge->site . "\0" . $edge->detail;
-            $byRoot[$key] ??= ['site' => $edge->site, 'detail' => $edge->detail, 'count' => 0];
-            ++$byRoot[$key]['count'];
-        }
-
-        $roots = \array_values($byRoot);
-        \usort($roots, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
-
-        return [
-            'id' => $record->id,
-            't' => $record->t,
-            'cost' => $record->costMs,
-            'stages' => $record->stages,
-            'stageMs' => FrameRecord::toMs($record->stageNs),
-            'unattributedMs' => $record->unattributedMs(),
-            'settleSkipped' => $record->settleSkipped,
-            'paintSkipped' => $record->paintSkipped,
-            'rebuilt' => $rebuilt,
-            'byKind' => $byKind,
-            'roots' => $roots,
-        ];
+        return $this->causal->explain($frame);
     }
 
     /**
-     * 某个节点在某一帧为什么重建（D0 `why()` 的转发，帧缺省为最近一帧）。
+     * 某个节点在某一帧为什么重建（帧缺省为最近一帧）。
      *
      * @return array<string, mixed>
+     *
+     * @see CausalQuery::why()
      */
     public function why(int $node, ?int $frame = null): array
     {
-        return $this->recorder->why($node, $frame);
+        return $this->causal->why($node, $frame);
     }
 
     /**
-     * 单帧的**因果森林**：重建节点按父边连成树，state 写入点作为树里的标记。
+     * 跨帧聚合根因（`kind=state`）：调用点 + State 类。
      *
-     * ## 为什么是森林而不是排行榜
+     * @return list<array<string, mixed>>
      *
-     * 一次动作帧里 350 个节点各重建 1 次，"按次数排名"没有任何区分度，排序退化成
-     * 路径先序，前几行必然全是祖先。成熟工具（React Profiler / Flutter Widget
-     * Rebuild Stats）在单帧里给的是**层级**，次数留到多帧聚合才有意义。
+     * @see CausalQuery::hotspots()
+     */
+    public function hotspots(int $frames = 300, int $limit = 10): array
+    {
+        return $this->causal->hotspots($frames, $limit);
+    }
+
+    /**
+     * 跨帧聚合节点：重建次数、自身写入与父传播。
      *
-     * ## 根的定义：父没有重建的节点
+     * @return list<array<string, mixed>>
      *
-     * 森林因此在结构上**不重叠**：`Σ(根.subtree × 根.count) + hidden == rebuilt`，可判据。
-     * state 写入点**不另起根**（它常常嵌在另一个写入点的子树里，比如
-     * `PageShell ⊃ Table`），只标 `kind` + `site` —— 嵌套关系正是"两次写入谁在谁里面"
-     * 的答案，另起根会把它抹平。
+     * @see CausalQuery::nodes()
+     */
+    public function nodes(int $frames = 300, int $limit = 10): array
+    {
+        return $this->causal->nodes($frames, $limit);
+    }
+
+    /**
+     * 单帧因果森林：结构根、同形兄弟折叠、子树规模、state 写入点、按类型构成。
      *
-     * ## 同形兄弟折叠
-     *
-     * 表格页的一帧 360 个重建，其中 `Column` 底下 12 个 `SizedBox` 完全同形 —— 逐条
-     * 列出来就是 12 行一模一样的东西，把树本身的形状冲散。所以按**结构指纹**把同形
-     * 兄弟折成一组（`count=N`，另带全部 `ids`），一层里有多少种形状就显示几行。
-     * 这是 perf / WPA 折叠相同调用栈、Instruments 折叠递归的同一手法。
-     *
-     * 折叠是**无损**的：组里留着每个成员的真实 id，展开与 `why(id)` 都还能用；
-     * 丢掉的只有兄弟之间的先后次序，而重建次序不承载因果。
-     *
-     * 指纹是**递归**的（类型 + 因果 + 子树规模 + 子节点指纹的多重集）。只比类型与规模
-     * 会把 `Column[Text, Text]` 和 `Column[Padding[Text]]` 折成一组：规模一样、结构
-     * 不同，那是在报告里编造结构。
-     *
-     * 口径：`×N` 是兄弟个数，其余数字（`subtree` / `omitted` / `hidden`）都是**每个
-     * 实例**的。于是一行可以读成"这个形状重复了 N 份，每份这么大"。
-     *
-     * @param int $maxDepth     树往下展开几层（更深标 `cut`）
-     * @param int $maxChildren  每层最多留几**组**（其余计入 `omitted` / `hidden`）
      * @return array<string, mixed>
+     *
+     * @see CausalQuery::cascade()
      */
     public function cascade(int $frame, int $maxDepth = 5, int $maxChildren = 8): array
     {
-        $record = $this->recorder->frame($frame);
-        if ($record === null) {
-            throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
-        }
-
-        $shape = $this->shapeOf($record);
-        /** @var array<int, list<int>> $children */
-        $children = $shape['children'];
-        /** @var array<int, int> $subtree */
-        $subtree = $shape['subtree'];
-        $causeOf = $record->causeOf();
-        $signature = $this->signatures($record, $children, $causeOf, $subtree);
-
-        // 写入 ≠ 重建：帧跳过 settle、或元素在 settle 前被卸载时，`state` 边落在这一帧
-        // 却没有对应的 rebuild。从 `rebuilt` 取会漏掉它们，而 `explain` 的 byKind 数是
-        // 全部 state 边 —— 两处差一条、且没有解释。所以从 causes 取，并标明有没有落地。
-        $rebuiltSet = [];
-        foreach ($record->rebuilt as $id) {
-            $rebuiltSet[$id] = true;
-        }
-        $writes = [];
-        foreach ($record->causes as $edge) {
-            if ($edge->kind !== 'state') {
-                continue;
-            }
-            $id = $edge->toId;
-            $writes[] = [
-                'id' => $id,
-                'path' => $this->recorder->pathOf($id),
-                'type' => $this->recorder->typeOf($id),
-                'site' => $edge->site,
-                'detail' => $edge->detail,
-                'subtree' => $subtree[$id] ?? 1,
-                'rebuilt' => isset($rebuiltSet[$id]),
-            ];
-        }
-        \usort($writes, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
-            ?: \strcmp((string) $a['path'], (string) $b['path']));
-
-        // 森林这一层同样受 `maxChildren` 约束 —— 一条规则用到底，不为"根"开特例。
-        // 截断量单独报出去（顶层的 `omitted` / `hidden`），调用方才能把"树加起来
-        // 不等于 rebuilt"解释清楚，而不是让它看起来像漏了节点。
-        /** @var list<array<string, mixed>> $tree */
-        [$tree, $omitted, $hidden] = $this->foldGroups($shape['roots'], $children, $causeOf, $subtree, $signature, 0, $maxDepth, $maxChildren);
-
-        return [
-            'frame' => $record->id,
-            'rebuilt' => \count($record->rebuilt),
-            'depthMax' => (int) $shape['depthMax'],
-            'roots' => $tree,
-            'omitted' => $omitted,
-            'hidden' => $hidden,
-            'writes' => $writes,
-            'byType' => $this->byType($record),
-        ];
+        return $this->causal->cascade($frame, $maxDepth, $maxChildren);
     }
 
     /**
-     * 一帧里所有盒的几何摘要，按 node id 升序。
-     *
-     * 这是 `boxModel` 的"整帧版"，只读同一份几何记录，不碰活盒、不新采集。
-     * 它给投影层的是**原料**而不是结论：父子约束怎么比、什么算异常，由投影层
-     * 按规则决定。查询层一旦自己判"这里不对"，证据与意见就长在同一处了。
-     *
-     * `window` 随答案一起给：几何窗口只有 60 帧（帧窗口是 600），查不到时
-     * 必须说得清是"窗口外"还是"没有这个盒"。
+     * 一帧全部盒的几何摘要（只读几何记录，供投影层跨盒比较约束）。
      *
      * @return array{frame: int, rows: list<array<string, mixed>>, window: array<string, mixed>}
+     *
+     * @see GeometryQuery::boxes()
      */
     public function boxes(?int $frame = null): array
     {
-        // 缺省帧取**几何窗口的最新**，不是帧窗口的最新。
-        //
-        // ★ 两个窗口宽度不同（几何 60、帧 600），且几何按"有变化才落记录"跳帧 ——
-        //   用 `lastFrameId()` 当缺省，静止几十秒后它必然跑出几何覆盖范围，
-        //   于是"打开面板一片空白"而每个环节都自认为正常。缺省值必须落在
-        //   它自己要查的那个窗口里。
-        $window = $this->recorder->geometryCoverage();
-        $frameId = $frame ?? (int) ($window['to'] ?? 0);
-        if ($frameId < (int) ($window['from'] ?? 0) || $frameId > (int) ($window['to'] ?? 0)) {
-            return [
-                'frame' => $frameId,
-                'rows' => [],
-                'window' => $window,
-                'reason' => 'frame-out-of-window',
-            ];
-        }
-
-        $records = $this->recorder->geometryRows($frameId);
-        \ksort($records, \SORT_NUMERIC);
-
-        $rows = [];
-        // 几何按变化存：目标帧没重新采样就往前找。整张表的"实际生效帧"必须回显，
-        // 否则读者会把 `rows` 当成 `frameId` 那一刻的快照 —— 那正是"三域看起来
-        // 都对齐、实际几何是上一帧"的来源。
-        $effective = 0;
-        foreach ($records as $node => $record) {
-            $rows[] = [
-                'node' => $node,
-                'parent' => $record->parent,
-                'type' => $this->recorder->typeOf($node),
-                'applied' => $record->applied,
-                'inner' => $record->inner,
-                'size' => $record->size,
-                'box' => $record->box,
-                // 相对父**内容盒原点**的偏移与内边距。留原样是为了让"为什么这个盒
-                // 在这儿"能被复算；绝对矩形见下面的 `rect`。
-                'offset' => $record->offset,
-                'pad' => $record->pad,
-            ];
-            $effective = \max($effective, $record->frame);
-        }
-
-        // 容器 = 本帧有子盒的节点。页面据此把"框套框"的辅助线淡画，但选中/悬停的
-        // 祖先链要保持清晰 —— 父链由这里给，页面不自己累加 parent 指针（那会成第四份真相）。
-        $parents = [];
-        foreach ($rows as $row) {
-            $parents[(int) ($row['parent'] ?? 0)] = true;
-        }
-        $byNode = [];
-        foreach ($rows as $row) {
-            $byNode[(int) $row['node']] = $row;
-        }
-        $chainOf = static function (int $node) use ($byNode): array {
-            $chain = [];
-            $seen = [$node => true];
-            $parent = (int) ($byNode[$node]['parent'] ?? 0);
-            while ($parent > 0 && isset($byNode[$parent]) && !isset($seen[$parent])) {
-                $chain[] = $parent;
-                $seen[$parent] = true;
-                $parent = (int) ($byNode[$parent]['parent'] ?? 0);
-            }
-
-            return $chain;
-        };
-        foreach ($rows as $i => $row) {
-            $node = (int) $row['node'];
-            $rows[$i]['container'] = isset($parents[$node]);
-            $rows[$i]['chain'] = $chainOf($node);
-        }
-
-        // 绝对矩形只在这里算一次。
-        //
-        // 让每个消费者自己从 `offset` 累加，等于把一次树的先序遍历发给每个人抄一遍，
-        // 而抄错的表现是**盒子错位**——没有读者会先怀疑自己的遍历。这不是判断（"这里
-        // 不对"），是坐标变换，所以归查询层；口径与 `pick()` 的 `hitTest` 一致：
-        // 子盒原点是相对父内容盒原点的。
-        $abs = self::absoluteRects($rows);
-        foreach ($rows as $i => $row) {
-            $rect = $abs[(int) $row['node']] ?? ['x' => 0.0, 'y' => 0.0];
-            $rows[$i]['rect'] = [
-                'x' => $rect['x'],
-                'y' => $rect['y'],
-                'w' => (float) ($row['size']['w'] ?? 0.0),
-                'h' => (float) ($row['size']['h'] ?? 0.0),
-            ];
-        }
-
-        return [
-            'frame' => $frameId,
-            'effective' => $effective,
-            'stale' => $rows !== [] && $effective !== $frameId,
-            'rows' => $rows,
-            'window' => $window,
-        ];
+        return $this->geometry->boxes($frame);
     }
 
     /**
-     * 把"相对父内容盒原点的偏移"累加成视口坐标（border 盒左上角）。
-     *
-     * 记录里刻意不存绝对坐标：绝对坐标会"因为祖先挪了一像素"而整片失效，而几何是
-     * 按签名变化存的 —— 存相对偏移时，一个盒的位置变只影响它自己这一条。
-     *
-     * 父不在记录里（根，或父本帧没采样）时该节点自成原点；成环时打断并给 0：
-     * 环意味着记录层坏了，视图不该陪着一起死。
-     *
-     * @param list<array<string, mixed>> $rows
-     * @return array<int, array{x: float, y: float}>
-     */
-    private static function absoluteRects(array $rows): array
-    {
-        $byNode = [];
-        foreach ($rows as $row) {
-            $byNode[(int) $row['node']] = $row;
-        }
-
-        $abs = [];
-        $resolve = function (int $node, array $seen) use (&$resolve, &$abs, $byNode): array {
-            if (isset($abs[$node])) {
-                return $abs[$node];
-            }
-
-            $row = $byNode[$node] ?? null;
-            if ($row === null || isset($seen[$node])) {
-                return $abs[$node] = ['x' => 0.0, 'y' => 0.0];
-            }
-            $seen[$node] = true;
-
-            $x = (float) ($row['offset']['x'] ?? 0.0);
-            $y = (float) ($row['offset']['y'] ?? 0.0);
-            $parent = (int) $row['parent'];
-            if ($parent === $node || !isset($byNode[$parent])) {
-                return $abs[$node] = ['x' => $x, 'y' => $y];
-            }
-
-            $origin = $resolve($parent, $seen);
-
-            return $abs[$node] = [
-                'x' => $origin['x'] + (float) ($byNode[$parent]['pad']['l'] ?? 0.0) + $x,
-                'y' => $origin['y'] + (float) ($byNode[$parent]['pad']['t'] ?? 0.0) + $y,
-            ];
-        };
-
-        foreach ($byNode as $node => $row) {
-            $resolve($node, []);
-        }
-
-        return $abs;
-    }
-
-    /**
-     * 一个节点的盒模型：margin / border / padding / content 四层 + 位置。
-     *
-     * 全部来自帧边界的几何快照，不碰活盒——所以导出的证据在另一个进程里也能问
-     * 同一个问题。找不到时说清是"没这个节点"还是"几何窗口外"，不返回默认零值：
-     * 默认零值会让一个不存在的盒子看起来像"尺寸正常"。
+     * 单节点盒模型：margin / border / padding / content 四层与位置。
      *
      * @return array<string, mixed>
+     *
+     * @see GeometryQuery::boxModel()
      */
     public function boxModel(int $node, ?int $frame = null): array
     {
-        $frameId = $frame ?? $this->recorder->lastFrameId();
-        $hit = $this->geometryLookup($node, $frameId);
-        if ($hit['record'] === null) {
-            return $hit['reason'] === 'frame-out-of-window'
-                ? $this->frameOutOfWindow($node, $frameId, $hit['window'])
-                : $this->geometryMiss($node, $frameId, $hit['window']);
-        }
-
-        return ['found' => true] + $hit['record']->toArray() + ['window' => $hit['window']];
+        return $this->geometry->boxModel($node, $frame);
     }
 
     /**
-     * 一个节点收到的约束是从哪几跳传下来的。
-     *
-     * 每一跳查两件事：
-     * ① 父的 `applied`（tighten 后）经 padding 内缩与 align 放松，是否得到父的 `inner`；
-     * ② 父的 `inner` 经子的宽高修饰收紧，是否得到子记录的 `applied`。
-     * 两者都对 ⇒ `base`（基类默认链）；①错 ⇒ `parent-performLayout`（父在
-     * performLayout 里另算了 inner）；②错且"父 inner 无界 + 子带 flex" ⇒
-     * `parent-flex`（Flex 父按 grow/shrink 给子分配尺寸，最典型的是 `Column` 里的
-     * `Expanded`）；②错且不满足那个组合 ⇒ `child-custom`（aspect 等修饰，或中间
-     * 还有别人改过）。**对不上不是错误，是答案**：能归默认的归默认，不能的说出不能，
-     * 绝不猜一个来源填进去——那是"看起来很有道理"的证据，比没有更危险。
-     *
-     * 链是**复算**出来的（读快照 + 重跑纯函数），并与快照里实际记的值交叉验证；
-     * 两次复算逐值相同即为判据，不需要在 layout 热路径插任何钩子。
+     * 单节点约束链：逐跳复算并与快照交叉验证，标出归不到基类默认的跳。
      *
      * @return array<string, mixed>
+     *
+     * @see GeometryQuery::constraints()
      */
     public function constraints(int $node, ?int $frame = null, int $maxDepth = 12): array
     {
-        $frameId = $frame ?? $this->recorder->lastFrameId();
-        $hit = $this->geometryLookup($node, $frameId);
-        if ($hit['record'] === null) {
-            return $hit['reason'] === 'frame-out-of-window'
-                ? $this->frameOutOfWindow($node, $frameId, $hit['window'])
-                : $this->geometryMiss($node, $frameId, $hit['window']);
-        }
-
-        $window = $hit['window'];
-        $all = [];
-        $cursor = $hit['record'];
-        // 环保护：父链来自记录，记录一旦坏掉（父指向自己/互指）这里会无限循环。
-        // 与 `pathOf()` 的 `$guard` 同一条纪律：报告不该陪着记录一起死。
-        $guard = 0;
-        while ($cursor !== null && $cursor->parent > 0 && $guard++ < 64) {
-            $parent = $this->recorder->geometryAt($frameId, $cursor->parent);
-            if ($parent === null) {
-                $all[] = [
-                    'from' => $cursor->parent,
-                    'to' => $cursor->node,
-                    'verified' => false,
-                    'source' => 'parent-outside-window',
-                    'received' => $cursor->applied,
-                ];
-                break;
-            }
-
-            $expectedInner = GeometryRecord::unpack($parent->applied);
-            $pad = $parent->pad;
-            if ($pad['l'] != 0.0 || $pad['t'] != 0.0 || $pad['r'] != 0.0 || $pad['b'] != 0.0) {
-                $expectedInner = $expectedInner->deflate(
-                    new EdgeInsets($pad['l'], $pad['t'], $pad['r'], $pad['b']),
-                );
-            }
-            if ($parent->align !== null) {
-                $expectedInner = $expectedInner->loosen();
-            }
-            $innerOk = GeometryRecord::pack($expectedInner) === $parent->inner;
-
-            $expectedApplied = GeometryRecord::unpack($parent->inner);
-            if ($cursor->box !== null || $cursor->aspect !== null) {
-                $size = new Size(
-                    $cursor->box['w'] ?? $expectedApplied->maxWidth,
-                    $cursor->box['h'] ?? $expectedApplied->maxHeight,
-                );
-                $expectedApplied = $expectedApplied->tighten($size);
-            }
-            $appliedOk = GeometryRecord::pack($expectedApplied) === $cursor->applied;
-
-            // ---- 第四类：Flex 父在 performLayout 里按 grow/shrink 分配尺寸。
-            //
-            // 判据是两个**结构事实**，不猜：
-            // ① 父是 Flex 容器（`Column` / `Row` / 任何 `extends Flex`，由记录层
-            //    在登记节点时按 `instanceof` 判定，不是类名清单）；
-            // ② 子自己**没有**宽高修饰（`box` / `aspect` 都为 null）。
-            // 子没改约束却拿不到父的 inner ⇒ 只能是父在 performLayout 里重新分的。
-            //
-            // 有 box/aspect 的子不算：那是子侧改的，即使父是 Flex 也归 `child-custom`
-            // —— 归因要指向真正动手的那一方。
-            $childTweaked = $cursor->box !== null || $cursor->aspect !== null;
-            $parentFlex = $this->recorder->isFlex($parent->node);
-
-            $all[] = [
-                'from' => $parent->node,
-                'fromType' => $this->recorder->typeOf($parent->node),
-                'to' => $cursor->node,
-                'toType' => $this->recorder->typeOf($cursor->node),
-                'received' => $cursor->applied,
-                'expected' => GeometryRecord::pack($expectedApplied),
-                'parentInner' => $parent->inner,
-                'verified' => $innerOk && $appliedOk,
-                'source' => !$innerOk
-                    ? 'parent-performLayout'
-                    : ($appliedOk
-                        ? 'base'
-                        : (($parentFlex && !$childTweaked) ? 'parent-flex' : 'child-custom')),
-            ];
-            $cursor = $parent;
-        }
-
-        $total = \count($all);
-        $chain = $maxDepth > 0 ? \array_slice($all, 0, $maxDepth) : $all;
-        $verified = 0;
-        foreach ($chain as $hop) {
-            if ($hop['verified']) {
-                ++$verified;
-            }
-        }
-
-        return [
-            'found' => true,
-            'frame' => $frameId,
-            'node' => $node,
-            'type' => $this->recorder->typeOf($node),
-            'hops' => $total,
-            'chain' => $chain,
-            'verified' => $verified,
-            'unverified' => \count($chain) - $verified,
-            'cut' => $total > \count($chain),
-            'omitted' => \max(0, $total - \count($chain)),
-            'window' => $window,
-        ];
+        return $this->geometry->constraints($node, $frame, $maxDepth);
     }
 
     /**
-     * 一帧的**绘制事实**：画了哪些节点、层缓存命中几次、哪些边界因什么重录。
-     *
-     * ## 为什么与 `boxes()` 分成两个查询
-     *
-     * 几何是"节点 × 帧"的二维事实，绘制是"帧 × 节点集合"的一维事实。合成一个
-     * `frameFacts()` 会让两边都开始按对方的口径补字段（几何跟着报 `hits`、绘制
-     * 跟着报 `applied`），而它们根本不是同一件事。
-     *
-     * ## 没有"往前找最近一帧"
-     *
-     * 几何按变化存，所以 `geometryAt()` 会往前找；绘制**每帧都落一条**（哪怕这帧
-     * 什么都没画，也是 `painted: []`）。因此查不到就是"那一帧没采"，不存在"用上一帧
-     * 代替"——往前找会把"这帧没画"说成"这帧画了上一帧的那些"。
-     *
-     * `captured=false` 与"这一帧没画"分开报：前者是预算没开，后者是 `painted: []`。
+     * 一帧的绘制事实：重画节点集合、层缓存命中数、各边界重录原因。
      *
      * @return array<string, mixed>
+     *
+     * @see PaintQuery::paint()
      */
     public function paint(?int $frame = null): array
     {
-        $window = $this->recorder->paintCoverage();
-        // 同 `boxes()`：缺省帧落在**自己的**覆盖窗口里。绘制窗口比帧窗口窄得多，
-        // 拿帧窗口的最新帧当缺省，静止一会儿就查不到，而页面会把它读成"这帧没画"。
-        $frameId = $frame
-            ?? ((int) ($window['to'] ?? 0) ?: $this->recorder->lastFrameId());
-
-        if (($window['captured'] ?? false) !== true) {
-            // 未开预算时不能给空集合：那会被读成"这帧什么都没画"，而真相是没采。
-            return [
-                'frame' => $frameId,
-                'found' => false,
-                'reason' => 'paint-not-captured',
-                'window' => $window,
-            ];
-        }
-
-        $record = $this->recorder->paintFrame($frameId);
-        if ($record === null) {
-            return [
-                'frame' => $frameId,
-                'found' => false,
-                'reason' => $frameId < (int) $window['from'] || $frameId > (int) $window['to']
-                    ? 'frame-out-of-window'
-                    : 'no-paint-record',
-                'window' => $window,
-            ];
-        }
-
-        return ['found' => true] + $record->toArray() + ['window' => $window];
+        return $this->paint->paint($frame);
     }
 
     /**
-     * 跨帧聚合**重画**：谁每帧都在画、哪些边界每次都在重录。
+     * 跨帧重画聚合：谁每帧都在画、哪些边界反复重录、按原因分布与命中率。
      *
-     * ## 为什么需要聚合，而不是让投影层逐帧读 `paint()`
-     *
-     * 绘制窗口 60 帧，单帧最多 4096 个节点。逐帧读 = 60 次查询、24 万个节点号，
-     * 远端会话还要 60 个往返。而规则要问的只有"这个节点在窗口里被画了几帧"——
-     * 聚合在查询层做一次，答案是一个几十行的表。
-     *
-     * ## `frames` 是分母，必须回显
-     *
-     * `nodes[].frames` 是"窗口里有几帧画过它"，`frames` 是"窗口里有几帧"。读者
-     * 拿前者比后者才知道是不是"每帧都画"。少了分母，`frames: 5` 看着像"画了 5 次
-     * 挺少的"，其实窗口里只有 5 帧。
-     *
-     * ## 命中率的分子分母都是**边界次数**，不是节点数
-     *
-     * 一次命中意味着整棵子树一条 `paint()` 都没跑。把省掉的节点算进分母，会让
-     * "边界放在大树顶上"看起来命中率极低 —— 那是把收益算成了成本。
-     *
-     * @param int $frames 只看最近 N 个绘制帧（`<= 0` = 全窗口）
-     * @param int $limit  节点表最多几行（`0` = 不截断）；`nodesTotal` 永远给真实行数
      * @return array<string, mixed>
+     *
+     * @see PaintQuery::repaints()
      */
     public function repaints(int $frames = 300, int $limit = 10): array
     {
-        $window = $this->recorder->paintCoverage();
-        if (($window['captured'] ?? false) !== true) {
-            return [
-                'captured' => false,
-                'frames' => 0,
-                'hits' => 0,
-                'misses' => 0,
-                'hitRate' => 0.0,
-                'byReason' => [],
-                'nodes' => [],
-                'nodesTotal' => 0,
-                'window' => $window,
-            ];
-        }
+        return $this->paint->repaints($frames, $limit);
+    }
 
-        $ids = $this->recorder->paintFrames();
-        if ($frames > 0 && \count($ids) > $frames) {
-            $ids = \array_slice($ids, -$frames);
-        }
+    /**
+     * 网络请求骨架：请求 → 帧对齐 → 落地节点（不含报文）。
+     *
+     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int}
+     *
+     * @see TrafficQuery::network()
+     */
+    public function network(?int $request = null, int $limit = 50): array
+    {
+        return $this->traffic->network($request, $limit);
+    }
 
-        $hits = 0;
-        $misses = 0;
-        $byReason = [];
-        /** @var array<int, array{node: int, frames: int, misses: int, reason: string}> $agg */
-        $agg = [];
-        foreach ($ids as $id) {
-            $record = $this->recorder->paintFrame($id);
-            if ($record === null) {
-                continue;
-            }
-            $hits += $record->layerHits;
-            $misses += \count($record->misses);
+    /**
+     * 按 requestId 取请求 / 响应报文（脱敏 + 截断，默认不进证据面）。
+     *
+     * @return array<string, mixed>
+     *
+     * @see TrafficQuery::networkBody()
+     */
+    public function networkBody(int $request, string $part = 'both', int $maxBytes = 8 * 1024): array
+    {
+        return $this->traffic->networkBody($request, $part, $maxBytes);
+    }
 
-            foreach ($record->misses as $node => $reason) {
-                $agg[$node] ??= ['node' => $node, 'frames' => 0, 'misses' => 0, 'reason' => ''];
-                ++$agg[$node]['misses'];
-                // 留**最近一次**原因：窗口里原因可能变（先 resized 后 invalidated），
-                // 而"最近一次为什么"才是下一帧要修的那个。
-                $agg[$node]['reason'] = $reason;
-                $byReason[$reason] = ($byReason[$reason] ?? 0) + 1;
-            }
-            foreach ($record->painted as $node) {
-                $agg[$node] ??= ['node' => $node, 'frames' => 0, 'misses' => 0, 'reason' => ''];
-                ++$agg[$node]['frames'];
-            }
-        }
+    /**
+     * 异步任务时间线：提交 / 派发 / 结算帧、状态、耗时与落地节点。
+     *
+     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int, frame: int, captured: bool}
+     *
+     * @see TrafficQuery::async()
+     */
+    public function async(?int $job = null, int $limit = 50): array
+    {
+        return $this->traffic->async($job, $limit);
+    }
 
-        $rows = \array_values($agg);
-        // 三级排序：先按"画过几帧"（每帧都画的最该看），再按"重录几次"（边界反复失效），
-        // 最后按节点号保证输出稳定 —— 否则同一份证据两次查询的行序可能不同。
-        \usort($rows, static fn(array $a, array $b): int => ($b['frames'] <=> $a['frames'])
-            ?: ($b['misses'] <=> $a['misses'])
-            ?: ($a['node'] <=> $b['node']));
-
-        $total = \count($rows);
-        $boundary = $hits + $misses;
-
-        // 路径与类型在**裁完之后**才查：`pathOf()` 要沿父链拼一串，4000 个节点全查
-        // 一遍而只显示 10 行，是把代价花在没人看的行上。排序只用标量，所以裁在前。
-        $shown = $limit > 0 ? \array_slice($rows, 0, $limit) : $rows;
-        foreach ($shown as $i => $row) {
-            $shown[$i] = [
-                'node' => $row['node'],
-                'path' => $this->recorder->pathOf($row['node']),
-                'type' => $this->recorder->typeOf($row['node']),
-                'frames' => $row['frames'],
-                'misses' => $row['misses'],
-                'reason' => $row['reason'] === '' ? null : $row['reason'],
-            ];
-        }
-
-        return [
-            'captured' => true,
-            'frames' => \count($ids),
-            'hits' => $hits,
-            'misses' => $misses,
-            'hitRate' => $boundary === 0 ? 0.0 : $hits / $boundary,
-            'byReason' => $byReason,
-            'nodes' => $shown,
-            'nodesTotal' => $total,
-            'window' => $window,
-        ];
+    /**
+     * 结构树：**第 N 帧**的树（谁在、谁已消失、谁这一帧重建了）。
+     *
+     * @return array<string, mixed>
+     *
+     * @see StructureQuery::tree()
+     */
+    public function tree(int $root = 0, int $depth = 6, int $limit = 200, ?int $frame = null): array
+    {
+        return $this->structure->tree($root, $depth, $limit, $frame);
     }
 
     /**
@@ -1073,6 +281,11 @@ final class Query
      * 三种拼法。`reason` 是分类（unknown-node / frame-out-of-window /
      * no-render-box / no-landed-request），不是错误全文。
      *
+     * ## 为什么它留在这里而不是进某个域
+     *
+     * 它同时认识因果、几何、网络三个域 —— 落进任何一个，"另外两个"就成了那个域的
+     * 依赖，依赖方向立刻成环。组合者住在门面上，三个域彼此仍然互不认识。
+     *
      * @return array<string, mixed>
      */
     public function align(int $node, int $frame): array
@@ -1095,39 +308,23 @@ final class Query
                 'found' => false,
                 'reason' => $reason,
                 'causal' => ['found' => false, 'reason' => $reason],
-                'geometry' => $this->geometryMiss($node, $frame, $win['geometry']),
+                'geometry' => $this->geometry->miss($node, $frame, $win['geometry']),
                 'network' => ['found' => false, 'reason' => $reason, 'window' => $win['network']],
                 'windows' => $win,
             ];
         }
 
         // ---- 因果：显式帧，不走 why 的"最近重建帧"缺省。
-        $frameRecord = $this->recorder->frame($frame);
-        if ($frameRecord === null) {
-            $causal = ['found' => false, 'reason' => 'frame-out-of-window'];
-        } else {
-            $causes = [];
-            foreach ($frameRecord->causes as $edge) {
-                if ($edge->toId === $node) {
-                    $causes[] = $edge->toArray();
-                }
-            }
-            $causal = [
-                'found' => true,
-                'frame' => $frameRecord->id,
-                'rebuilt' => $frameRecord->rebuilt($node),
-                'causes' => $causes,
-            ];
-        }
+        $causal = $this->causal->forNode($node, $frame);
 
         // ---- 几何：记录自带实际帧号，stale 由它判定，不靠调用方猜。
-        // 判窗口与查记录都走 `geometryLookup()`：与另外三个查询同一份语义。
-        $hit = $this->geometryLookup($node, $frame, $win['geometry']);
+        // 判窗口与查记录都走 GeometryQuery::lookup()：与另外三个查询同一份语义。
+        $hit = $this->geometry->lookup($node, $frame, $win['geometry']);
         $geo = $hit['record'];
         if ($geo === null) {
             $geometry = $hit['reason'] === 'frame-out-of-window'
-                ? $this->frameOutOfWindow($node, $frame, $win['geometry'])
-                : $this->geometryMiss($node, $frame, $win['geometry']);
+                ? $this->geometry->outOfWindow($node, $frame, $win['geometry'])
+                : $this->geometry->miss($node, $frame, $win['geometry']);
         } else {
             $geometry = [
                 'found' => true,
@@ -1170,682 +367,6 @@ final class Query
             'geometry' => $geometry,
             'network' => $network,
             'windows' => $win,
-        ];
-    }
-
-    /**
-     * 跨帧聚合**根因**：同一调用点写同一 State 的次数。
-     *
-     * 只算 `kind=state`。`parent` / `unknown` 是传播与兜底，算进来会让排名失真。
-     *
-     * @return list<array<string, mixed>>
-     */
-    public function hotspots(int $frames = 300, int $limit = 10): array
-    {
-        $agg = [];
-        foreach ($this->window($frames) as $frame) {
-            $shape = $this->shapeOf($frame);
-            /** @var array<int, int> $subtree */
-            $subtree = $shape['subtree'];
-            foreach ($frame->causes as $edge) {
-                if ($edge->kind !== 'state') {
-                    continue; // 传播与兜底不是根因：算进来会让排名全是下游节点
-                }
-                $key = $edge->site . "\0" . $edge->detail;
-                if (!isset($agg[$key])) {
-                    $agg[$key] = [
-                        'site' => $edge->site,
-                        'detail' => $edge->detail,
-                        'writes' => 0,
-                        'frames' => [],
-                        'nodes' => [],
-                        'subtree' => 0,
-                    ];
-                }
-                ++$agg[$key]['writes'];
-                $agg[$key]['frames'][$frame->id] = true;
-                $agg[$key]['nodes'][$edge->toId] = true;
-                // 同一写入点多帧出现时取**最大单帧波及**：与"写了多少次"是两个问题，
-                // 合并成合计会把"偶尔一次打到整树"和"每帧动 3 个"算成同一档。
-                $agg[$key]['subtree'] = \max((int) $agg[$key]['subtree'], $subtree[$edge->toId] ?? 1);
-            }
-        }
-
-        return $this->rank(
-            \array_values(\array_map(
-                static fn(array $row): array => [
-                    'site' => $row['site'],
-                    'detail' => $row['detail'],
-                    'writes' => $row['writes'],
-                    'frames' => \count($row['frames']),
-                    'nodes' => \count($row['nodes']),
-                    'subtree' => $row['subtree'],
-                ],
-                $agg,
-            )),
-            'writes',
-            'site',
-            $limit,
-        );
-    }
-
-    /**
-     * 跨帧聚合**节点**：谁被重建得最多，以及其中多少是自身写入、多少是父传播。
-     *
-     * @return list<array<string, mixed>>
-     */
-    public function nodes(int $frames = 300, int $limit = 10): array
-    {
-        $agg = [];
-        foreach ($this->window($frames) as $frame) {
-            $shape = $this->shapeOf($frame);
-            /** @var array<int, int> $subtree */
-            $subtree = $shape['subtree'];
-            foreach ($frame->rebuilt as $id) {
-                $agg[$id] ??= [
-                    'id' => $id,
-                    'path' => $this->recorder->pathOf($id),
-                    'rebuilds' => 0,
-                    'self' => 0,
-                    'inherited' => 0,
-                    'subtree' => 0,
-                    'first' => $frame->id,
-                    'last' => $frame->id,
-                ];
-                ++$agg[$id]['rebuilds'];
-                $agg[$id]['last'] = $frame->id;
-                $agg[$id]['subtree'] = \max((int) $agg[$id]['subtree'], $subtree[$id] ?? 1);
-            }
-            foreach ($frame->causes as $edge) {
-                $id = $edge->toId;
-                if (!isset($agg[$id])) {
-                    continue;
-                }
-                if ($edge->kind === 'state') {
-                    ++$agg[$id]['self'];
-                } else {
-                    ++$agg[$id]['inherited'];
-                }
-            }
-        }
-
-        $rows = \array_values($agg);
-        // 排序三级：次数（跨帧才有区分度）→ 覆盖子树（单帧里"谁牵动得多"）→ 路径（稳定）。
-        // 只按次数排会在"每节点各 1 次"的动作帧里退化成路径先序，把真正的分叉点埋掉。
-        \usort($rows, static fn(array $a, array $b): int => ($b['rebuilds'] <=> $a['rebuilds'])
-            ?: ((int) $b['subtree'] <=> (int) $a['subtree'])
-            ?: \strcmp((string) $a['path'], (string) $b['path']));
-
-        return $limit > 0 ? \array_slice($rows, 0, $limit) : $rows;
-    }
-
-    /**
-     * 结构树：**第 N 帧**的树（A64 / A67）。
-     *
-     * ## 这不是"节点注册表的当前投影"
-     *
-     * 早先它是。`--frame=40` 给的是「现在所有节点」+「几何对齐到 40 帧」：第 40 帧
-     * 之后才出生的节点照样列出来（几何一栏空着），第 40 帧还在、之后被卸载的节点
-     * 一个都看不到。于是答案既不是那会儿的也不是现在的 —— 是两者的交集，且没有
-     * 任何一栏说自己不可信。这与 A64 禁止的「拿没采到冒充不存在」是同一个错，
-     * 只是方向相反：**拿现在的冒充当时的**。
-     *
-     * 现在节点能否出现，由它自己的生命周期决定（{@see Recorder::nodeIndex()} 的
-     * `f` 与 {@see Recorder::goneNodes()}）：
-     *
-     * - `f > frame` ⇒ 那时还没出生，不列；
-     * - `gone <= frame` ⇒ 那时已离开树，不列；
-     * - 已回收节点（`evicted`）在 `f <= frame < g` 时**照样列**，标 `evicted` ——
-     *   "这个按钮第 40 帧还在、第 60 帧没了"正是回放最想回答的问题，只留活节点
-     *   等于把答案删了。
-     *
-     * 缺 `f`（旧证据包）或关了几何采集（没人写 `gone`）时**不猜**：节点仍然列出
-     * （无法证明它那时不存在），但 `coverage.lifecycle.complete` 为 `false`，
-     * 并给出条数。读者据此知道"这张图有一部分是保守估计"。
-     *
-     * ## 谁重建了这一帧
-     *
-     * `rebuilt` 取自该帧的 `FrameRecord->rebuilt`，不是从"最近见到帧 == 目标帧"
-     * 倒推。两者在"这一帧没建、但上一帧刚建过"时正好相撞：`s` 停在上一帧，
-     * 倒推会说它没重建（碰巧对），而"`s` 恰好等于目标帧"又会说它建了（其实是
-     * 采样到它而已）。该帧记录不在窗口里时给 `null` —— 未知，不是 false。
-     *
-     * 行按**先序扁平**给：树控件按 `depth` 缩进即可，不必在前端再走一遍父子链。
-     * 兄弟顺序取注册表的首次发现顺序（几何采样本来就是先序）；它不是布局顺序的
-     * 承诺，只保证同一份证据每次展开顺序相同。
-     *
-     * 三种"父不可用"必须分开：`unresolved` 是父号还没解析，`orphan` 是父已被回收，
-     * `cycle` 是父链成环。它们都挂到根上而不是静默丢 —— 树少一块而覆盖率不说，
-     * 读者会以为自己看全了。
-     *
-     * @return array<string, mixed>
-     */
-    public function tree(int $root = 0, int $depth = 6, int $limit = 200, ?int $frame = null): array
-    {
-        $depth = \max(0, \min($depth, 32));
-        $limit = \max(0, \min($limit, 2000));
-        $window = $this->recorder->geometryCoverage();
-        $lastFrame = $this->recorder->frameId();
-        // ★ 结构与几何是**两个窗口**：帧 600、几何 60，而且几何按"有变化才落记录"
-        //   跳帧。一个默认值不可能同时落在两个窗口里：
-        //   · 结构默认取帧窗口最新 —— 取几何最新会让回放停在几十帧前的旧树；
-        //   · 几何默认取几何窗口最新 —— 取帧最新会立刻"窗口外"，注解全空。
-        //   显式 `--frame=N` 时两者都听它的（那是用户点名要的那一帧，两边必须一致）。
-        $frameId = $frame ?? ($lastFrame > 0 ? $lastFrame : (int) ($window['to'] ?? 0));
-        if ($frameId <= 0) {
-            $frameId = $lastFrame;
-        }
-        // 几何帧夹到它自己的窗口里。超过 `to` 不是"这一帧没有几何"，是"这一帧之后
-        // 几何没再变"——那份几何此刻仍然生效，`boxes()` 会把它标成 `stale` 并回显
-        // `effective`。但**不越过 `to` 去查**：`geometryRows()` 的空表还承担着
-        // "这一帧真的采过吗"的语义（快照锚点靠它选）。
-        $geoTo = (int) ($window['to'] ?? 0);
-        $geoFrame = $frame ?? ($geoTo > 0 ? $geoTo : $frameId);
-        if ($geoTo > 0 && $geoFrame > $geoTo) {
-            $geoFrame = $geoTo;
-        }
-
-        // 未来帧不给"空树"：空树看起来像"那时应用还没建"，而真相是"这一帧根本没发生"。
-        // 与 `geometryAt()` 拒绝 clamp 到窗口末端是同一个理由。
-        // `lastFrame === 0`（这份证据一帧都没记录）时不判：没有时间轴就没有"未来"，
-        // 让它退化成纯结构投影，并由 `lifecycle.complete = false` 说明不可回放。
-        if ($lastFrame > 0 && $frameId > $lastFrame) {
-            return [
-                'frame' => $frameId,
-                'root' => $root,
-                'rows' => [],
-                'coverage' => [
-                    'active' => \count($this->recorder->nodeIndex()),
-                    'evicted' => 0,
-                    'evictedTotal' => \count($this->recorder->evictedNodes()),
-                    'roots' => 0, 'boxless' => 0, 'unresolved' => 0, 'orphan' => 0,
-                    'cycle' => 0, 'shown' => 0, 'omittedDepth' => 0, 'omittedLimit' => 0,
-                    'geometryFrame' => 0, 'geometryEffective' => 0,
-                    'geometryStale' => false, 'geometryReason' => '',
-                    'lifecycle' => ['goneKnown' => false, 'complete' => false, 'unknownBirth' => 0, 'unknownGone' => 0, 'recycled' => 0, 'oldestBirth' => 0],
-                ],
-                'reason' => 'frame-not-recorded',
-            ];
-        }
-
-        // 几何只查一次，按节点贴到结构上。逐行调 boxModel() 会把一次查询变成 N 次，
-        // 远端会话尤其明显；而树要的只是"有没有盒、多大"，不需要完整盒模型。
-        $boxes = $this->boxes($geoFrame);
-        $boxByNode = [];
-        foreach ($boxes['rows'] ?? [] as $row) {
-            $boxByNode[(int) $row['node']] = $row;
-        }
-
-        [$nodes, $lifecycle] = $this->replayNodes($lastFrame > 0 ? $frameId : null);
-        $boxless = [];
-        foreach ($this->recorder->boxlessNodes() as $id) {
-            $boxless[(int) $id] = true;
-        }
-
-        // 该帧重建了谁：只有帧记录在窗口里才给结论。
-        $record = $this->recorder->frame($frameId);
-        $rebuiltSet = null;
-        if ($record !== null) {
-            $rebuiltSet = [];
-            foreach ($record->rebuilt as $one) {
-                $rebuiltSet[(int) $one] = true;
-            }
-        }
-
-        $active = \count($nodes);
-        $evicted = $this->recorder->evictedNodes();
-        $coverage = static fn(): array => [
-            // `active` 是**这一帧的节点数**（含当时还活着的回收节点），`evicted` 是
-            // 其中已回收的条数，`evictedTotal` 才是回收表总量。三个数分开，读者才能
-            // 把"树里 361 个"与"回收表 12 条"对上；混成一个就永远差一截且说不清。
-            'active' => $active,
-            'evicted' => (int) ($lifecycle['recycled'] ?? 0),
-            'evictedTotal' => \count($evicted),
-            'roots' => 0,
-            'boxless' => \count($boxless),
-            'unresolved' => 0,
-            'orphan' => 0,
-            'cycle' => 0,
-            'shown' => 0,
-            'omittedDepth' => 0,
-            'omittedLimit' => 0,
-            'geometryFrame' => (int) ($boxes['frame'] ?? 0),
-            'geometryEffective' => (int) ($boxes['effective'] ?? 0),
-            'geometryStale' => ($boxes['stale'] ?? false) === true,
-            'geometryReason' => (string) ($boxes['reason'] ?? ''),
-            'lifecycle' => $lifecycle,
-        ];
-
-        if ($root > 0 && !isset($nodes[$root])) {
-            // 三件不同的事，答案必须分开：那时还没出生 / 那时已经不在 / 从来没有这个号。
-            // 合成一个"查不到"会让回放最常问的"它什么时候没的"无从回答。
-            $reason = 'unknown-node';
-            if (isset($evicted[$root])) {
-                $born = (int) ($evicted[$root]['f'] ?? 0);
-                $died = (int) ($evicted[$root]['g'] ?? 0);
-                $reason = $born > $frameId ? 'node-not-born' : 'node-evicted';
-                if ($died > 0 && $died <= $frameId) {
-                    $reason = 'node-gone';
-                }
-            } else {
-                $known = $this->recorder->nodeIndex()[$root] ?? null;
-                if ($known !== null && (int) ($known['f'] ?? 0) > $frameId) {
-                    $reason = 'node-not-born';
-                }
-            }
-
-            return [
-                'frame' => $frameId,
-                'root' => $root,
-                'rows' => [],
-                'coverage' => $coverage(),
-                'reason' => $reason,
-            ];
-        }
-
-        /** @var array<int, list<int>> $children */
-        $children = [];
-        /** @var list<int> $roots */
-        $roots = [];
-        /** @var array<int, string> $flags */
-        $flags = [];
-        $unresolved = 0;
-        $orphan = 0;
-        foreach ($nodes as $key => $meta) {
-            $id = (int) $key;
-            $parent = isset($meta['p']) ? (int) $meta['p'] : -2;
-            if ($parent === -2) {
-                ++$unresolved;
-                $roots[] = $id;
-                $flags[$id] = 'unresolved';
-                continue;
-            }
-            if ($parent === -1 || !isset($nodes[$parent])) {
-                if ($parent !== -1) {
-                    ++$orphan;
-                }
-                $roots[] = $id;
-                $flags[$id] = $parent === -1 ? 'root' : 'orphan';
-                continue;
-            }
-            $children[$parent][] = $id;
-            $flags[$id] = 'normal';
-        }
-
-        if ($root > 0) {
-            $roots = [$root];
-            $flags[$root] = 'root';
-        }
-
-        // 先算可达，再把不可达的环单独挂到根。只从 invalid-parent 根出发会让整个环
-        // 消失：每个节点都有"活跃父"，谁都不是根，读者却只看到一棵看着完整的树。
-        $reachable = [];
-        $stack = $roots;
-        while ($stack !== []) {
-            $id = (int) \array_pop($stack);
-            if (isset($reachable[$id])) {
-                continue;
-            }
-            $reachable[$id] = true;
-            foreach ($children[$id] ?? [] as $child) {
-                $stack[] = $child;
-            }
-        }
-        $cycles = [];
-        if ($root === 0) {
-            foreach ($nodes as $key => $_) {
-                if (!isset($reachable[(int) $key])) {
-                    $cycles[] = (int) $key;
-                    $flags[(int) $key] = 'cycle';
-                }
-            }
-        }
-
-        /** @var list<array<string, mixed>> $rows */
-        $rows = [];
-        $emitted = 0;
-        $omittedDepth = 0;
-        $omittedLimit = 0;
-        $seen = [];
-        $stack = [];
-        foreach (\array_reverse(\array_merge($roots, $cycles)) as $id) {
-            $stack[] = [(int) $id, 0];
-        }
-        while ($stack !== []) {
-            /** @var array{0: int, 1: int} $task */
-            $task = (array) \array_pop($stack);
-            $id = $task[0];
-            $level = $task[1];
-            if (isset($seen[$id])) {
-                continue;
-            }
-            $seen[$id] = true;
-
-            $kids = $children[$id] ?? [];
-            for ($i = \count($kids) - 1; $i >= 0; --$i) {
-                $stack[] = [$kids[$i], $level + 1];
-            }
-            if ($level > $depth) {
-                ++$omittedDepth;
-                continue;
-            }
-            if ($limit > 0 && $emitted >= $limit) {
-                ++$omittedLimit;
-                continue;
-            }
-
-            $meta = $nodes[$id];
-            $lastSeen = (int) ($meta['s'] ?? 0);
-            $geo = $boxByNode[$id] ?? null;
-            $rows[] = [
-                'id' => $id,
-                'parent' => isset($meta['p']) ? (int) $meta['p'] : -2,
-                'type' => (string) ($meta['c'] ?? ''),
-                'path' => $this->recorder->pathOf($id),
-                'depth' => $level,
-                'children' => \count($kids),
-                'boxed' => !isset($boxless[$id]),
-                'flex' => ($meta['x'] ?? false) === true,
-                'lastSeen' => $lastSeen,
-                // `age` 是"距它上一次被重建过了几帧"。回放时 `lastSeen` 可能晚于目标帧
-                // （它在这一帧之后又重建过），相减为负 —— 夹到 0 而不是给个负数帧龄。
-                'age' => $lastSeen > 0 ? \max(0, $frameId - $lastSeen) : 0,
-                'stale' => $lastSeen > 0 && $frameId > $lastSeen,
-                'flag' => $flags[$id] ?? 'normal',
-                // 生命周期三件：出生帧、离开帧、这一帧有没有重建。
-                // `bornAt` 为 `null` = 记录里没有（旧包），不是"第 0 帧出生"。
-                'bornAt' => (int) ($meta['f'] ?? 0) > 0 ? (int) $meta['f'] : null,
-                'goneAt' => (int) ($meta['g'] ?? 0) > 0 ? (int) $meta['g'] : null,
-                'rebuilt' => $rebuiltSet === null ? null : isset($rebuiltSet[$id]),
-                // 现在不在注册表里、但回放到这一帧时还活着 —— 画出来并标明。
-                'evicted' => ($meta['e'] ?? false) === true,
-                'geometry' => $geo === null
-                    ? null
-                    : ['size' => $geo['size'] ?? [], 'rect' => $geo['rect'] ?? []],
-            ];
-            ++$emitted;
-        }
-
-        $cov = $coverage();
-        $cov['roots'] = \count($roots);
-        $cov['unresolved'] = $unresolved;
-        $cov['orphan'] = $orphan;
-        $cov['cycle'] = \count($cycles);
-        $cov['shown'] = \count($rows);
-        $cov['omittedDepth'] = $omittedDepth;
-        $cov['omittedLimit'] = $omittedLimit;
-
-        return [
-            'frame' => $frameId,
-            'root' => $root,
-            'rows' => $rows,
-            'coverage' => $cov,
-        ];
-    }
-
-    /**
-     * 第 `$at` 帧的节点表：那时活着的，加上"那时还在、现在已回收"的。
-     *
-     * `$at === null` 表示**这份证据没有时间轴**（一帧记录都没有）—— 不过滤、原样给
-     * 注册表，并让 `complete = false`。不拒绝查询（否则只带节点表的夹具与旧工具全废），
-     * 也不假装这是历史树。
-     *
-     * 两个方向都要过滤，缺一个就会造出既不是当时也不是现在的树：
-     * `f > $at` 是"还没出生"，`gone <= $at` 是"已经离开"。判据各有一条。
-     *
-     * 回收节点的父与类型在 {@see Recorder::evictedNodes()} 里：它们在注册表里已被
-     * 删掉，但回放的主角恰恰是"后来消失了的东西"，没有父与类型就画不出它在哪儿。
-     *
-     * ## 不猜的两处
-     *
-     * - 缺 `f`（旧证据包）：无法证明"那时它不存在"，所以**保留**，计入 `unknownBirth`。
-     * - 缺 `g` 且几何采集关着：没人写"离开帧"，所以**保留到帧末**，计入 `unknownGone`。
-     *
-     * 两处都让 `complete = false`。宁可交一张标着"部分靠估计"的图，也不交一张
-     * 看起来完整、实际删掉了半个应用的图。
-     *
-     * @return array{0: array<int, array<string, mixed>>, 1: array<string, mixed>}
-     */
-    private function replayNodes(?int $at): array
-    {
-        $gone = $this->recorder->goneNodes();
-        $evicted = $this->recorder->evictedNodes();
-
-        /** @var array<int, array<string, mixed>> $nodes */
-        $nodes = [];
-        $unknownBirth = 0;
-        $oldestBirth = 0;
-        foreach ($this->recorder->nodeIndex() as $id => $meta) {
-            $id = (int) $id;
-            $born = (int) ($meta['f'] ?? 0);
-            if ($born === 0) {
-                ++$unknownBirth;
-            } else {
-                $oldestBirth = $oldestBirth === 0 ? $born : \min($oldestBirth, $born);
-                if ($at !== null && $born > $at) {
-                    continue;
-                }
-            }
-            $died = (int) ($gone[$id] ?? 0);
-            if ($at !== null && $died > 0 && $died <= $at) {
-                continue;
-            }
-            $nodes[$id] = [
-                'p' => (int) ($meta['p'] ?? -2),
-                'c' => (string) ($meta['c'] ?? ''),
-                'x' => ($meta['x'] ?? false) === true,
-                's' => (int) ($meta['s'] ?? 0),
-                'f' => $born,
-                'g' => $died,
-                'e' => false,
-            ];
-        }
-
-        $recycled = 0;
-        $unknownGone = 0;
-        foreach ($evicted as $id => $meta) {
-            $id = (int) $id;
-            $born = (int) ($meta['f'] ?? 0);
-            $died = (int) ($meta['g'] ?? 0);
-            if ($born === 0) {
-                ++$unknownBirth;
-            } elseif ($at !== null && $born > $at) {
-                continue;
-            }
-            if ($at !== null && $died > 0 && $died <= $at) {
-                continue;
-            }
-            if ($died === 0) {
-                ++$unknownGone;
-            }
-            // 活节点那条路径已经写过它就别覆盖：两边都有时以注册表为准（它更新）。
-            if (isset($nodes[$id])) {
-                continue;
-            }
-            $nodes[$id] = [
-                'p' => (int) ($meta['p'] ?? -2),
-                'c' => (string) ($meta['c'] ?? ''),
-                'x' => ($meta['x'] ?? false) === true,
-                's' => (int) ($meta['s'] ?? 0),
-                'f' => $born,
-                'g' => $died,
-                'e' => true,
-            ];
-            ++$recycled;
-        }
-
-        return [$nodes, [
-            // `goneKnown` 单列：几何采集关着时 `goneAt` 从来没人写，"没有节点离开过"
-            // 与"根本不知道谁离开过"在空表上看不出来 —— 而后者会让回放把整棵已经
-            // 卸载的树一直画到帧末。
-            'goneKnown' => $gone !== [] || $this->recorder->options()->geometry() !== GeometryCapture::Off,
-            // 没有时间轴（一帧都没记录）时整张表都不可判：不是"完整"，是"无帧可回放"。
-            'complete' => $at !== null
-                && $unknownBirth === 0
-                && $unknownGone === 0
-                && ($gone !== [] || $this->recorder->options()->geometry() !== GeometryCapture::Off),
-            'unknownBirth' => $unknownBirth,
-            'unknownGone' => $unknownGone,
-            'recycled' => $recycled,
-            'oldestBirth' => $oldestBirth,
-        ]];
-    }
-
-    /**
-     * 网络请求骨架：请求 → 帧对齐 → 落地节点，与帧因果共用同一条时间轴。
-     *
-     * ## 为什么是骨架而不是报文
-     *
-     * 抓包工具回答"发了什么、回了什么"，这里回答的是它们给不了的第三层：
-     * 响应落在第几帧、让谁重建了。记 body / header 既撑爆证据包又碰隐私，而且
-     * 抓包做得更好 —— 证据的定位是定位，不是副本。
-     *
-     * ## 窗口自报是硬义务
-     *
-     * 网络有独立的 500 条窗口（帧是 600）。查不到时不能让读者以为是"那段时间没
-     * 发请求"：要么请求被裁掉了，要么录制器当时没装。所以 `window` 随答案一起给。
-     *
-     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int}
-     */
-    public function network(?int $request = null, int $limit = 50): array
-    {
-        $window = $this->recorder->networkCoverage();
-        if ($request !== null) {
-            $record = $this->recorder->networkAt($request);
-            if ($record === null) {
-                return [
-                    'rows' => [],
-                    'window' => $window,
-                    'total' => 0,
-                    'miss' => $this->networkMissReason($request, $window),
-                ];
-            }
-
-            return ['rows' => [$record->toArray()], 'window' => $window, 'total' => 1];
-        }
-
-        $rows = \array_map(
-            static fn(NetworkRecord $r): array => $r->toArray(),
-            $this->recorder->networkRows(),
-        );
-        $total = \count($rows);
-
-        return [
-            // 取**最新**的 N 条：查网络面板的人要看刚发的请求。早先 `array_slice($rows, 0, …)`
-            // 取的是最旧的 —— 窗口满 500 条时，列表里全是几分钟前的东西。
-            'rows' => $limit > 0 ? \array_slice($rows, -$limit) : $rows,
-            'window' => $window,
-            'total' => $total,
-        ];
-    }
-
-    /**
-     * 按 requestId 取报文（骨架的可选附件）。
-     *
-     * ## 为什么不并进 network()
-     *
-     * 报文默认不出现——体积、隐私、协议 8MB 上限三条理由。把它做成独立查询，
-     * `network()` 保持默认轻量可导出；要看 body 时显式问一次，还带窗口自报。
-     *
-     * ## 截断是分两层的
-     * 存档时单条最多 `MAX_BYTES`（64KB），查询时再按 `$maxBytes` 截一次——
-     * 后者是协议护栏，防止"一条 64KB × 50 条"撑爆单条消息。两层都报截断，
-     * 读者知道看到的是片段而不是全部。
-     *
-     * @return array<string, mixed>
-     */
-    public function networkBody(int $request, string $part = 'both', int $maxBytes = 8 * 1024): array
-    {
-        $window = $this->recorder->bodyCoverage();
-        $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both';
-        $maxBytes = \max(0, $maxBytes);
-        if (($window['captured'] ?? false) !== true) {
-            // 未开启报文预算时，空窗口不是"抓了但为空"：读者必须能分辨这两种事实。
-            return [
-                'request' => $request,
-                'found' => false,
-                'miss' => 'bodies-not-captured',
-                'window' => $window,
-            ];
-        }
-        $record = $this->recorder->bodyAt($request);
-        if ($record === null) {
-            $skeleton = $this->recorder->networkAt($request);
-
-            return [
-                'request' => $request,
-                'found' => false,
-                // 骨架在 ⇒ 报文只是没存/被裁（`body-not-retained`）；骨架不在 ⇒
-                // 连请求本身都查不到，这时才用**网络**窗口判"窗口外还是没这条"。
-                // 用报文窗口判会错：报文窗口(200)比网络窗口(500)小，网络里还在的
-                // 请求会被说成"窗口外"。
-                'miss' => $skeleton === null
-                    ? $this->networkMissReason($request, $this->recorder->networkCoverage())
-                    : 'body-not-retained',
-                'window' => $window,
-            ];
-        }
-
-        return ['found' => true] + $record->select($part, $maxBytes) + ['window' => $window];
-    }
-
-    /**
-     * 异步任务时间线：任务 → 派发 → 结算 → 落地节点，与帧因果共用同一条时间轴。
-     *
-     * ## 这里记录的是"后端调度过的工作"
-     *
-     * `AsyncScope::sleep()` 与裸 `Future` 是等待点，不是 job。把它们列进来会让
-     * 队列深度失去意义 —— 排队等 worker 与 await 一个定时器根本不是一回事。
-     *
-     * ## `captured=false` 必须显式回
-     *
-     * 异步域默认关。空 `rows` 既可能是"没有任务"，也可能是"没装这个域"；
-     * 两者下一步动作相反，所以窗口自报 `captured`，单任务未命中也分开说。
-     *
-     * @return array{rows: list<array<string, mixed>>, window: array<string, mixed>, total: int, frame: int, captured: bool}
-     */
-    public function async(?int $job = null, int $limit = 50): array
-    {
-        $window = $this->recorder->asyncCoverage();
-        $captured = ($window['captured'] ?? false) === true;
-        // 挂起任务的 pendingFrames 要有一个"问的这一刻"，不能拿 0 当现在。
-        $frame = $this->recorder->frameId() > 0 ? $this->recorder->frameId() : $this->recorder->lastFrameId();
-
-        if ($job !== null) {
-            $record = $this->recorder->asyncAt($job);
-            if ($record === null) {
-                return [
-                    'rows' => [],
-                    'window' => $window,
-                    'total' => 0,
-                    'frame' => $frame,
-                    'captured' => $captured,
-                    'miss' => $this->asyncMissReason($job, $window),
-                ];
-            }
-
-            return [
-                'rows' => [$record->select($frame)],
-                'window' => $window,
-                'total' => 1,
-                'frame' => $frame,
-                'captured' => $captured,
-            ];
-        }
-
-        $rows = \array_map(
-            static fn(AsyncRecord $r): array => $r->select($frame),
-            $this->recorder->asyncRows(),
-        );
-        $total = \count($rows);
-
-        return [
-            // 取最新的 N 条：看异步面板的人要先看到刚提交的工作。
-            'rows' => $limit > 0 ? \array_slice($rows, -$limit) : $rows,
-            'window' => $window,
-            'total' => $total,
-            'frame' => $frame,
-            'captured' => $captured,
         ];
     }
 
@@ -1994,419 +515,66 @@ final class Query
         ];
     }
 
-    // ------------------------------------------------------------------ 内部
-
     /**
-     * 请求查不到时是"窗口外"还是"根本没有这条"。
+     * 按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）。
      *
-     * ★ 两个查询各写一遍必然漂：早先 `network()` 只比 `from`（空窗口 `from=0`，
-     *   任何 id 都大于它 ⇒ 一律报 `unknown-request`），`networkBody()` 先看
-     *   `requests === 0`。同一个请求，两个查询给两种答案。
-     *
-     * @param array<string, mixed> $window 需含 `requests` 与 `from`
-     */
-    private function networkMissReason(int $request, array $window): string
-    {
-        return (int) ($window['requests'] ?? 0) === 0 || $request < (int) ($window['from'] ?? 0)
-            ? 'outside-network-window'
-            : 'unknown-request';
-    }
-
-    /** @param array<string, mixed> $window */
-    private function asyncMissReason(int $job, array $window): string
-    {
-        if (($window['captured'] ?? false) !== true) {
-            return 'async-not-captured';
-        }
-
-        return (int) ($window['jobs'] ?? 0) === 0 || $job < (int) ($window['from'] ?? 0)
-            ? 'outside-async-window'
-            : 'unknown-job';
-    }
-
-    /**
-     * 几何查证的**唯一入口**：先判帧在不在窗口内，再查记录。
-     *
-     * ★ 为什么必须收成一处：`geometryAt()` 的"往前找最近一次"只对**窗口内**成立。
-     *   四个查询各判一遍窗口，实际上只会修到其中几个 —— 早先只有 `align()` 判了，
-     *   `boxModel` / `boxes` / `constraints` 照样把窗口末端的旧几何当成目标帧的，
-     *   于是"查一个根本没采样过的帧"返回 `found=true`。这类答案自洽、可读、全错。
-     *
-     * @param array<string, mixed>|null $window 已知窗口时传进来，省一次遍历
-     * @return array{record: ?GeometryRecord, window: array<string, mixed>, reason: ?string}
-     *   `reason` 非 null = 帧不在窗口，"连有没有这个盒"都回答不了。
-     */
-    private function geometryLookup(int $node, int $frame, ?array $window = null): array
-    {
-        $window ??= $this->recorder->geometryCoverage();
-        $from = (int) ($window['from'] ?? 0);
-        $to = (int) ($window['to'] ?? 0);
-        if ($frame < $from || $frame > $to) {
-            return ['record' => null, 'window' => $window, 'reason' => 'frame-out-of-window'];
-        }
-
-        return ['record' => $this->recorder->geometryAt($frame, $node), 'window' => $window, 'reason' => null];
-    }
-
-    /**
-     * 帧号在窗口外：与"窗口内但没有这个盒"是两件事，不能混。
-     *
-     * @param array<string, mixed> $window
+     * @param list<\Drift\Widget\Element> $roots
      * @return array<string, mixed>
+     *
+     * @see LiveQuery::props()
      */
-    private function frameOutOfWindow(int $node, int $frame, array $window): array
+    public function props(int $node, array $roots, int $maxDepth = 3, int $maxFields = 120): array
     {
-        return [
-            'found' => false,
-            'node' => $node,
-            'frame' => $frame,
-            'reason' => 'frame-out-of-window',
-            'window' => $window,
-        ];
+        return $this->live->props($node, $roots, $maxDepth, $maxFields);
     }
 
     /**
-     * 几何查不到的三种原因必须分开说。
+     * 进程内存与活树对象存活跨度（dev 内省，WeakMap 台账，不是证据、不进包）。
      *
-     * 复合控件没有自己的 RenderBox，那是**永久事实**；窗口外是**暂时事实**（换个帧号
-     * 可能就有）；节点不存在是**地址错了**。三者混成一句"没找到"，读者会把第一种
-     * 当成第二种，一直等一条永远不会出现的记录。
-     *
-     * @param array<string, mixed> $window
+     * @param list<\Drift\Widget\Element> $roots
      * @return array<string, mixed>
+     *
+     * @see LiveQuery::memory()
      */
-    private function geometryMiss(int $node, int $frame, array $window): array
+    public function memory(array $roots, int $limit = 40): array
     {
-        $boxless = $this->recorder->isBoxless($node);
-        $out = [
-            'found' => false,
-            'node' => $node,
-            'frame' => $frame,
-            'reason' => $boxless
-                ? 'no-render-box'
-                : match ($this->recorder->nodeStatus($node)) {
-                    'evicted' => 'node-evicted',
-                    'unknown' => 'unknown-node',
-                    default => 'outside-geometry-window',
-                },
-            'window' => $window,
-        ];
-
-        if ($boxless) {
-            $child = $this->recorder->firstBoxedChild($node);
-            $out['suggest'] = $child === null
-                ? '这个节点是复合节点，没有自己的盒；往下找有盒的后代'
-                : \sprintf('查有盒的子节点 %d（%s）', $child, $this->recorder->typeOf($child));
-        }
-
-        return $out;
+        return $this->live->memory($roots, $limit);
     }
 
     /**
-     * 最近 N 帧（`$frames <= 0` 表示全窗口），按帧号升序。
+     * 把 site（`file:line`）解释成方法定义位置（dev 反射，即时内省、不是证据）。
      *
-     * @return array<int, FrameRecord>
-     */
-    private function window(int $frames): array
-    {
-        $all = $this->recorder->frames();
-        if ($frames <= 0 || \count($all) <= $frames) {
-            return $all;
-        }
-
-        return \array_slice($all, -$frames, null, true);
-    }
-
-    /**
-     * 帧的森林骨架，按帧号缓存。
-     *
-     * `roots` 是"父没有重建"的节点 ⇒ 森林不重叠，子树规模之和等于重建数。
-     * `subtree` 由深到浅累加（`arsort($depth)` 保证子先于父落账）。
-     *
-     * @return array{children: array<int, list<int>>, roots: list<int>, subtree: array<int, int>, depthMax: int, parent: array<int, int>}
-     */
-    private function shapeOf(FrameRecord $frame): array
-    {
-        // `reset()` 把帧号归零，下一轮又从 1 开始；旧骨架留在缓存里就会被同号帧命中，
-        // 于是新因果配旧结构 —— 一棵自洽、可读、全错的树。代际变了先整体丢弃。
-        $generation = $this->recorder->generation();
-        if ($generation !== $this->cacheGeneration) {
-            $this->shapeCache = [];
-            $this->cacheGeneration = $generation;
-        }
-        if (isset($this->shapeCache[$frame->id])) {
-            /** @var array{children: array<int, list<int>>, roots: list<int>, subtree: array<int, int>, depthMax: int, parent: array<int, int>} */
-            return $this->shapeCache[$frame->id];
-        }
-        // 缓存键是帧号，环形缓冲裁掉的帧不会再被问到；到容量就整体丢弃，
-        // 不让它跟着会话无限长（一份骨架比一条帧记录大得多）。
-        if (\count($this->shapeCache) >= 600) {
-            $this->shapeCache = [];
-        }
-
-        $parent = $frame->parentOf();
-        $rebuiltSet = [];
-        foreach ($frame->rebuilt as $id) {
-            $rebuiltSet[$id] = true;
-        }
-
-        $children = [];
-        $roots = [];
-        $depth = [];
-        foreach ($frame->rebuilt as $id) {
-            $p = $parent[$id] ?? null;
-            if ($p !== null && isset($rebuiltSet[$p])) {
-                $children[$p][] = $id;
-            } else {
-                $roots[] = $id;
-            }
-
-            $d = 0;
-            $cursor = $id;
-            $guard = 0;
-            while (isset($parent[$cursor]) && $guard++ < 64) {
-                $cursor = $parent[$cursor];
-                ++$d;
-            }
-            $depth[$id] = $d;
-        }
-
-        $subtree = [];
-        foreach ($frame->rebuilt as $id) {
-            $subtree[$id] = 1;
-        }
-        \arsort($depth);
-        foreach ($depth as $id => $d) {
-            $p = $parent[$id] ?? null;
-            if ($p !== null && isset($subtree[$p])) {
-                $subtree[$p] += $subtree[$id];
-            }
-        }
-
-        $shape = [
-            'children' => $children,
-            'roots' => $roots,
-            'subtree' => $subtree,
-            'depthMax' => $depth === [] ? 0 : \max($depth),
-            'parent' => $parent,
-        ];
-        $this->shapeCache[$frame->id] = $shape;
-
-        return $shape;
-    }
-
-    /**
-     * 结构指纹：同形的子树得到同一个整数。
-     *
-     * 用 interning（键串 => 递增整数）而不是 md5：子节点已经是指纹整数，键串长度只与
-     * "这一层有几个孩子"有关，不随子树规模膨胀，也没有碰撞可担心。代价是指纹只在**一帧
-     * 内**可比 —— 它的用途是分组，不是跨帧身份。要做"这个形状在 20 帧里有 12 帧重建"，
-     * 那时该留的是键串本身（内容寻址），不是这里的整数。
-     *
-     * 键里必须带因果（kind / site / detail）：两个同形节点，一个自己写了状态、一个只是
-     * 被父带着重建，折成一组就再也说不出"是从哪儿写的"。
-     *
-     * @param array<int, list<int>> $children
-     * @param array<int, Edge>      $causeOf
-     * @param array<int, int>       $subtree
-     * @return array<int, int> 节点 id => 指纹
-     */
-    private function signatures(FrameRecord $frame, array $children, array $causeOf, array $subtree): array
-    {
-        $signature = [];
-        $intern = [];
-        $visit = function (int $id) use (&$visit, &$signature, &$intern, $children, $causeOf, $subtree): void {
-            $kids = [];
-            foreach ($children[$id] ?? [] as $kid) {
-                $visit($kid);
-                $kids[] = $signature[$kid];
-            }
-            // 兄弟次序不进入指纹：同形指的是**无序**同构。重建次序不承载因果，
-            // 把它算进去只会让"只差构建次序"的两个子树折不成一组 —— 而它们在报告里
-            // 讲的是同一件事。
-            \sort($kids);
-            $edge = $causeOf[$id] ?? null;
-            $key = $this->recorder->typeOf($id)
-                . "\x1f" . ($edge?->kind ?? '')
-                . "\x1f" . ($edge?->site ?? '')
-                . "\x1f" . ($edge?->detail ?? '')
-                . "\x1f" . ($subtree[$id] ?? 1)
-                . "\x1f" . \implode(',', $kids);
-            $signature[$id] ??= $intern[$key] ??= \count($intern);
-        };
-
-        // 只走访重建节点：`children` 就是按"父也重建"建出来的，所以每个节点恰好一次。
-        foreach ($frame->rebuilt as $id) {
-            if (!isset($signature[$id])) {
-                $visit($id);
-            }
-        }
-
-        return $signature;
-    }
-
-    /**
-     * 把一层的兄弟按结构指纹分组，返回 `[组节点, 未显示的兄弟数, 未显示的节点数]`。
-     *
-     * `$ids` 必须是**同一个父**的孩子（或森林的根）。后两个返回值是**本层**口径
-     * （`maxChildren` 裁掉的那部分），不含子层递归的量 —— 内层节点的规模已经算在
-     * 根的 `subtree` 里，累加会超算。内层的裁剪由节点上的 `omitted` 逐层报出，
-     * 那是**支**口径，消费者递归读它。
-     *
-     * @param list<int>             $ids
-     * @param array<int, list<int>> $children
-     * @param array<int, Edge>      $causeOf
-     * @param array<int, int>       $subtree
-     * @param array<int, int>       $signature
-     * @return array{0: list<array<string, mixed>>, 1: int, 2: int}
-     */
-    private function foldGroups(array $ids, array $children, array $causeOf, array $subtree, array $signature, int $depth, int $maxDepth, int $maxChildren): array
-    {
-        /** @var array<int, list<int>> $buckets 指纹 => 同形兄弟 */
-        $buckets = [];
-        foreach ($ids as $id) {
-            $buckets[$signature[$id]][] = $id;
-        }
-
-        $groups = [];
-        foreach ($buckets as $key => $members) {
-            // 成员按 id 升序：组内次序与遍历顺序无关，人和判据看到的都是同一串数字。
-            \sort($members);
-            $groups[] = [
-                'sig' => $key,
-                'ids' => $members,
-                'subtree' => $subtree[$members[0]] ?? 1,
-                'type' => $this->recorder->typeOf($members[0]),
-            ];
-        }
-        // 波及大的先显示：预算有限时留下的必须是牵动最多的那一支（"18 个的根"不能把
-        // 真正 342 个的那支挤到截断之后）。同波及时"同形份数多"的优先 —— 重复本身
-        // 就是这一帧值得看的事实。最后按类型名与指纹兜底，输出与遍历顺序无关。
-        \usort($groups, static fn(array $a, array $b): int => $b['subtree'] <=> $a['subtree']
-            ?: \count($b['ids']) <=> \count($a['ids'])
-            ?: \strcmp($a['type'], $b['type'])
-            ?: $a['sig'] <=> $b['sig']);
-
-        $shown = $maxChildren > 0 ? \array_slice($groups, 0, $maxChildren) : $groups;
-        $omitted = 0;
-        $hidden = 0;
-        foreach (\array_slice($groups, \count($shown)) as $group) {
-            $omitted += \count($group['ids']);
-            $hidden += \count($group['ids']) * $group['subtree'];
-        }
-
-        $nodes = [];
-        foreach ($shown as $group) {
-            $nodes[] = $this->groupNode($group, $children, $causeOf, $subtree, $signature, $depth, $maxDepth, $maxChildren);
-        }
-
-        // ★ 这里**只**返回本层被裁的量，不累加子层递归上来的。
-        //   看起来"漏了内层裁剪"，其实是口径不同：`hidden` 是**节点**口径，
-        //   而内层节点的规模已经算在根的 `subtree` 里（`Σ(根.subtree × 根.count)`
-        //   覆盖整棵子树，不论展开与否）。累加子层会让恒等式
-        //   `Σ(根.subtree × 根.count) + hidden == rebuilt` 超算。
-        //
-        //   "内层被 maxChildren 裁掉了"这件事由节点上的 `omitted` 逐层报出，
-        //   消费者（`Brief::coverage()`）递归读它 —— 那是**支**口径，可以累加。
-        return [$nodes, $omitted, $hidden];
-    }
-
-    /**
-     * 一组同形兄弟 → 树里的一行。
-     *
-     * 只走**代表**（id 最小的那个）的子节点：组内成员同形，意味着它们子节点指纹的多重集
-     * 相同，所以代表的孩子分组就是每一份实例的孩子分组 —— 不必把 N 份都走一遍，
-     * 也不会有"第 7 份和第 3 份长得不一样"这种自相矛盾（那说明指纹算错了）。
-     *
-     * @param array{sig: int, ids: list<int>, subtree: int, type: string} $group
-     * @param array<int, list<int>> $children
-     * @param array<int, Edge>      $causeOf
-     * @param array<int, int>       $subtree
-     * @param array<int, int>       $signature
      * @return array<string, mixed>
+     *
+     * @see LiveQuery::source()
      */
-    private function groupNode(array $group, array $children, array $causeOf, array $subtree, array $signature, int $depth, int $maxDepth, int $maxChildren): array
+    public function source(string $site): array
     {
-        $rep = $group['ids'][0];
-        $edge = $causeOf[$rep] ?? null;
-        $count = \count($group['ids']);
-        $node = [
-            'id' => $rep,
-            'type' => $group['type'],
-            'kind' => $edge?->kind ?? '',
-            'count' => $count,
-            'subtree' => $group['subtree'],
-            'site' => $edge?->site ?? '',
-            'detail' => $edge?->detail ?? '',
-            'children' => [],
-            'omitted' => 0,
-            'hidden' => 0,
-            'cut' => false,
-        ];
-        if ($count > 1) {
-            // 折叠无损：展开与 `why(id)` 都要能拿到真实 id。单个节点不给 `ids` ——
-            // 那会让同一份信息在一帧里有两种写法，而两种写法迟早不一致。
-            $node['ids'] = $group['ids'];
-        }
-
-        $kids = $children[$rep] ?? [];
-        if ($kids === []) {
-            return $node;
-        }
-        if ($depth >= $maxDepth) {
-            // 截断处也要把规模说准：支数与节点数都按每个实例计。
-            $node['cut'] = true;
-            $node['omitted'] = \count($kids);
-            $node['hidden'] = $group['subtree'] - 1;
-
-            return $node;
-        }
-
-        [$node['children'], $omitted, $hidden] = $this->foldGroups($kids, $children, $causeOf, $subtree, $signature, $depth + 1, $maxDepth, $maxChildren);
-        $node['omitted'] = $omitted;
-        $node['hidden'] = $hidden;
-
-        return $node;
+        return $this->live->source($site);
     }
 
     /**
-     * 按 Widget 类型聚合（React Profiler 的 "component ×N" 口径）。
+     * 按视口坐标点选：命中链（根→最深的盒）+ 每层节点 / Widget / 路径，含浮层原点。
      *
-     * 截断只影响树，不影响这里：类型构成必须永远覆盖全部重建节点。
+     * @param list<array{element: \Drift\Widget\Element, x: float, y: float}> $roots
+     * @return array<string, mixed>
      *
-     * @return list<array{type: string, nodes: int}>
+     * @see LiveQuery::pick()
      */
-    private function byType(FrameRecord $frame): array
+    public function pick(float $x, float $y, array $roots): array
     {
-        $agg = [];
-        foreach ($frame->rebuilt as $id) {
-            $type = $this->recorder->typeOf($id);
-            if ($type === '') {
-                $type = '?';
-            }
-            $agg[$type] = ($agg[$type] ?? 0) + 1;
-        }
-        \arsort($agg);
-
-        $out = [];
-        foreach ($agg as $type => $nodes) {
-            $out[] = ['type' => (string) $type, 'nodes' => $nodes];
-        }
-
-        return $out;
+        return $this->live->pick($x, $y, $roots);
     }
 
     /**
-     * 按次数字段降序；并列时按键字段升序，保证输出稳定（同名同数不随帧序抖）。
+     * 高亮状态：现在高亮谁 / 何时请求 / 最后一次真的上屏在哪帧。
      *
-     * @param list<array<string, mixed>> $rows
-     * @return list<array<string, mixed>>
+     * @return array<string, mixed>
+     *
+     * @see LiveQuery::highlight()
      */
-    private function rank(array $rows, string $by, string $tie, int $limit): array
+    public function highlight(): array
     {
-        \usort($rows, static fn(array $a, array $b): int => ($b[$by] <=> $a[$by])
-            ?: \strcmp((string) $a[$tie], (string) $b[$tie]));
-
-        return $limit > 0 ? \array_slice($rows, 0, $limit) : $rows;
+        return $this->live->highlight();
     }
 }

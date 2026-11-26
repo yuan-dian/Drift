@@ -176,6 +176,16 @@ ignore:
   - ../../src/App/DebugSession.php
   - ../../src/App/Replay.php
   - ../../src/Debug/Session/Query.php
+  # Query 门面背后的六个域实现（因果 / 几何 / 绘制 / 外部工作 / 结构 / 内省）。
+  # 它们只被 Query 引用，而 Query 已排除 ⇒ 整组随门面一起不进产物。
+  # ★ 新增域类必须同时加在这里：漏一条不会报错，只会让那一个类白扛进 exe ——
+  #   由 `php tools/check-debug-scope.php` 报「审查面泄漏进 AOT」。
+  - ../../src/Debug/Session/CausalQuery.php
+  - ../../src/Debug/Session/GeometryQuery.php
+  - ../../src/Debug/Session/PaintQuery.php
+  - ../../src/Debug/Session/TrafficQuery.php
+  - ../../src/Debug/Session/StructureQuery.php
+  - ../../src/Debug/Session/LiveQuery.php
   - ../../src/Debug/Session/QueryRouter.php
   - ../../src/Debug/Session/Evidence.php
   # L2 内省：属性 / eval 共用的反射 dump、内存台账、源码定位。只在 dev 侧被
