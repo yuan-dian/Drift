@@ -741,6 +741,11 @@ function draw() {
 
   const hit = state.hover;
   const sel = state.selected;
+  // 选中/悬停的祖先链要清晰：容器框平时退成辅助线，但点到某个后代时，
+  // 它上面那串框是"这个控件从哪来"的答案，淡掉就看不出因果了。
+  const selRow = state.boxes.find((r) => r.node === sel);
+  const hoverRow = state.boxes.find((r) => r.node === hit);
+  const keepChain = new Set([...(selRow?.chain || []), ...(hoverRow?.chain || [])]);
 
   for (const row of state.boxes) {
     const b = row.rect;
@@ -763,9 +768,11 @@ function draw() {
       ctx.lineWidth = 1.5;
     } else {
       // 有底图时线框退到"辅助线"的位置：图是主角，框只回答"这是哪块"。
-      // 缩得太小时（整窗塞进面板）再淡一档：否则 100+ 条彩线会把内容盖成一张网。
+      // 容器框再淡一档 —— 一组全屏 Column/Card 叠起来会横贯整屏盖住文字。
+      // 选中/悬停的祖先链不淡：那时候它们正好是要读的因果。
       const base = state.shotUrl ? 0.34 : 0.75;
-      ctx.strokeStyle = withAlpha(colorOf(row.type), scale < 0.5 ? base * 0.55 : base);
+      const containerAlpha = row.container && !keepChain.has(row.node) ? base * 0.35 : base;
+      ctx.strokeStyle = withAlpha(colorOf(row.type), scale < 0.5 ? containerAlpha * 0.55 : containerAlpha);
       ctx.lineWidth = 1;
     }
     ctx.strokeRect(x, y, w, h);

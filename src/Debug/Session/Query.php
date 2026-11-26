@@ -636,6 +636,34 @@ final class Query
             $effective = \max($effective, $record->frame);
         }
 
+        // 容器 = 本帧有子盒的节点。页面据此把"框套框"的辅助线淡画，但选中/悬停的
+        // 祖先链要保持清晰 —— 父链由这里给，页面不自己累加 parent 指针（那会成第四份真相）。
+        $parents = [];
+        foreach ($rows as $row) {
+            $parents[(int) ($row['parent'] ?? 0)] = true;
+        }
+        $byNode = [];
+        foreach ($rows as $row) {
+            $byNode[(int) $row['node']] = $row;
+        }
+        $chainOf = static function (int $node) use ($byNode): array {
+            $chain = [];
+            $seen = [$node => true];
+            $parent = (int) ($byNode[$node]['parent'] ?? 0);
+            while ($parent > 0 && isset($byNode[$parent]) && !isset($seen[$parent])) {
+                $chain[] = $parent;
+                $seen[$parent] = true;
+                $parent = (int) ($byNode[$parent]['parent'] ?? 0);
+            }
+
+            return $chain;
+        };
+        foreach ($rows as $i => $row) {
+            $node = (int) $row['node'];
+            $rows[$i]['container'] = isset($parents[$node]);
+            $rows[$i]['chain'] = $chainOf($node);
+        }
+
         // 绝对矩形只在这里算一次。
         //
         // 让每个消费者自己从 `offset` 累加，等于把一次树的先序遍历发给每个人抄一遍，
