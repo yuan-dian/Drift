@@ -94,16 +94,45 @@ h2 {
   text-transform: uppercase;
 }
 
-/* 发现 */
-#findingList { margin: 0; padding-left: 18px; }
-#findingList li { margin-bottom: 10px; cursor: pointer; }
+/* 发现：标题/数值/判据/复算都要一眼看得见，tooltip 不算呈现。 */
+#findingList { margin: 0; padding-left: 0; list-style: none; }
+#findingList li {
+  margin-bottom: 12px;
+  cursor: pointer;
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+}
 #findingList li:hover .title { color: var(--accent); }
-#findingList .title { display: block; }
+#findingList sev, #findingList .sev {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 11px;
+  color: var(--dim);
+  border: 1px solid var(--line);
+}
+#findingList .sev-warning .sev { color: var(--warn); border-color: var(--warn); }
+#findingList .sev-error .sev { color: var(--bad); border-color: var(--bad); }
+#findingList .sev-warning { border-left-color: var(--warn); }
+#findingList .sev-error { border-left-color: var(--bad); }
+#findingList .title { display: inline; }
+#findingList .metric { color: var(--text); margin-top: 2px; }
+#findingList .detail { color: var(--dim); }
 #findingList .addr {
+  display: block;
   color: var(--dim);
   font-family: ui-monospace, Consolas, monospace;
   font-size: 11px;
+  margin-top: 2px;
 }
+
+/* 复算口径：默认收起，避免指纹和阈值占掉首屏的注意力。 */
+#evidence { margin: 10px 0; color: var(--dim); font-size: 12px; }
+#evidence summary { cursor: pointer; }
+#evidence .meta { display: flex; gap: 6px; margin-top: 4px; }
+#evidence .meta > span:first-child { flex: 0 0 34px; color: var(--dim); }
+#evidence .meta > span:last-child { flex: 1; word-break: break-all; }
 
 /* 搜索：结果一律是地址，点一条就用 `/api/node` 取它的事实。
    这里不出"匹配度"，排序与截断都由查询层给（页面不重算，见 app.js 顶部的纪律）。 */
@@ -222,6 +251,35 @@ h2 {
 }
 #zoom { min-width: 40px; }
 
+/* 帧时间轴：用现成 /api/frames，点一帧就落到那一帧，不用先看发现才知道去哪。 */
+#framestrip {
+  flex: 0 0 auto;
+  max-height: 132px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  padding: 4px 8px 6px;
+  color: var(--dim);
+  font-size: 12px;
+}
+#framestrip summary { cursor: pointer; margin-bottom: 4px; }
+#frameList { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 4px; }
+.frame {
+  flex: 0 0 auto;
+  min-width: 66px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+.frame:hover { border-color: var(--accent); color: var(--accent); }
+.frame.current { border-color: var(--accent); background: #1d3b36; color: var(--accent); }
+.frame.slow { border-left: 2px solid var(--warn); }
+.frame .cost { color: var(--dim); }
+.frame.current .cost { color: inherit; }
+
 /* 节点面板 */
 #crumbs { color: var(--dim); margin-bottom: 8px; word-break: break-all; }
 #crumbs b { color: var(--text); cursor: pointer; font-weight: 500; }
@@ -257,3 +315,16 @@ h2 {
   font-size: 12px;
   white-space: pre-wrap;
 }
+#card h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dim);
+  margin: 12px 0 4px;
+}
+#card .hop, #card .cause {
+  padding: 2px 0;
+  font-size: 12px;
+  word-break: break-word;
+}
+#card .hop .bad { color: var(--bad); }
+#card .none { color: var(--dim); font-size: 12px; }

@@ -125,6 +125,8 @@ final class Web
                 'limit' => (int) ($query['limit'] ?? 200),
             ])),
             '/api/node' => $this->node($query),
+            // 搜索命中 request:N 后的落地页。请求详情走同一个查询面，不另存一份。
+            '/api/request' => $this->request($query),
             // 画面与证据是两条通道：`/api/shot?serial=N` 吐的是宿主拍的真机像素（PNG），
             // 只用于垫底。`/api/shot/ping` 是心跳 + 问"最新那张是第几张、拍的哪一帧"，
             // 前端靠它决定要不要换图 —— 拿不到新图就不换，而不是换成空。
@@ -234,7 +236,22 @@ final class Web
             'frame' => $frame,
             'boxModel' => $this->tryQuery('boxModel', $args),
             'props' => $this->tryQuery('props', $args),
+            // 节点卡要回答的是"为什么是这个尺寸/为什么这一帧重建"，这两问的答案
+            // 分别是约束链与因果链；缺了它们，页面只剩几何数字，开发者还得回 CLI 追问。
+            'constraints' => $this->tryQuery('constraints', $args + ['maxDepth' => 12]),
+            'why' => $this->tryQuery('why', $args),
         ]);
+    }
+
+    /** @param array<string, mixed> $query */
+    private function request(array $query): array
+    {
+        $id = (int) ($query['request'] ?? 0);
+        if ($id <= 0) {
+            return $this->error(400, 'bad_request', '缺少 request 参数（从搜索结果的 request:N 取）');
+        }
+
+        return $this->json($this->tryQuery('network', ['request' => $id]));
     }
 
     /**

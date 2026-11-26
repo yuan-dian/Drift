@@ -183,7 +183,7 @@ async function boot() {
     }
   });
 
-  await Promise.all([loadScript(), loadBrief()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames()]);
 
   // 第一屏：有底图就跟"最新"（服务端缺省帧 = 几何窗口最新），画面也是最新的，
   // 两者同源；没有底图（离线包 / 自己跑的会话）才退回"最值得看的一帧"。
@@ -252,16 +252,19 @@ async function loadBrief() {
 
   document.getElementById('label').textContent = brief.label || '?';
   const w = brief.window || {};
-  // 静止帧先于实帧淘汰（缓冲只留"有事的帧"），跨度于是可以远大于条数。不点明
-  // 这件事，`#12–#12573 / 600 帧` 看起来像自相矛盾。
-  const folded = (w.folded ?? 0) > 0 ? ` · 静止帧折叠 ${w.folded}` : '';
   document.getElementById('window').textContent =
-    `#${w.from ?? 0}–#${w.to ?? 0} / ${w.count ?? 0} 帧 / 容量 ${w.capacity ?? 0}${folded}`;
-  document.getElementById('digest').textContent = brief.digest ? brief.digest.slice(0, 12) : '—';
+    `#${w.from ?? 0}–#${w.to ?? 0}${((w.folded ?? 0) > 0 ? ` · 折叠 ${w.folded}` : '')}`;
 
+  // 指纹、阈值、规则选择是**复算口径**，不是当前状态：放进折叠区，首屏只留能行动的信息。
+  document.getElementById('digest').textContent = brief.digest || '—';
   const t = brief.thresholds || {};
   document.getElementById('thresholds').textContent =
     `慢帧 ${t.slowMs}ms · 扇出 ${t.fanoutNodes} · 重复 ${t.repeatPercent}% · 重画 ${t.repaintPercent}%`;
+  const sel = brief.selection || {};
+  document.getElementById('ruleInfo').textContent =
+    `${sel.rules?.length ?? 0}/${sel.total ?? 0} 条${sel.filtered ? '（已过滤，结论不是全量）' : ''}`;
+  document.getElementById('windowMeta').textContent =
+    `${w.count ?? 0} 帧 / 容量 ${w.capacity ?? 0}`;
 
   renderFindings(brief.findings || []);
 
@@ -275,8 +278,12 @@ async function loadBrief() {
   if (cov.broken && cov.broken.length) {
     covText += `${covText ? ' · ' : ''}帧级证据不完整（${cov.broken.join('/')}）`;
   }
-  document.getElementById('coverage').textContent = covText;
+  const covEl = document.getElementById('coverage');
+  covEl.textContent = covText;
+  covEl.hidden = covText === '';
 }
+
+const SEVERITY = { info: '提示', warning: '警告', error: '错误' };
 
 function renderFindings(findings) {
   const list = document.getElementById('findingList');
@@ -284,27 +291,86 @@ function renderFindings(findings) {
   document.getElementById('findingCount').textContent = findings.length ? `(${findings.length})` : '';
 
   for (const f of findings) {
-    const li = el('li');
-    li.appendChild(el('span', 'title', f.title));
+    const li = el('li', `finding sev-${f.severity || 'info'}`);
+    const head = el('div', 'finding-head');
+    head.appendChild(el('span', 'sev', SEVERITY[f.severity] || f.severity || '提示'));
+    head.appendChild(el('span', 'title', f.title));
+    li.appendChild(head);
+    // 数值与判据是"为什么报它"的答案，藏在 tooltip 里等于没给。
+    if (f.metric) li.appendChild(el('div', 'metric', f.metric));
+    if (f.threshold) li.appendChild(el('div', 'detail', `判据 ${f.threshold}`));
+    if (f.recheck) li.appendChild(el('div', 'detail small', `复算 ${f.recheck}`));
     li.appendChild(el('span', 'addr', f.address));
-    li.title = `${f.rule} v${f.version} · ${f.metric} · 阈值 ${f.threshold} · 复算 ${f.recheck}`;
+    li.title = `${f.rule} v${f.version}`;
     li.onclick = () => jump(f.address);
     list.appendChild(li);
   }
 }
 
 function jump(address) {
-  const f = /frame:(\d+)/.exec(address || '');
-  const n = /node:(\d+)/.exec(address || '');
+  const a = address || '';
+  const f = /frame:(\d+)/.exec(a);
+  const n = /node:(\d+)/.exec(a);
+  const s = /stage:([^\s]+)/.exec(a);
+  const req = /request:(\d+)/.exec(a);
+
+  if (req) { showRequest(Number(req[1])); return; }
+  if (f) {
+    // 地址里的帧号与节点号必须一起用：只选节点会让节点卡按**当前帧**取几何，
+    // 应用跑远后就是"点开发现的节点却查不到"。
+    setFollow(false);
+    loadFrame(Number(f[1])).then(() => {
+      if (n) select(Number(n[1]));
+      else if (s) {
+        state.hintBase += ` · 阶段 ${s[1]}`;
+        restoreHint();
+      }
+    });
+    return;
+  }
   if (n) select(Number(n[1]));
-  else if (f) loadFrame(Number(f[1]));
-  // 跳到历史帧就不再跟着最新跑 —— 否则一秒后画面自己跳走，用户以为链接坏了。
-  if (f) setFollow(false);
 }
 
-// 搜索：结果一律是地址，点一条就落到那个节点上（与发现列表同一条路 `jump()`）。
-// 页面只传关键词、只画返回的数组：匹配规则、截断、扫过多少候选全由 `find()` 给 ——
-// 前端再 filter 一遍就成了第二份实现，"同一次搜索三种结果"就是这么来的。
+/** 请求地址（request:N）的落地：复用右侧节点面板，不另起一个要维护的详情窗口。 */
+async function showRequest(id) {
+  document.getElementById('selected').textContent = `#req ${id}`;
+  document.getElementById('crumbs').textContent = '';
+  document.getElementById('children').textContent = '请求不属于控件树';
+  const host = document.getElementById('card');
+  host.textContent = `请求 #${id} …`;
+  try {
+    const answer = await get(`/api/request?request=${id}`);
+    const rows = answer.rows || [];
+    host.textContent = '';
+    if (!rows.length) {
+      host.appendChild(el('div', 'none', answer.miss || '这段证据里没有这个请求'));
+      return;
+    }
+    const r = rows[0];
+    const table = el('table');
+    for (const [k, v] of [
+      ['方法', r.method || '?'],
+      ['URL', r.url || '?'],
+      ['状态', r.status ?? '—'],
+      ['耗时', `${r.elapsedMs ?? '?'} ms`],
+      ['字节', r.bytes ?? '?'],
+      ['帧', `#${r.startedAtFrame ?? '?'} → #${r.settledAtFrame ?? '?'}${r.pendingFrames ? `（等 ${r.pendingFrames} 帧）` : ''}`],
+      ['来源', r.initiator || '—'],
+    ]) {
+      const tr = el('tr');
+      tr.appendChild(el('th', '', k));
+      tr.appendChild(el('td', '', String(v)));
+      table.appendChild(tr);
+    }
+    host.appendChild(table);
+  } catch (e) {
+    host.textContent = e.message;
+  }
+}
+
+// 搜索：结果一律是地址，点一条就按地址落到节点 / 请求 / 帧上（与发现共用 `jump()`）。
+// `domain=all` 把请求也纳入 —— 后端 find 本来就支持 request 域，前端写死 node 等于
+// 让"这次请求到底发没发"在页面上永远搜不到。
 async function search(text) {
   const list = document.getElementById('hitList');
   list.textContent = '';
@@ -314,7 +380,7 @@ async function search(text) {
 
   let answer;
   try {
-    answer = await get(`/api/find?domain=node&limit=20&pattern=${encodeURIComponent(q)}`);
+    answer = await get(`/api/find?domain=all&limit=20&pattern=${encodeURIComponent(q)}`);
   } catch (e) {
     list.appendChild(el('li', 'none', e.message));
     return;
@@ -339,6 +405,39 @@ async function search(text) {
 
   if (answer.truncated) {
     list.appendChild(el('li', 'none', `命中 ${answer.total}，只列了 ${answer.returned}`));
+  }
+}
+
+/** 帧时间轴：帧号、耗时、重建数都取自 /api/frames，页面只画不判。 */
+async function loadFrames() {
+  try {
+    const page = await get('/api/frames?limit=120');
+    renderFrames(page.frames || []);
+  } catch (e) {
+    document.getElementById('frameList').textContent = e.message;
+  }
+}
+
+function renderFrames(rows) {
+  const host = document.getElementById('frameList');
+  host.textContent = '';
+  document.getElementById('frameCount').textContent = rows.length ? `(${rows.length})` : '';
+  const slow = Number(state.brief?.thresholds?.slowMs ?? 0);
+  for (const r of rows) {
+    const b = el('div', `frame${slow > 0 && Number(r.cost || 0) > slow ? ' slow' : ''}`);
+    b.dataset.frame = String(r.id);
+    b.appendChild(el('div', '', `#${r.id}`));
+    b.appendChild(el('div', 'cost', `${Number(r.cost || 0).toFixed(1)}ms · ${r.rebuilt ?? 0} 重建`));
+    b.title = `帧 #${r.id} · ${r.cost}ms · 重建 ${r.rebuilt} · 因果 ${r.causes}`;
+    b.onclick = () => { setFollow(false); loadFrame(Number(r.id)); };
+    host.appendChild(b);
+  }
+  markCurrentFrame();
+}
+
+function markCurrentFrame() {
+  for (const b of document.querySelectorAll('#frameList .frame')) {
+    b.classList.toggle('current', b.dataset.frame === String(state.frame));
   }
 }
 
@@ -384,6 +483,7 @@ async function loadFrame(frame, keepSelected) {
   document.title = `drift · 帧 #${state.frame} · ${state.boxes.length} 盒`
     + (state.follow ? '' : ' · 已停住')
     + (state.selected ? ` · node:${state.selected}` : '');
+  markCurrentFrame();
 
   scheduleDraw();
   renderNode(state.selected || null);
@@ -850,6 +950,35 @@ function renderCard(card) {
     pre.textContent = JSON.stringify(props, null, 2);
     host.appendChild(pre);
   }
+
+  const cons = card.constraints || {};
+  host.appendChild(el('h3', '', '约束链'));
+  if (cons.error || cons.found === false) {
+    host.appendChild(el('div', 'none', cons.error || `查不到（${cons.reason || '?'}）`));
+  } else if (!Array.isArray(cons.chain) || cons.chain.length === 0) {
+    host.appendChild(el('div', 'none', '没有父级约束跳'));
+  } else {
+    for (const hop of cons.chain) {
+      const line = el('div', 'hop', `#${hop.from} → #${hop.to} · ${hop.source || '?'}`);
+      if (!hop.verified) line.appendChild(el('span', 'bad', ' · 未核对'));
+      host.appendChild(line);
+    }
+    if (cons.cut) host.appendChild(el('div', 'none', `还有 ${cons.omitted ?? 0} 跳未展开`));
+  }
+
+  const why = card.why || {};
+  const KIND = { state: '状态写入', inherited: '随父重建', none: '未记录' };
+  host.appendChild(el('h3', '', '重建因果'));
+  if (why.error) {
+    host.appendChild(el('div', 'none', why.error));
+  } else if (!why.rebuilt) {
+    host.appendChild(el('div', 'none', `帧 #${why.frame ?? '?'} 没有重建它`));
+  } else {
+    for (const t of why.trail || []) {
+      const cause = `${KIND[t.kind] || t.kind || '未记录'}${t.site ? ` @ ${t.site}` : ''}`;
+      host.appendChild(el('div', 'cause', `${t.path || '?'} · ${cause}`));
+    }
+  }
 }
 
 function updatePickButton() {
@@ -929,13 +1058,28 @@ async function pollSelection() {
   }
 }
 
+let pollTick = 0;
+
+/** 没有底图时说清是"这份证据本来就没有"还是"宿主还没拍到"，别让人以为坏了。 */
+function updateNoShot(driven) {
+  const why = document.getElementById('noshotWhy');
+  const how = document.getElementById('noshotHow');
+  if (!why || !how) return;
+  why.textContent = driven ? '这一帧还没有画面' : '这份证据没有画面通道';
+  how.textContent = driven
+    ? '宿主未拍到新帧（画面通道未开，或应用静止）'
+    : '离线包 / 只读会话只带几何与发现，节点与因果仍可查';
+}
+
 async function poll() {
+  let driven = false;
   try {
     const st = await get('/api/state');
     const chip = document.getElementById('state');
     chip.textContent = st.state + (st.reason ? ` (${st.reason})` : '');
     chip.hidden = false;
-    document.getElementById('ctl').hidden = st.driven !== true;
+    driven = st.driven === true;
+    document.getElementById('ctl').hidden = !driven;
 
     // ★ 这里**不**按 `lastFrame` 刷几何。帧号是"主循环跑过几轮"，空闲的应用
     //   被调试桥叫醒也会涨（~80fps）—— 按它刷新等于每 500ms 全量重取一遍几何，
@@ -947,6 +1091,9 @@ async function poll() {
 
   await pollShot();
   await pollSelection();
+  updateNoShot(driven);
+  // 帧时间轴增长慢，没必要跟着 500ms 的选中/画面轮询一起取；3 秒一次足够。
+  if (++pollTick % 6 === 0) await loadFrames();
 }
 
 /**
@@ -1001,7 +1148,7 @@ async function pollShot() {
 }
 
 async function refresh() {
-  await Promise.all([loadScript(), loadBrief()]);
+  await Promise.all([loadScript(), loadBrief(), loadFrames()]);
   await loadFrame(state.frame);
   await poll();
 }
