@@ -24,7 +24,7 @@ namespace Drift\Debug\Session;
  */
 final class PaintQuery
 {
-    public function __construct(private readonly Recorder $recorder)
+    public function __construct(private readonly History $history)
     {
     }
 
@@ -37,11 +37,11 @@ final class PaintQuery
      */
     public function paint(?int $frame = null): array
     {
-        $window = $this->recorder->paintCoverage();
+        $window = $this->history->paintCoverage();
         // 缺省帧落在**自己的**覆盖窗口里。绘制窗口比帧窗口窄得多，拿帧窗口的最新帧
         // 当缺省，静止一会儿就查不到，而页面会把它读成"这帧没画"。
         $frameId = $frame
-            ?? ((int) ($window['to'] ?? 0) ?: $this->recorder->lastFrameId());
+            ?? ((int) ($window['to'] ?? 0) ?: $this->history->lastFrameId());
 
         if (($window['captured'] ?? false) !== true) {
             // 未开预算时不能给空集合：那会被读成"这帧什么都没画"，而真相是没采。
@@ -53,7 +53,7 @@ final class PaintQuery
             ];
         }
 
-        $record = $this->recorder->paintFrame($frameId);
+        $record = $this->history->paintFrame($frameId);
         if ($record === null) {
             return [
                 'frame' => $frameId,
@@ -94,7 +94,7 @@ final class PaintQuery
      */
     public function repaints(int $frames = 300, int $limit = 10): array
     {
-        $window = $this->recorder->paintCoverage();
+        $window = $this->history->paintCoverage();
         if (($window['captured'] ?? false) !== true) {
             return [
                 'captured' => false,
@@ -109,7 +109,7 @@ final class PaintQuery
             ];
         }
 
-        $ids = $this->recorder->paintFrames();
+        $ids = $this->history->paintFrames();
         if ($frames > 0 && \count($ids) > $frames) {
             $ids = \array_slice($ids, -$frames);
         }
@@ -120,7 +120,7 @@ final class PaintQuery
         /** @var array<int, array{node: int, frames: int, misses: int, reason: string}> $agg */
         $agg = [];
         foreach ($ids as $id) {
-            $record = $this->recorder->paintFrame($id);
+            $record = $this->history->paintFrame($id);
             if ($record === null) {
                 continue;
             }
@@ -157,8 +157,8 @@ final class PaintQuery
         foreach ($shown as $i => $row) {
             $shown[$i] = [
                 'node' => $row['node'],
-                'path' => $this->recorder->pathOf($row['node']),
-                'type' => $this->recorder->typeOf($row['node']),
+                'path' => $this->history->pathOf($row['node']),
+                'type' => $this->history->typeOf($row['node']),
                 'frames' => $row['frames'],
                 'misses' => $row['misses'],
                 'reason' => $row['reason'] === '' ? null : $row['reason'],

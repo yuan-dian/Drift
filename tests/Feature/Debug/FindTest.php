@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\Debug\Session\Query;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -53,6 +54,7 @@ final class FindTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             // 节点只在录制器装着的时候发号：boot() 的首帧早于 install，得再推一帧。
             $app->frame(16.0, $this->constraints());
@@ -62,8 +64,8 @@ final class FindTest extends SmokeTestCase
 
             // 独立复算：数一遍节点表里类型含 Padding 的节点。
             $expected = 0;
-            foreach ($recorder->nodeIndex() as $id => $_meta) {
-                if (\stripos($recorder->typeOf($id), 'Padding') !== false) {
+            foreach ($history->nodeIndex() as $id => $_meta) {
+                if (\stripos($history->typeOf($id), 'Padding') !== false) {
                     ++$expected;
                 }
             }
@@ -92,6 +94,7 @@ final class FindTest extends SmokeTestCase
     {
         $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $queries = new Query($recorder);
 
@@ -128,6 +131,7 @@ final class FindTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app->frame(16.0, $this->constraints());
             $queries = new Query($recorder);
@@ -152,6 +156,7 @@ final class FindTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app->frame(16.0, $this->constraints());
             $queries = new Query($recorder);
@@ -179,10 +184,10 @@ final class FindTest extends SmokeTestCase
             // 空窗口与"搜了没命中"必须分开：前者 scanned=0，后者 scanned>0。
             check('空窗口自报 scanned=0', $queries->find('zzz', 'request')['domains']['request']['scanned'] === 2);
             check('搜了没命中时 scanned 仍是我扫过的数',
-                $queries->find('zzz', 'node')['domains']['node']['scanned'] === \count($recorder->nodeIndex()));
+                $queries->find('zzz', 'node')['domains']['node']['scanned'] === \count($history->nodeIndex()));
 
             check('已回收节点数随答案自报',
-                $capped['domains']['node']['evicted'] === \count($recorder->evictedNodes()));
+                $capped['domains']['node']['evicted'] === \count($history->evictedNodes()));
         } finally {
             Recorder::uninstall();
         }
@@ -200,6 +205,7 @@ final class FindTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app->frame(16.0, $this->constraints());
 
@@ -225,7 +231,7 @@ final class FindTest extends SmokeTestCase
 
             $recycle = new \ReflectionMethod(Recorder::class, 'recycleNodes');
             $recycle->invoke($recorder);
-            check('夹具真的回收了一个节点', $recorder->nodeStatus(1) === 'evicted');
+            check('夹具真的回收了一个节点', $history->nodeStatus(1) === 'evicted');
 
             $queries = new Query($recorder);
             $gone = $queries->find('Gone');
@@ -244,6 +250,7 @@ final class FindTest extends SmokeTestCase
     {
         $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $queries = new Query($recorder);
 

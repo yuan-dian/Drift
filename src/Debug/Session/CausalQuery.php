@@ -34,7 +34,7 @@ final class CausalQuery
     /** `shapeCache` 属于哪一代；与 `Recorder::generation()` 不一致就整体丢弃。 */
     private int $cacheGeneration = -1;
 
-    public function __construct(private readonly Recorder $recorder)
+    public function __construct(private readonly History $history)
     {
     }
 
@@ -50,13 +50,13 @@ final class CausalQuery
      */
     public function frames(int $limit = 30, bool $rebuiltOnly = false, ?int $since = null): array
     {
-        $all = $this->recorder->frames();
+        $all = $this->history->frames();
         $from = $all === [] ? 0 : (int) \array_key_first($all);
         $to = $all === [] ? 0 : (int) \array_key_last($all);
         $window = [
             'from' => $from,
             'to' => $to,
-            'capacity' => (int) ($this->recorder->stats()['capacity'] ?? 0),
+            'capacity' => (int) ($this->history->stats()['capacity'] ?? 0),
             'frames' => \count($all),
             // 帧号跨度比保留条数多出来的那段 = 静止期整段跳过的帧，被窗口让位淘汰了。
             // 不给这个数，`#12–#12573` 配 `600` 会被读成"窗口有一万两千帧"。
@@ -120,14 +120,14 @@ final class CausalQuery
      */
     public function explain(int $frame): array
     {
-        $record = $this->recorder->frame($frame);
+        $record = $this->history->frame($frame);
         if ($record === null) {
             throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
         }
 
         $rebuilt = [];
         foreach ($record->rebuilt as $id) {
-            $rebuilt[] = ['id' => $id, 'path' => $this->recorder->pathOf($id)];
+            $rebuilt[] = ['id' => $id, 'path' => $this->history->pathOf($id)];
         }
 
         $byKind = ['state' => 0, 'parent' => 0, 'unknown' => 0];
@@ -169,7 +169,7 @@ final class CausalQuery
      */
     public function why(int $node, ?int $frame = null): array
     {
-        return $this->recorder->why($node, $frame);
+        return $this->history->why($node, $frame);
     }
 
     /**
@@ -183,7 +183,7 @@ final class CausalQuery
      */
     public function forNode(int $node, int $frame): array
     {
-        $record = $this->recorder->frame($frame);
+        $record = $this->history->frame($frame);
         if ($record === null) {
             return ['found' => false, 'reason' => 'frame-out-of-window'];
         }
@@ -242,7 +242,7 @@ final class CausalQuery
      */
     public function cascade(int $frame, int $maxDepth = 5, int $maxChildren = 8): array
     {
-        $record = $this->recorder->frame($frame);
+        $record = $this->history->frame($frame);
         if ($record === null) {
             throw new \InvalidArgumentException("没有这一帧：{$frame}（缓冲窗口之外或尚未发生）");
         }
@@ -270,8 +270,8 @@ final class CausalQuery
             $id = $edge->toId;
             $writes[] = [
                 'id' => $id,
-                'path' => $this->recorder->pathOf($id),
-                'type' => $this->recorder->typeOf($id),
+                'path' => $this->history->pathOf($id),
+                'type' => $this->history->typeOf($id),
                 'site' => $edge->site,
                 'detail' => $edge->detail,
                 'subtree' => $subtree[$id] ?? 1,
@@ -370,7 +370,7 @@ final class CausalQuery
             foreach ($frame->rebuilt as $id) {
                 $agg[$id] ??= [
                     'id' => $id,
-                    'path' => $this->recorder->pathOf($id),
+                    'path' => $this->history->pathOf($id),
                     'rebuilds' => 0,
                     'self' => 0,
                     'inherited' => 0,
@@ -412,7 +412,7 @@ final class CausalQuery
      */
     private function window(int $frames): array
     {
-        $all = $this->recorder->frames();
+        $all = $this->history->frames();
         if ($frames <= 0 || \count($all) <= $frames) {
             return $all;
         }
@@ -432,7 +432,7 @@ final class CausalQuery
     {
         // `reset()` 把帧号归零，下一轮又从 1 开始；旧骨架留在缓存里就会被同号帧命中，
         // 于是新因果配旧结构 —— 一棵自洽、可读、全错的树。代际变了先整体丢弃。
-        $generation = $this->recorder->generation();
+        $generation = $this->history->generation();
         if ($generation !== $this->cacheGeneration) {
             $this->shapeCache = [];
             $this->cacheGeneration = $generation;
@@ -529,7 +529,7 @@ final class CausalQuery
             // 讲的是同一件事。
             \sort($kids);
             $edge = $causeOf[$id] ?? null;
-            $key = $this->recorder->typeOf($id)
+            $key = $this->history->typeOf($id)
                 . "\x1f" . ($edge?->kind ?? '')
                 . "\x1f" . ($edge?->site ?? '')
                 . "\x1f" . ($edge?->detail ?? '')
@@ -579,7 +579,7 @@ final class CausalQuery
                 'sig' => $key,
                 'ids' => $members,
                 'subtree' => $subtree[$members[0]] ?? 1,
-                'type' => $this->recorder->typeOf($members[0]),
+                'type' => $this->history->typeOf($members[0]),
             ];
         }
         // 波及大的先显示：预算有限时留下的必须是牵动最多的那一支（"18 个的根"不能把
@@ -683,7 +683,7 @@ final class CausalQuery
     {
         $agg = [];
         foreach ($frame->rebuilt as $id) {
-            $type = $this->recorder->typeOf($id);
+            $type = $this->history->typeOf($id);
             if ($type === '') {
                 $type = '?';
             }

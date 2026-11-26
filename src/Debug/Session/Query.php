@@ -50,6 +50,12 @@ namespace Drift\Debug\Session;
  */
 final class Query
 {
+    /**
+     * 读面：记录的解释全在 {@see History}（审查面，不进产物）。门面本身**不持有**
+     * {@see Recorder} —— 那是写面，门面认识它只为了构造一次读面。
+     */
+    private readonly History $history;
+
     private readonly CausalQuery $causal;
 
     private readonly GeometryQuery $geometry;
@@ -62,21 +68,24 @@ final class Query
 
     private readonly LiveQuery $live;
 
-    public function __construct(private readonly Recorder $recorder)
+    public function __construct(Recorder $recorder)
     {
-        $this->causal = new CausalQuery($recorder);
-        $this->geometry = new GeometryQuery($recorder);
-        $this->paint = new PaintQuery($recorder);
-        $this->traffic = new TrafficQuery($recorder);
+        $history = new History($recorder);
+        $this->history = $history;
+        $this->causal = new CausalQuery($history);
+        $this->geometry = new GeometryQuery($history);
+        $this->paint = new PaintQuery($history);
+        $this->traffic = new TrafficQuery($history);
         // 结构依赖几何：树行上的盒大小与矩形是几何域的注解，不是结构域自己采的。
-        $this->structure = new StructureQuery($recorder, $this->geometry);
-        $this->live = new LiveQuery($recorder);
+        $this->structure = new StructureQuery($history, $this->geometry);
+        // 内省要发号（`pick` 命中一个新节点时给它一个地址），所以它还认识写面。
+        $this->live = new LiveQuery($recorder, $history);
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
     public function stats(): array
     {
-        return $this->recorder->stats();
+        return $this->history->stats();
     }
 
     /**
@@ -290,19 +299,19 @@ final class Query
      */
     public function align(int $node, int $frame): array
     {
-        $known = $this->recorder->typeOf($node) !== '';
+        $known = $this->history->typeOf($node) !== '';
         $base = [
             'node' => $node,
             'frame' => $frame,
-            'path' => $this->recorder->pathOf($node),
+            'path' => $this->history->pathOf($node),
         ];
         $win = [
-            'frames' => $this->recorder->stats()['capacity'],
-            'geometry' => $this->recorder->geometryCoverage(),
-            'network' => $this->recorder->networkCoverage(),
+            'frames' => $this->history->stats()['capacity'],
+            'geometry' => $this->history->geometryCoverage(),
+            'network' => $this->history->networkCoverage(),
         ];
         if (!$known) {
-            $reason = $this->recorder->nodeStatus($node) === 'evicted' ? 'node-evicted' : 'unknown-node';
+            $reason = $this->history->nodeStatus($node) === 'evicted' ? 'node-evicted' : 'unknown-node';
 
             return $base + [
                 'found' => false,
@@ -338,8 +347,8 @@ final class Query
 
         // ---- 网络：只认帧末回填的 landed[]；扫 500 条窗口反查，不建镜像索引。
         $landed = [];
-        foreach ($this->recorder->requestsLandingOn($node) as $requestId) {
-            $request = $this->recorder->networkAt($requestId);
+        foreach ($this->history->requestsLandingOn($node) as $requestId) {
+            $request = $this->history->networkAt($requestId);
             if ($request !== null && $request->settledAtFrame === $frame) {
                 $landed[] = [
                     'request' => $request->requestId,
@@ -452,9 +461,9 @@ final class Query
             //   命中"Table 子树里的每一个节点"（实测 346/364）——结果列表变成整棵树，
             //   搜索就退化成"打印一切"。要列某容器的子树是 `cascade(frame)` 的问题，
             //   不是搜索的问题。路径仍然印在 `text` 里：命中之后紧跟的就是它在哪。
-            foreach ($this->recorder->nodeIndex() as $id => $_meta) {
+            foreach ($this->history->nodeIndex() as $id => $_meta) {
                 ++$scanned;
-                $type = $this->recorder->typeOf($id);
+                $type = $this->history->typeOf($id);
                 if (!$hit($type)) {
                     continue;
                 }
@@ -464,21 +473,21 @@ final class Query
                     'address' => 'node:' . $id,
                     // 路径只对**命中项**算：3000 个节点各拼一遍父链，代价落在这条
                     // 查询最贵的地方，而它只对返回的几十行有用。
-                    'text' => $this->recorder->pathOf($id),
+                    'text' => $this->history->pathOf($id),
                 ];
             }
             $counts['node'] = [
                 'scanned' => $scanned,
                 'matched' => $matched,
                 'returned' => 0,
-                'evicted' => \count($this->recorder->evictedNodes()),
+                'evicted' => \count($this->history->evictedNodes()),
             ];
         }
 
         if (\in_array('request', $domains, true)) {
             $scanned = 0;
             $matched = 0;
-            foreach ($this->recorder->networkRows() as $record) {
+            foreach ($this->history->networkRows() as $record) {
                 ++$scanned;
                 $text = \sprintf('%s %s %d', $record->method, $record->url, $record->status);
                 if (!$hit($text)) {
@@ -492,7 +501,7 @@ final class Query
                 'matched' => $matched,
                 'returned' => 0,
                 // 网络有独立窗口：被裁掉的请求搜不到，这个数说出"这段没搜"。
-                'window' => $this->recorder->networkCoverage(),
+                'window' => $this->history->networkCoverage(),
             ];
         }
 

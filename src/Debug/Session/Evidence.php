@@ -151,6 +151,8 @@ final class Evidence
      */
     public static function write(Recorder $recorder, string $path, array $domains = self::DEFAULT_DOMAINS): array
     {
+        // 读语义全在 History（审查面）：本类只管把环写成文件这个动作。
+        $history = new History($recorder);
         foreach ($domains as $domain) {
             if (!\in_array($domain, self::ALL_DOMAINS, true)) {
                 throw new \InvalidArgumentException('不认识的域：' . \json_encode($domain));
@@ -171,8 +173,8 @@ final class Evidence
                 // 旧读者忽略不认识的字段，新读者见到缺失就报"不可回放"，两边都不用改
                 // 解码骨架。新增 kind 会让所有旧工具读新包直接报错 —— 那对"加一域"
                 // 是对的，对"给已有记录补一个可选字段"就过头了。
-                $goneAt = $recorder->goneNodes();
-                foreach ($recorder->nodeIndex() as $id => $meta) {
+                $goneAt = $history->goneNodes();
+                foreach ($history->nodeIndex() as $id => $meta) {
                     self::put($handle, [
                         'kind' => self::K_NODE,
                         'id' => (int) $id,
@@ -189,13 +191,13 @@ final class Evidence
             if (\in_array(self::D_BOXLESS, $domains, true)) {
                 // 一行一个节点，不做"一行一批"：格式的基本单位是"一行一条记录"，
                 // 批量行会让"行数 = 条数"这条规则失效，而计数账正是靠它判截断的。
-                foreach ($recorder->boxlessNodes() as $id) {
+                foreach ($history->boxlessNodes() as $id) {
                     self::put($handle, ['kind' => self::K_BOXLESS, 'node' => $id]);
                 }
             }
 
             if (\in_array(self::D_EVICTED, $domains, true)) {
-                foreach ($recorder->evictedNodes() as $id => $meta) {
+                foreach ($history->evictedNodes() as $id => $meta) {
                     self::put($handle, [
                         'kind' => self::K_EVICTED,
                         'node' => (int) $id,
@@ -210,31 +212,31 @@ final class Evidence
             }
 
             if (\in_array(self::D_SCRIPT, $domains, true)) {
-                $script = $recorder->script();
+                $script = $history->script();
                 if ($script !== null) {
                     self::put($handle, ['kind' => self::K_SCRIPT] + $script->toArray());
                 }
             }
 
             if (\in_array(self::D_FRAMES, $domains, true)) {
-                foreach ($recorder->frames() as $frame) {
+                foreach ($history->frames() as $frame) {
                     self::put($handle, ['kind' => self::K_FRAME] + $frame->encode());
                 }
             }
 
             if (\in_array(self::D_GEOMETRY, $domains, true)) {
-                foreach ($recorder->geometryFrames() as $frame) {
+                foreach ($history->geometryFrames() as $frame) {
                     // 用"该帧新采的"而不是 `geometryRows()`：后者是累积视图（到该帧为止
                     // 每节点最近一次），拿去导出会把前序记录重复写 N 遍。
-                    foreach ($recorder->geometrySamples($frame) as $row) {
+                    foreach ($history->geometrySamples($frame) as $row) {
                         self::put($handle, ['kind' => self::K_GEOMETRY] + $row->encode());
                     }
                 }
             }
 
             if (\in_array(self::D_PAINT, $domains, true)) {
-                foreach ($recorder->paintFrames() as $frame) {
-                    $record = $recorder->paintFrame($frame);
+                foreach ($history->paintFrames() as $frame) {
+                    $record = $history->paintFrame($frame);
                     if ($record !== null) {
                         self::put($handle, ['kind' => self::K_PAINT] + $record->encode());
                     }
@@ -242,20 +244,20 @@ final class Evidence
             }
 
             if (\in_array(self::D_NETWORK, $domains, true)) {
-                foreach ($recorder->networkRows() as $row) {
+                foreach ($history->networkRows() as $row) {
                     self::put($handle, ['kind' => self::K_NETWORK] + $row->encode());
                 }
             }
 
             if (\in_array(self::D_ASYNC, $domains, true)) {
-                foreach ($recorder->asyncRows() as $row) {
+                foreach ($history->asyncRows() as $row) {
                     self::put($handle, ['kind' => self::K_ASYNC] + $row->encode());
                 }
             }
 
             if (\in_array(self::D_BODIES, $domains, true)) {
-                foreach ($recorder->bodyRequests() as $requestId) {
-                    $body = $recorder->bodyAt($requestId);
+                foreach ($history->bodyRequests() as $requestId) {
+                    $body = $history->bodyAt($requestId);
                     if ($body !== null) {
                         self::put($handle, ['kind' => self::K_BODY] + $body->encode());
                     }
@@ -563,22 +565,24 @@ final class Evidence
      */
     private static function manifest(Recorder $recorder, array $domains): array
     {
+        // 读语义全在 History（审查面）：本类只管把环写成文件这个动作。
+        $history = new History($recorder);
         $open = \array_flip($domains);
         $counts = [];
 
         // counts 与写入取自同一份来源（Recorder 的访问器），所以"写漏一段"会让
         // 读取时的条数账立刻红 —— 那正是这张账的用处。
         $plan = [
-            self::K_NODE => [self::D_NODES, \count($recorder->nodeIndex())],
-            self::K_BOXLESS => [self::D_BOXLESS, \count($recorder->boxlessNodes())],
-            self::K_EVICTED => [self::D_EVICTED, \count($recorder->evictedNodes())],
-            self::K_SCRIPT => [self::D_SCRIPT, $recorder->script() === null ? 0 : 1],
-            self::K_FRAME => [self::D_FRAMES, \count($recorder->frames())],
-            self::K_GEOMETRY => [self::D_GEOMETRY, $recorder->geometryCoverage()['nodes']],
-            self::K_PAINT => [self::D_PAINT, \count($recorder->paintFrames())],
-            self::K_NETWORK => [self::D_NETWORK, \count($recorder->networkRows())],
-            self::K_ASYNC => [self::D_ASYNC, \count($recorder->asyncRows())],
-            self::K_BODY => [self::D_BODIES, \count($recorder->bodyRequests())],
+            self::K_NODE => [self::D_NODES, \count($history->nodeIndex())],
+            self::K_BOXLESS => [self::D_BOXLESS, \count($history->boxlessNodes())],
+            self::K_EVICTED => [self::D_EVICTED, \count($history->evictedNodes())],
+            self::K_SCRIPT => [self::D_SCRIPT, $history->script() === null ? 0 : 1],
+            self::K_FRAME => [self::D_FRAMES, \count($history->frames())],
+            self::K_GEOMETRY => [self::D_GEOMETRY, $history->geometryCoverage()['nodes']],
+            self::K_PAINT => [self::D_PAINT, \count($history->paintFrames())],
+            self::K_NETWORK => [self::D_NETWORK, \count($history->networkRows())],
+            self::K_ASYNC => [self::D_ASYNC, \count($history->asyncRows())],
+            self::K_BODY => [self::D_BODIES, \count($history->bodyRequests())],
         ];
         foreach ($plan as $kind => [$domain, $count]) {
             if (isset($open[$domain])) {
@@ -594,9 +598,9 @@ final class Evidence
             'version' => self::VERSION,
             'domains' => $domains,
             'counts' => $counts,
-            'options' => $recorder->options()->toManifest(),
+            'options' => $history->options()->toManifest(),
             'digests' => [
-                'drive' => $recorder->script()?->digest() ?? '',
+                'drive' => $history->script()?->digest() ?? '',
                 'facts' => $facts['digest'],
                 'external' => Digest::ofExternal($recorder),
             ],

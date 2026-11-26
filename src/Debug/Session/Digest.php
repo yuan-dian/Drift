@@ -100,13 +100,14 @@ final class Digest
      */
     private static function ofMode(Recorder $recorder, bool $causal): array
     {
+        $history = new History($recorder);
         $frames = [];
-        foreach ($recorder->frames() as $id => $frame) {
+        foreach ($history->frames() as $id => $frame) {
             $frames[(int) $id] = self::hash($causal ? self::causal($frame) : self::ofFrame($frame));
         }
 
         $nodes = [];
-        foreach ($recorder->nodeIndex() as $id => $meta) {
+        foreach ($history->nodeIndex() as $id => $meta) {
             $nodes[(int) $id] = [$meta['c'], $meta['p']];
         }
         \ksort($nodes);
@@ -140,8 +141,9 @@ final class Digest
      */
     public static function ofExternal(Recorder $recorder): string
     {
+        $history = new History($recorder);
         $items = [];
-        foreach ($recorder->networkRows() as $row) {
+        foreach ($history->networkRows() as $row) {
             $items[] = [$row->method, self::urlTemplate($row->url), $row->status];
         }
 

@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\Debug\Session\CausalQuery;
 use Drift\Debug\Session\GeometryQuery;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\LiveQuery;
 use Drift\Debug\Session\PaintQuery;
 use Drift\Debug\Session\Query;
@@ -30,10 +31,11 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
  * 1. 门面**不带可变状态** —— 带状态的门面就是下一轮上帝类的种子；
  * 2. 除 `align` / `find` 两个声明的组合点外，每个查询方法体是**单条分派**；
  * 3. 门面**没有私有 / 受保护方法** —— 逻辑没有地方可藏；
- * 4. 六个域类的构造参数只有 `Recorder`（结构域多一个几何域，是唯一允许的域间边）。
+ * 4. 六个域类一律经读面 {@see History} 取数（结构域多一个几何域，是唯一允许的
+ *    域间边）；只有内省域还认识写面，因为它要给 `pick` 命中的新节点**发号**。
  *
- * 四条都不是风格偏好：去掉任何一条，"读侧的分界线与写侧的记录一一对应"就退化
- * 成一句注释，而注释不会咬人。
+ * 四条都不是风格偏好：去掉任何一条，"读侧的分界线与写侧（`Recorder::ledger()`
+ * 那一个出口）一一对应"就退化成一句注释，而注释不会咬人。
  */
 final class QuerySeamsTest extends SmokeTestCase
 {
@@ -56,6 +58,15 @@ final class QuerySeamsTest extends SmokeTestCase
         LiveQuery::class,
     ];
 
+    /**
+     * 允许直接持**写面**的域。
+     *
+     * 只有内省域：`pick()` 命中一个从没发过号的新节点时要给它一个地址（`idOf()`），
+     * 而发号会写注册表 —— 那是采集的事，不属于读面。把它塞进 `History` 会让
+     * "读面不写"这条失效。
+     */
+    private const WRITE_AWARE = [LiveQuery::class];
+
     public function testTheFacadeHoldsNoMutableState(): void
     {
         $ref = new \ReflectionClass(Query::class);
@@ -72,11 +83,24 @@ final class QuerySeamsTest extends SmokeTestCase
             '可变的：' . \implode(', ', $mutable),
         );
 
-        // 一个记录器 + 六个域，多一个就说明有人把状态搬回门面了。
+        // 一个读面 + 六个域，多一个就说明有人把状态搬回门面了。
         check(
-            '门面只持有记录器与六个域',
+            '门面只持有读面与六个域',
             \count($ref->getProperties()) === 7,
             '实际 ' . \count($ref->getProperties()) . ' 个',
+        );
+
+        // ★ 门面**不许**直接持有写面：认识 `Recorder` 只为了构造一次读面。一旦留一份
+        //   引用，"顺手在这儿读一下记录"就有了入口，读侧的分界线立刻开始漏。
+        $props = [];
+        foreach ($ref->getProperties() as $property) {
+            $type = $property->getType();
+            $props[$property->getName()] = $type instanceof \ReflectionNamedType ? $type->getName() : '?';
+        }
+        check(
+            '门面不持写面（Recorder）',
+            !\in_array(Recorder::class, $props, true),
+            '实际：' . \json_encode($props),
         );
 
         check('门面是 final', $ref->isFinal());
@@ -126,7 +150,7 @@ final class QuerySeamsTest extends SmokeTestCase
         );
     }
 
-    public function testDomainsKnowOnlyTheRecorder(): void
+    public function testDomainsReadThroughTheHistory(): void
     {
         $edges = [];
         foreach (self::DOMAINS as $class) {
@@ -141,16 +165,34 @@ final class QuerySeamsTest extends SmokeTestCase
                 $types[] = $type instanceof \ReflectionNamedType ? $type->getName() : '?';
             }
 
-            check(
-                "{$class} 的构造参数从记录器开始",
-                ($types[0] ?? '') === Recorder::class,
-                '实际：' . \implode(', ', $types),
-            );
+            if (\in_array($class, self::WRITE_AWARE, true)) {
+                // 内省域：写面在前（发号），读面在后。
+                check(
+                    "{$class} 认识写面也给读面",
+                    ($types[0] ?? '') === Recorder::class && \in_array(History::class, $types, true),
+                    '实际：' . \implode(', ', $types),
+                );
+            } else {
+                check(
+                    "{$class} 的构造参数从读面开始",
+                    ($types[0] ?? '') === History::class,
+                    '实际：' . \implode(', ', $types),
+                );
+                // 除读面之外不许再认识别的 —— 尤其不许偷偷把写面拿回来。
+                check(
+                    "{$class} 不直接持写面",
+                    !\in_array(Recorder::class, $types, true),
+                    '实际：' . \implode(', ', $types),
+                );
+            }
 
             // 除"结构 → 几何"这一条，域之间不许互相认识。多一条就是环的开始：
             // 几何域的 lookup() 一旦要问"这个节点那时在不在"，两边就只能靠深度限制收场。
+            // 读面不是域，不计入域间边。
             foreach (\array_slice($types, 1) as $extra) {
-                $edges[$class] = $extra;
+                if (self::isDomain($extra)) {
+                    $edges[$class] = $extra;
+                }
             }
         }
 
@@ -159,6 +201,12 @@ final class QuerySeamsTest extends SmokeTestCase
             $edges === [StructureQuery::class => GeometryQuery::class],
             '实际：' . \json_encode($edges),
         );
+    }
+
+    /** 这个类名是不是六个域之一（读面 / 写面 / 记录类型都不算）。 */
+    private static function isDomain(string $type): bool
+    {
+        return \in_array($type, self::DOMAINS, true);
     }
 
     /**

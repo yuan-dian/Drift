@@ -33,7 +33,7 @@ namespace Drift\Debug\Session;
  */
 final class TrafficQuery
 {
-    public function __construct(private readonly Recorder $recorder)
+    public function __construct(private readonly History $history)
     {
     }
 
@@ -49,9 +49,9 @@ final class TrafficQuery
      */
     public function network(?int $request = null, int $limit = 50): array
     {
-        $window = $this->recorder->networkCoverage();
+        $window = $this->history->networkCoverage();
         if ($request !== null) {
-            $record = $this->recorder->networkAt($request);
+            $record = $this->history->networkAt($request);
             if ($record === null) {
                 return [
                     'rows' => [],
@@ -66,7 +66,7 @@ final class TrafficQuery
 
         $rows = \array_map(
             static fn(NetworkRecord $r): array => $r->toArray(),
-            $this->recorder->networkRows(),
+            $this->history->networkRows(),
         );
         $total = \count($rows);
 
@@ -96,7 +96,7 @@ final class TrafficQuery
      */
     public function networkBody(int $request, string $part = 'both', int $maxBytes = 8 * 1024): array
     {
-        $window = $this->recorder->bodyCoverage();
+        $window = $this->history->bodyCoverage();
         $part = \in_array($part, ['both', 'request', 'response'], true) ? $part : 'both';
         $maxBytes = \max(0, $maxBytes);
         if (($window['captured'] ?? false) !== true) {
@@ -108,9 +108,9 @@ final class TrafficQuery
                 'window' => $window,
             ];
         }
-        $record = $this->recorder->bodyAt($request);
+        $record = $this->history->bodyAt($request);
         if ($record === null) {
-            $skeleton = $this->recorder->networkAt($request);
+            $skeleton = $this->history->networkAt($request);
 
             return [
                 'request' => $request,
@@ -120,7 +120,7 @@ final class TrafficQuery
                 // 用报文窗口判会错：报文窗口(200)比网络窗口(500)小，网络里还在的
                 // 请求会被说成"窗口外"。
                 'miss' => $skeleton === null
-                    ? $this->missReason($request, $this->recorder->networkCoverage())
+                    ? $this->missReason($request, $this->history->networkCoverage())
                     : 'body-not-retained',
                 'window' => $window,
             ];
@@ -141,13 +141,13 @@ final class TrafficQuery
      */
     public function async(?int $job = null, int $limit = 50): array
     {
-        $window = $this->recorder->asyncCoverage();
+        $window = $this->history->asyncCoverage();
         $captured = ($window['captured'] ?? false) === true;
         // 挂起任务的 pendingFrames 要有一个"问的这一刻"，不能拿 0 当现在。
-        $frame = $this->recorder->frameId() > 0 ? $this->recorder->frameId() : $this->recorder->lastFrameId();
+        $frame = $this->history->frameId() > 0 ? $this->history->frameId() : $this->history->lastFrameId();
 
         if ($job !== null) {
-            $record = $this->recorder->asyncAt($job);
+            $record = $this->history->asyncAt($job);
             if ($record === null) {
                 return [
                     'rows' => [],
@@ -170,7 +170,7 @@ final class TrafficQuery
 
         $rows = \array_map(
             static fn(AsyncRecord $r): array => $r->select($frame),
-            $this->recorder->asyncRows(),
+            $this->history->asyncRows(),
         );
         $total = \count($rows);
 

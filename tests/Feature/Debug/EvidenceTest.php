@@ -17,6 +17,7 @@ use Drift\Debug\Session\NetworkRecord;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -179,6 +180,7 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         $first = self::tempFile('.evidence');
         $second = self::tempFile('.evidence');
@@ -201,6 +203,8 @@ final class EvidenceTest extends SmokeTestCase
             );
 
             $rehydrated = Recorder::hydrate(Evidence::read($first));
+
+            $rehydratedHistory = new History($rehydrated);
             Evidence::write($rehydrated, $second);
 
             $a = (string) \file_get_contents($first);
@@ -219,10 +223,11 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install(RecordOptions::framesOnly());
+        $history = new History($recorder);
 
         try {
             $app->frame(0.0, $this->constraints());
-            $coverage = $recorder->geometryCoverage();
+            $coverage = $history->geometryCoverage();
 
             check('几何档位自报 off', ($coverage['mode'] ?? '') === 'off', \json_encode($coverage));
             check('没有几何记录', ($coverage['frames'] ?? -1) === 0 && ($coverage['nodes'] ?? -1) === 0,
@@ -239,6 +244,7 @@ final class EvidenceTest extends SmokeTestCase
     public function testAsyncIsOptInAndRoundTrips(): void
     {
         $recorder = Recorder::install(RecordOptions::of(async: true));
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {
@@ -256,8 +262,9 @@ final class EvidenceTest extends SmokeTestCase
 
             $bag = Evidence::read($path);
             $offline = Recorder::hydrate($bag);
+            $offlineHistory = new History($offline);
             check('导入后预算仍说采过异步', $offline->options()->async() === true);
-            check('导入后任务 id 不重发', $offline->asyncAt($id)?->job === 'load.page');
+            check('导入后任务 id 不重发', $offlineHistory->asyncAt($id)?->job === 'load.page');
 
             $onlineQuery = new Query($recorder);
             $offlineQuery = new Query($offline);
@@ -275,6 +282,7 @@ final class EvidenceTest extends SmokeTestCase
     public function testEvictedNodesSurvivePackageRoundTrip(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {
@@ -286,8 +294,9 @@ final class EvidenceTest extends SmokeTestCase
             check('回收条数自报', ($manifest['counts']['evicted'] ?? 0) === 1);
 
             $offline = Recorder::hydrate(Evidence::read($path));
-            check('离线节点状态仍是 evicted', $offline->nodeStatus(7) === 'evicted');
-            check('没发过的号仍是 unknown', $offline->nodeStatus(8) === 'unknown');
+            $offlineHistory = new History($offline);
+            check('离线节点状态仍是 evicted', $offlineHistory->nodeStatus(7) === 'evicted');
+            check('没发过的号仍是 unknown', $offlineHistory->nodeStatus(8) === 'unknown');
         } finally {
             Recorder::uninstall();
             @\unlink($path);
@@ -306,6 +315,7 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {
@@ -316,6 +326,7 @@ final class EvidenceTest extends SmokeTestCase
 
             Evidence::write($recorder, $path);
             $offline = Recorder::hydrate(Evidence::read($path));
+            $offlineHistory = new History($offline);
 
             check('指纹逐值相同', Digest::of($recorder) === Digest::of($offline), '两边 digest 不同');
             // 对象不能用 `===`（那是同一实例），比 encode 的输出才是逐值。
@@ -324,12 +335,12 @@ final class EvidenceTest extends SmokeTestCase
                 \array_map(static fn(FrameRecord $f): array => $f->encode(), \array_values($recorder->frames()))
                 === \array_map(static fn(FrameRecord $f): array => $f->encode(), \array_values($offline->frames())),
             );
-            check('节点表相同', $recorder->nodeIndex() === $offline->nodeIndex());
-            check('几何相同', $recorder->geometryFrames() === $offline->geometryFrames());
+            check('节点表相同', $history->nodeIndex() === $offlineHistory->nodeIndex());
+            check('几何相同', $history->geometryFrames() === $offlineHistory->geometryFrames());
             // 生命周期两端也要逐值过包：少了它们，离线回放会把整棵树当成"一直在"，
             // 而在线时它明明删对了一半 —— 这是最典型的"导出即失真"。
-            check('回收表相同（含父 / 类型 / 寿命两端）', $recorder->evictedNodes() === $offline->evictedNodes());
-            check('离开帧相同', $recorder->goneNodes() === $offline->goneNodes());
+            check('回收表相同（含父 / 类型 / 寿命两端）', $history->evictedNodes() === $offlineHistory->evictedNodes());
+            check('离开帧相同', $history->goneNodes() === $offlineHistory->goneNodes());
 
             $online = new Query($recorder);
             $remote = new Query($offline);
@@ -378,7 +389,10 @@ final class EvidenceTest extends SmokeTestCase
         );
 
         $a = Recorder::hydrate($base);
+
+        $aHistory = new History($a);
         $b = Recorder::hydrate($sameFactsOtherTarget);
+        $bHistory = new History($b);
         check(
             '换目标：因果指纹不变',
             Digest::of($a)['digest'] === Digest::of($b)['digest'],
@@ -443,6 +457,7 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {
@@ -467,6 +482,7 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {
@@ -564,6 +580,7 @@ final class EvidenceTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
         $path = self::tempFile('.evidence');
 
         try {

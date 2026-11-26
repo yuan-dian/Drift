@@ -8,6 +8,7 @@ use Drift\App\DebugInputInterceptor;
 use Drift\App\DebugSession;
 use Drift\App\DebugTicker;
 use Drift\Debug\Protocol\Server;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Geometry\BoxConstraints;
@@ -226,7 +227,8 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         // 而主循环在空闲窗口里照常推进。拿 `frame` 配对，静止几十秒后它就会跑到
         // 60 帧窗口之外，`boxes?frame=N` 回 frame-out-of-window，前端退回缺省帧，
         // 于是当前画面套上了另一页的线框。几何窗口最新帧才是这张图能配上的几何。
-        $anchor = $this->session?->recorder()->geometryCoverage()['to'] ?? $frame;
+        $history = $this->session === null ? null : new History($this->session->recorder());
+        $anchor = $history?->geometryCoverage()['to'] ?? $frame;
         $this->shot?->capture($canvas, $anchor, \hrtime(true) / 1e6);
     }
 

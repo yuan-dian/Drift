@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\Debug\Session\Query;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -47,6 +48,7 @@ final class GeometryAncestorTest extends SmokeTestCase
     public function testStableAncestorOffsetSurvivesWindowRotation(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app = new RotatingApplication();
             $surface = new SurfaceProbe();
@@ -78,9 +80,9 @@ final class GeometryAncestorTest extends SmokeTestCase
                 $app->frame($i * 16.0, $this->constraints());
             }
 
-            $coverage = $recorder->geometryCoverage();
+            $coverage = $history->geometryCoverage();
             $last = (int) $coverage['to'];
-            $frames = $recorder->geometryFrames();
+            $frames = $history->geometryFrames();
             check('前提：祖先采样帧已被裁出几何窗口', \min($frames) > $firstFrame,
                 'first=' . $firstFrame . ' minFrame=' . \min($frames) . ' coverage=' . \json_encode($coverage));
             $lateRows = $query->boxes($last)['rows'];

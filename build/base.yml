@@ -175,6 +175,9 @@ ignore:
   - ../../src/Debug/Protocol
   - ../../src/App/DebugSession.php
   - ../../src/App/Replay.php
+  # 记录层的**读面**：`Query` 六个域与 `Evidence` / `Digest` 都经它取数。
+  # 它在写面（Recorder）的 `ledger()` 出口之下，只被审查面引用 ⇒ 不进产物。
+  - ../../src/Debug/Session/History.php
   - ../../src/Debug/Session/Query.php
   # Query 门面背后的六个域实现（因果 / 几何 / 绘制 / 外部工作 / 结构 / 内省）。
   # 它们只被 Query 引用，而 Query 已排除 ⇒ 整组随门面一起不进产物。

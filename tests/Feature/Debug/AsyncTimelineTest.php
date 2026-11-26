@@ -10,6 +10,7 @@ use Drift\App\SyncTaskHost;
 use Drift\Debug\Session\AsyncRecord;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -47,6 +48,7 @@ final class AsyncTimelineTest extends SmokeTestCase
     public function testTraceIsOptInAndReportsNotCaptured(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             check('没开预算时提交 tap 立刻返回 0', Recorder::tapAsyncSubmit('sync', 'job', 0) === 0);
             $answer = (new Query($recorder))->async();
@@ -65,6 +67,7 @@ final class AsyncTimelineTest extends SmokeTestCase
     public function testSyncHostRecordsSubmitStartAndSettle(): void
     {
         $recorder = Recorder::install(RecordOptions::of(async: true));
+        $history = new History($recorder);
         try {
             // 后端不替我们推帧：显式开一帧，帧号才是"任务落在哪一帧"的真相。
             $recorder->beginFrame(0.0);
@@ -113,6 +116,7 @@ final class AsyncTimelineTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install(RecordOptions::of(async: true));
+        $history = new History($recorder);
 
         try {
             $app->frame(0.0, $this->constraints());
@@ -149,14 +153,15 @@ final class AsyncTimelineTest extends SmokeTestCase
     public function testCancelledAndTimeoutTasksKeepTheirOwnTerminalState(): void
     {
         $recorder = new Recorder(RecordOptions::of(async: true));
+        $history = new History($recorder);
 
         $cancelled = $recorder->noteAsyncSubmit('thread', 'cancel.me', 0);
         $recorder->noteAsyncSettle($cancelled, AsyncRecord::CANCELLED, '', 0.0);
         $timeout = $recorder->noteAsyncSubmit('process', 'slow.job', 0);
         $recorder->noteAsyncSettle($timeout, AsyncRecord::TIMEOUT, 'timeout', 9.0);
 
-        $a = $recorder->asyncAt($cancelled)?->select(4) ?? [];
-        $b = $recorder->asyncAt($timeout)?->select(4) ?? [];
+        $a = $history->asyncAt($cancelled)?->select(4) ?? [];
+        $b = $history->asyncAt($timeout)?->select(4) ?? [];
         check('取消不是 ok', ($a['state'] ?? '') === AsyncRecord::CANCELLED);
         check('超时保留具名码', ($b['state'] ?? '') === AsyncRecord::TIMEOUT
             && ($b['code'] ?? '') === 'timeout');

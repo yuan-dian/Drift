@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\App;
 
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Query;
 use Drift\Debug\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
@@ -70,6 +71,8 @@ final class DebugSession implements Session
     /** @var array<string, callable(array<string, scalar|null>): mixed> 具名副作用 */
     private array $effects = [];
 
+    private readonly History $history;
+
     private function __construct(
         private readonly Application $app,
         private readonly BoxConstraints $constraints,
@@ -79,6 +82,8 @@ final class DebugSession implements Session
         private readonly Script $script,
         private readonly SessionState $state,
     ) {
+        // 读语义在 History（审查面）；写侧仍直接走 Recorder。
+        $this->history = new History($recorder);
     }
 
     /**
@@ -271,7 +276,7 @@ final class DebugSession implements Session
             );
             if ($element === null) {
                 // 与 `props` 同一套词汇：写错号 / 号发过但节点已卸载 / 已被回收窗口挤掉。
-                $reason = match ($this->recorder->nodeStatus($node)) {
+                $reason = match ($this->history->nodeStatus($node)) {
                     'evicted' => '节点已被回收（超出存活窗口）',
                     'active' => '节点在登记表里但活树里已经没有它（已卸载）',
                     default => '这个号从没发过',
@@ -366,7 +371,7 @@ final class DebugSession implements Session
 
     public function lastFrameId(): int
     {
-        return $this->recorder->lastFrameId();
+        return $this->history->lastFrameId();
     }
 
     public function app(): Application

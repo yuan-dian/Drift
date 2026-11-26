@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Replay;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
@@ -165,6 +166,7 @@ final class AlignTest extends SmokeTestCase
         $session = \Drift\App\DebugSession::open($app, $constraints);
         try {
             $recorder = $session->recorder();
+            $history = new History($recorder);
             $id = Recorder::tapNetworkStart('GET', 'https://api.example.com/rows.php', 'inline');
             $recorder->beginFrame(16.0);
             Recorder::tapNetworkSettle($id, 200, 10, 5.0, true);
@@ -173,11 +175,11 @@ final class AlignTest extends SmokeTestCase
             $recorder->endFrame([], 0.0);
 
             $node = CounterState::$last?->element()?->debugId ?? 0;
-            $landed = $recorder->requestsLandingOn($node);
+            $landed = $history->requestsLandingOn($node);
             check('节点能反查到归因请求', $landed === [$id], \json_encode($landed));
 
             // 帧号以 recorder 实际为准：手工 beginFrame + app->frame 会各占一帧。
-            $settledFrame = $recorder->networkAt($id)?->settledAtFrame ?? 0;
+            $settledFrame = $history->networkAt($id)?->settledAtFrame ?? 0;
             $a = $session->query('align', ['node' => $node, 'frame' => $settledFrame]);
             check('对齐查询里网络域命中同一条请求', ($a['network']['found'] ?? false) === true
                 && ($a['network']['requests'][0]['request'] ?? 0) === $id, \json_encode($a['network']));
@@ -191,7 +193,7 @@ final class AlignTest extends SmokeTestCase
             CounterState::$last?->increment();
             $app->frame(32.0, $constraints);
             $recorder->endFrame([], 0.0);
-            $all = $recorder->requestsLandingOn($node);
+            $all = $history->requestsLandingOn($node);
             check('多条落地请求都反查得到（不只读第一条）', \count($all) === 2
                 && \in_array($id, $all, true) && \in_array($id2, $all, true), \json_encode($all));
         } finally {

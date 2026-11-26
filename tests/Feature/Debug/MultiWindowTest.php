@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\DebugSession;
 use Drift\Debug\Session\Digest;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\Target;
@@ -66,10 +67,11 @@ final class MultiWindowTest extends SmokeTestCase
     private function shots(DebugSession $session): array
     {
         $recorder = $session->recorder();
+        $history = new History($recorder);
 
         return [
             'frames' => \array_keys($recorder->frames()),
-            'nodes' => $recorder->nodeIndex(),
+            'nodes' => $history->nodeIndex(),
             'digest' => Digest::of($recorder)['digest'],
             'causal' => Digest::ofCausal($recorder)['digest'],
         ];
@@ -181,6 +183,7 @@ final class MultiWindowTest extends SmokeTestCase
         $surface->resize((int) self::W, (int) self::H, 1.0);
         $app->attach($surface, $constraints);
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         $app->frame(0.0, $constraints);
         $app->frame(16.0, $constraints);

@@ -6,6 +6,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 use Drift\App\Application;
 use Drift\Debug\Session\Edge;
 use Drift\Debug\Session\FrameRecord;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -46,6 +47,7 @@ final class RecorderTest extends SmokeTestCase
     public function testWhyExplainsAStateWrite(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $app = $this->boot();
@@ -70,7 +72,7 @@ final class RecorderTest extends SmokeTestCase
             $id = $element?->debugId ?? 0;
             check('元素拿到了稳定节点号', $id > 0, 'id=' . $id);
 
-            $why = $recorder->why($id, $recorder->lastFrameId());
+            $why = $history->why($id, $recorder->lastFrameId());
             $cause = $why['causes'][0] ?? [];
 
             check('重建被记录', $why['rebuilt'] === true);
@@ -94,6 +96,7 @@ final class RecorderTest extends SmokeTestCase
     public function testFramesCarryStagesAndTrimToCapacity(): void
     {
         $recorder = Recorder::install(2);
+        $history = new History($recorder);
 
         try {
             $app = $this->boot();
@@ -142,6 +145,7 @@ final class RecorderTest extends SmokeTestCase
     public function testIdleFramesDoNotEvictFramesThatChangedSomething(): void
     {
         $recorder = Recorder::install(RecordOptions::framesOnly(20));
+        $history = new History($recorder);
 
         try {
             $app = $this->boot();
@@ -194,6 +198,7 @@ final class RecorderTest extends SmokeTestCase
     public function testFramesInWindowKeepTheirNodesAlive(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $app = $this->boot();
@@ -203,7 +208,7 @@ final class RecorderTest extends SmokeTestCase
 
             $id = CounterState::$last?->element()?->debugId ?? 0;
             check('拿到了节点号', $id > 0, 'id=' . $id);
-            check('起初是活动节点', $recorder->nodeStatus($id) === 'active', $recorder->nodeStatus($id));
+            check('起初是活动节点', $history->nodeStatus($id) === 'active', $history->nodeStatus($id));
 
             for ($i = 2; $i <= 400; ++$i) {
                 $app->frame($i * 16.0, $this->constraints());
@@ -211,8 +216,8 @@ final class RecorderTest extends SmokeTestCase
 
             check(
                 '静止 400 帧后仍是活动节点',
-                $recorder->nodeStatus($id) === 'active',
-                'frame=' . $recorder->lastFrameId() . ' status=' . $recorder->nodeStatus($id),
+                $history->nodeStatus($id) === 'active',
+                'frame=' . $recorder->lastFrameId() . ' status=' . $history->nodeStatus($id),
             );
         } finally {
             Recorder::uninstall();
@@ -224,10 +229,11 @@ final class RecorderTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $app->frame(0.0, $this->constraints());
-            $before = \count($recorder->geometryFrames());
+            $before = \count($history->geometryFrames());
             check('首帧采了几何', $before > 0, 'frames=' . $before);
 
             // 先把盒的真实几何改掉：若跳过条件失效，这一帧会多出几何记录。
@@ -240,8 +246,8 @@ final class RecorderTest extends SmokeTestCase
                 $app->root(),
             );
 
-            check('全静止帧不再采几何', \count($recorder->geometryFrames()) === $before,
-                'frames=' . \count($recorder->geometryFrames()));
+            check('全静止帧不再采几何', \count($history->geometryFrames()) === $before,
+                'frames=' . \count($history->geometryFrames()));
             check('帧记录仍照常落账', \count($recorder->frames()) === 2,
                 'frames=' . \count($recorder->frames()));
         } finally {
@@ -284,6 +290,7 @@ final class RecorderTest extends SmokeTestCase
     public function testStageBudgetIsClearedBetweenFrames(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $recorder->beginFrame(0.0);
@@ -343,6 +350,7 @@ final class RecorderTest extends SmokeTestCase
     public function testAbortedFrameIsMarkedAndDoesNotLeakIntoTheNextOne(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $recorder->beginFrame(0.0);
@@ -385,6 +393,7 @@ final class RecorderTest extends SmokeTestCase
     public function testCauseCapIsMarkedOnTheFrame(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $app = new WideApplication();
@@ -414,15 +423,17 @@ final class RecorderTest extends SmokeTestCase
         $app = $this->boot();
 
         $first = Recorder::install();
+        $firstHistory = new History($first);
         $app->frame(0.0, $this->constraints());
-        $ids1 = \array_keys($first->nodeIndex());
-        $path1 = $first->pathOf((int) ($ids1[0] ?? 0));
+        $ids1 = \array_keys($firstHistory->nodeIndex());
+        $path1 = $firstHistory->pathOf((int) ($ids1[0] ?? 0));
         Recorder::uninstall();
 
         $second = Recorder::install();
+        $secondHistory = new History($second);
         try {
             $app->frame(16.0, $this->constraints());
-            $index = $second->nodeIndex();
+            $index = $secondHistory->nodeIndex();
             $ids2 = \array_keys($index);
 
             $broken = [];
@@ -446,8 +457,8 @@ final class RecorderTest extends SmokeTestCase
                 'min1=' . ($ids1 === [] ? 0 : \min($ids1)) . ' min2=' . ($ids2 === [] ? 0 : \min($ids2)),
             );
             $last2 = (int) ($ids2[\count($ids2) - 1] ?? 0);
-            check('重开后 pathOf 仍给得出类名路径', $second->pathOf($last2) !== '', 'path=' . $second->pathOf($last2));
-            check('首个会话的证据不被第二个会话改写', $first->pathOf((int) ($ids1[0] ?? 0)) === $path1, $path1);
+            check('重开后 pathOf 仍给得出类名路径', $secondHistory->pathOf($last2) !== '', 'path=' . $secondHistory->pathOf($last2));
+            check('首个会话的证据不被第二个会话改写', $firstHistory->pathOf((int) ($ids1[0] ?? 0)) === $path1, $path1);
         } finally {
             Recorder::uninstall();
         }
@@ -467,6 +478,7 @@ final class RecorderTest extends SmokeTestCase
     public function testNodeRecyclingKeepsReferencedAndRecentNodes(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $set = static function (string $name, mixed $value) use ($recorder): void {
@@ -490,13 +502,13 @@ final class RecorderTest extends SmokeTestCase
             $method = new \ReflectionMethod(Recorder::class, 'recycleNodes');
             $method->invoke($recorder);
 
-            check('过期且未被引用的节点被回收', $recorder->nodeStatus(1) === 'evicted');
-            check('最近出现的节点保留', $recorder->nodeStatus(2) === 'active');
-            check('帧窗口仍引用的节点保留', $recorder->nodeStatus(3) === 'active');
-            check('回收地址记下生命周期两端', ($recorder->evictedNodes()[1]['s'] ?? -1) === 1
-                && ($recorder->evictedNodes()[1]['f'] ?? -1) === 1, \json_encode($recorder->evictedNodes()[1] ?? null));
-            check('伴随元数据一起回收', !\in_array(1, $recorder->boxlessNodes(), true),
-                \json_encode($recorder->boxlessNodes()));
+            check('过期且未被引用的节点被回收', $history->nodeStatus(1) === 'evicted');
+            check('最近出现的节点保留', $history->nodeStatus(2) === 'active');
+            check('帧窗口仍引用的节点保留', $history->nodeStatus(3) === 'active');
+            check('回收地址记下生命周期两端', ($history->evictedNodes()[1]['s'] ?? -1) === 1
+                && ($history->evictedNodes()[1]['f'] ?? -1) === 1, \json_encode($history->evictedNodes()[1] ?? null));
+            check('伴随元数据一起回收', !\in_array(1, $history->boxlessNodes(), true),
+                \json_encode($history->boxlessNodes()));
         } finally {
             Recorder::uninstall();
         }
@@ -508,14 +520,15 @@ final class RecorderTest extends SmokeTestCase
     {
         $app = $this->boot();
         $recorder = Recorder::install();
+        $history = new History($recorder);
 
         try {
             $app->frame(0.0, $this->constraints());
-            $first = \array_keys($recorder->nodeIndex());
+            $first = \array_keys($history->nodeIndex());
 
             $recorder->reset();
             $app->frame(16.0, $this->constraints());
-            $second = \array_keys($recorder->nodeIndex());
+            $second = \array_keys($history->nodeIndex());
 
             check('一轮里确实登记了节点（否则下面恒真）', $first !== [], 'nodes=0');
             check(

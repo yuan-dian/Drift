@@ -36,8 +36,10 @@ final class LiveQuery
     /** L2 内存台账：跨多次 memory() 查询累积同一本 WeakMap，不进证据包（A55）。 */
     private ?MemoryProbe $memoryProbe = null;
 
-    public function __construct(private readonly Recorder $recorder)
-    {
+    public function __construct(
+        private readonly Recorder $recorder,
+        private readonly History $history,
+    ) {
     }
 
     /**
@@ -57,7 +59,7 @@ final class LiveQuery
             return ['found' => false, 'reason' => 'memory-unavailable'];
         }
         $this->memoryProbe ??= new MemoryProbe();
-        $answer = $this->memoryProbe->sample($roots, $this->recorder->lastFrameId(), $limit);
+        $answer = $this->memoryProbe->sample($roots, $this->history->lastFrameId(), $limit);
         $answer['found'] = true;
         $answer['limit'] = $limit;
 
@@ -99,8 +101,8 @@ final class LiveQuery
         $element = $this->findElement($roots, $node);
         if ($element === null) {
             // "号没发过"与"号发过但节点已卸载"必须分开：前者是地址写错，后者是活树里已经没有它。
-            $status = $this->recorder->nodeStatus($node);
-            $known = $this->recorder->nodeIndex()[$node] ?? null;
+            $status = $this->history->nodeStatus($node);
+            $known = $this->history->nodeIndex()[$node] ?? null;
 
             return [
                 'found' => false,
@@ -117,7 +119,7 @@ final class LiveQuery
         $t0 = \hrtime(true);
         $widget = $element->widget();
         $state = $element instanceof StatefulElement ? $element->state() : null;
-        $redact = $this->recorder->redactionEnabled();
+        $redact = $this->history->redactionEnabled();
 
         $w = ObjectDump::fields($widget, $maxDepth, $maxFields, $redact);
         $s = $state === null
@@ -126,7 +128,7 @@ final class LiveQuery
 
         return [
             'found' => true,
-            'liveFrame' => $this->recorder->lastFrameId(),
+            'liveFrame' => $this->history->lastFrameId(),
             'widget' => self::shortClass($widget::class),
             'element' => self::shortClass($element::class),
             'state' => $state === null ? null : self::shortClass($state::class),
@@ -175,7 +177,7 @@ final class LiveQuery
         $base = [
             'x' => $x,
             'y' => $y,
-            'liveFrame' => $this->recorder->lastFrameId(),
+            'liveFrame' => $this->history->lastFrameId(),
             'roots' => 0,
         ];
 
@@ -228,7 +230,7 @@ final class LiveQuery
                 if ($owner === null) {
                     $ownerless++;
                 }
-                $chain[] = self::boxFact($box, $owner, $this->recorder);
+                $chain[] = self::boxFact($box, $owner, $this->recorder, $this->history);
             }
             $chain = \array_reverse($chain);
             $last = $chain[\count($chain) - 1];
@@ -258,7 +260,7 @@ final class LiveQuery
     /**
      * 链上一环的标量事实；`node` 只由会话发号，查询不自造地址。
      */
-    private static function boxFact(object $box, ?Element $owner, Recorder $recorder): array
+    private static function boxFact(object $box, ?Element $owner, Recorder $recorder, History $history): array
     {
         $size = $box->size();
         $fact = [
@@ -277,10 +279,10 @@ final class LiveQuery
         $node = $recorder->idOf($owner);
         $state = $owner instanceof StatefulElement ? $owner->state() : null;
         $fact['node'] = $node;
-        $fact['widget'] = $recorder->typeOf($node);
+        $fact['widget'] = $history->typeOf($node);
         $fact['element'] = self::shortClass($owner::class);
         $fact['state'] = $state === null ? null : self::shortClass($state::class);
-        $fact['path'] = $recorder->pathOf($node);
+        $fact['path'] = $history->pathOf($node);
 
         return $fact;
     }
@@ -311,14 +313,14 @@ final class LiveQuery
      */
     public function highlight(): array
     {
-        $node = $this->recorder->highlightedNode();
-        $askedFrame = $this->recorder->highlightFrame();
-        $drawn = $this->recorder->overlayDrawn();
+        $node = $this->history->highlightedNode();
+        $askedFrame = $this->history->highlightFrame();
+        $drawn = $this->history->overlayDrawn();
 
         return [
             'node' => $node,
-            'type' => $node > 0 ? $this->recorder->typeOf($node) : null,
-            'path' => $node > 0 ? $this->recorder->pathOf($node) : null,
+            'type' => $node > 0 ? $this->history->typeOf($node) : null,
+            'path' => $node > 0 ? $this->history->pathOf($node) : null,
             'askedFrame' => $askedFrame,
             'drawnNode' => $drawn === null ? null : $drawn['node'],
             'drawnFrame' => $drawn === null ? null : $drawn['frame'],
@@ -326,7 +328,7 @@ final class LiveQuery
                 && $drawn !== null
                 && $drawn['node'] === $node
                 && $drawn['frame'] >= $askedFrame,
-            'frame' => $this->recorder->frameId(),
+            'frame' => $this->history->frameId(),
         ];
     }
 

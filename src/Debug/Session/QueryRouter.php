@@ -149,6 +149,9 @@ final class QueryRouter implements SessionQueries
     /** 规格表里的参数项没有第二元素 = 必填。用哨兵而不是 `null`：`?int` 的缺省正是 `null`。 */
     private const string REQUIRED = "\0required";
 
+    /** 读面：除了 `Digest::of()` 要原始录制器，本类其余读都走它。 */
+    private readonly History $history;
+
     /**
      * @param (callable(): array<int, mixed>)|null $treeRoots       活树根（离线为 null）
      * @param (callable(): array<int, mixed>)|null $treeRootOrigins 活树根原点（离线为 null）
@@ -160,6 +163,7 @@ final class QueryRouter implements SessionQueries
         private readonly mixed $treeRootOrigins = null,
         private readonly mixed $state = null,
     ) {
+        $this->history = new History($recorder);
     }
 
     /**
@@ -205,7 +209,7 @@ final class QueryRouter implements SessionQueries
         return match ($name) {
             'digest' => Digest::of($this->recorder),
             // 包没带脚本域时返回空数组：明确"这次录制没有脚本"，而不是崩在 null 上。
-            'script' => $this->recorder->script()?->toArray() ?? [],
+            'script' => $this->history->script()?->toArray() ?? [],
             // 会话状态不是证据事实（`Query` 只认 `Recorder`），所以走这里而不是
             // `stats`：`stats` 答的是"录到了什么"，`state` 答的是"这个会话还在动吗"。
             'state' => $this->stateQuery(),
@@ -232,7 +236,7 @@ final class QueryRouter implements SessionQueries
             'session' => $this->sessionToken(),
             'state' => $state instanceof SessionState ? $state->state : 'offline',
             'reason' => $state instanceof SessionState ? $state->reason : null,
-            'lastFrame' => $this->recorder->lastFrameId(),
+            'lastFrame' => $this->history->lastFrameId(),
         ];
     }
 

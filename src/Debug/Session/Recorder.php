@@ -72,10 +72,10 @@ final class Recorder implements PaintObserver
     public const int PAINT_FRAMES = 60;
 
     /** 单帧最多记多少个重画节点；超出标 truncated，paintedTotal 仍给真实总数。 */
-    private const int MAX_PAINTED_NODES = 4096;
+    public const int MAX_PAINTED_NODES = 4096;
 
     /** 单帧最多记多少个层缓存未命中；边界的数量远小于节点数，上限只防异常树。 */
-    private const int MAX_PAINT_MISSES = 512;
+    public const int MAX_PAINT_MISSES = 512;
 
     /** 节点超过这么多帧没再出现就可以回收（仍在窗口里的引用会保住它）。 */
     private const int NODE_TTL_FRAMES = 120;
@@ -154,7 +154,7 @@ final class Recorder implements PaintObserver
      * 已回收节点 id => `['p' => 父, 'c' => 类名, 'x' => Flex, 'f' => 出生帧,
      * 's' => 最后见到帧, 'g' => 离开树的那帧]`。
      *
-     * 旧包里这个值是单个 int（最后见到帧），{@see self::evictedRow()} 在入口归一。
+     * 旧包里这个值是单个 int（最后见到帧），{@see EvidenceBag::evictedRow()} 在入口归一。
      * 回收之后**节点仍在历史里活着** ——"这个按钮第 40 帧还在、第 60 帧没了"正是
      * 回放最想看的，只留 `s` 就答不了；父与类型也要留，否则能查出它存在过、却画不出
      * 它在哪儿。id 永不复用。
@@ -513,7 +513,7 @@ final class Recorder implements PaintObserver
         // 逐层读父与类名，不能每次调用都先扫一遍整张表判"这条是 int 还是数组"。
         $recorder->evicted = [];
         foreach ($bag->evicted as $id => $meta) {
-            $recorder->evicted[(int) $id] = self::evictedRow($meta);
+            $recorder->evicted[(int) $id] = EvidenceBag::evictedRow($meta);
         }
         $recorder->goneAt = $bag->gone;
         $recorder->frames = [];
@@ -557,69 +557,9 @@ final class Recorder implements PaintObserver
     }
 
     /** @return list<int> 没有自己盒的节点（复合控件），导出证据包要逐条带上。 */
-    public function boxlessNodes(): array
-    {
-        $ids = \array_map('\intval', \array_keys($this->boxless));
-        \sort($ids);
-
-        return $ids;
-    }
-
     /** @return list<int> 有几何记录的帧号（升序） */
-    public function geometryFrames(): array
-    {
-        $ids = \array_map('\intval', \array_keys($this->geometry));
-        \sort($ids);
-
-        return $ids;
-    }
-
     /** @return list<int> 有绘制记录的帧号（升序） */
-    public function paintFrames(): array
-    {
-        $ids = \array_map('\intval', \array_keys($this->paint));
-        \sort($ids);
-
-        return $ids;
-    }
-
-    public function paintFrame(int $frame): ?PaintRecord
-    {
-        return $this->paint[$frame] ?? null;
-    }
-
-    /**
-     * 绘制域的窗口与采集状态。
-     *
-     * `captured=false` 与"这一帧没画"必须分开：前者是预算没开，后者是帧整段跳过。
-     * 少了这一位，读者会把"没采"读成"没画"。
-     *
-     * @return array<string, mixed>
-     */
-    public function paintCoverage(): array
-    {
-        $ids = $this->paintFrames();
-
-        return [
-            'captured' => $this->options->paint(),
-            'frames' => \count($ids),
-            'capacity' => self::PAINT_FRAMES,
-            'from' => $ids === [] ? 0 : $ids[0],
-            'to' => $ids === [] ? 0 : $ids[\count($ids) - 1],
-            'paintedCap' => self::MAX_PAINTED_NODES,
-            'missesCap' => self::MAX_PAINT_MISSES,
-        ];
-    }
-
     /** @return list<int> 有报文的 requestId（升序） */
-    public function bodyRequests(): array
-    {
-        $ids = \array_map('\intval', \array_keys($this->bodies));
-        \sort($ids);
-
-        return $ids;
-    }
-
     // -------------------------------------------------------------- 热路径挂点
 
     /**
@@ -898,27 +838,7 @@ final class Recorder implements PaintObserver
     }
 
     /** 当前高亮的节点号；`0` = 没有。 */
-    public function highlightedNode(): int
-    {
-        return $this->highlightNode;
-    }
-
     /** 当前这个高亮是在第几帧被请求的；`0` = 本次录制还没请求过。 */
-    public function highlightFrame(): int
-    {
-        return $this->highlightFrame;
-    }
-
-    /**
-     * 最近一次真的上屏的叠加（见 {@see self::$overlayDrawn}）；一次都没有为 `null`。
-     *
-     * @return array{frame: int, node: int}|null
-     */
-    public function overlayDrawn(): ?array
-    {
-        return $this->overlayDrawn;
-    }
-
     /**
      * 原始帧号：`beginFrame()` 每帧自增，与 `frames` 窗口是否裁剪无关。
      *
@@ -928,6 +848,75 @@ final class Recorder implements PaintObserver
     public function frameId(): int
     {
         return $this->frameId;
+    }
+
+    // ------------------------------------------------------------ 环的只读视图
+
+    /**
+     * 环的当前内容：读面（{@see History}，审查面）从这里一次取全。
+     *
+     * ## 为什么是写面上唯一的读出口
+     *
+     * 写面必须薄（A54 的 L1）：它跟着 exe 走，每个多出来的方法都是一段发布态
+     * 执行不到的机器码。把读方法搬走**之前**实测：`Recorder.cc` 5786 行里有
+     * 1388 行（24%）是它们 —— 那部分产物在发布态一次都不执行。
+     *
+     * 一个出口而不是十几个 getter：读面要的正是"整环"（`why()` 要帧环、
+     * `pathOf()` 要节点表、`geometryRows()` 要几何表加基线）。十几个 getter 会让
+     * 写面多扛十几个方法壳，而下一个加域的人要先想"该加哪个 getter"。
+     *
+     * ## 为什么返回数组而不是对象
+     *
+     * 返回一个 `Store` 值对象意味着写面引用它 ⇒ 它可达 ⇒ tpc 整类编进产物，白干。
+     * 数组没有类型可引用。形状由 `History` 声明，它是唯一消费者。
+     *
+     * ## 为什么每次调用都重新取
+     *
+     * `debug serve` 长期运行、每帧都在写；构造时取一次快照，读者拿到的是几帧前
+     * 的树 —— 那正是 A64 禁止的"拿现在冒充当时"的镜像。取一次是十几个标量拷贝
+     * （PHP 数组赋值是写时复制，不复制元素），比一次查询本身的成本低得多。
+     *
+     * ★ `evicted` 保持**原始形状**（数组，或旧包的单个 int）：归一在
+     *   {@see History::evictedNodes()}，那条路径频率低；而 `pathOf()` 在父链循环里
+     *   读的是原始表，每次归一都是白扫一遍整张表。
+     *
+     * @return array{
+     *     nodes: array<int, array{p: int, c: string, x: bool, s: int, f?: int}>,
+     *     evicted: array<int, array<string, mixed>|int>,
+     *     gone: array<int, int>,
+     *     boxless: array<int, true>,
+     *     digest: array<int, string>,
+     *     geometry: array<int, array<int, GeometryRecord>>,
+     *     baseline: array<int, GeometryRecord>,
+     *     paint: array<int, PaintRecord>,
+     *     network: array<int, NetworkRecord>,
+     *     async: array<int, AsyncRecord>,
+     *     bodies: array<int, NetworkBodyRecord>,
+     *     frameId: int,
+     *     highlighted: int,
+     *     highlightFrame: int,
+     *     overlay: array{frame: int, node: int}|null,
+     * }
+     */
+    public function ledger(): array
+    {
+        return [
+            'nodes' => $this->nodes,
+            'evicted' => $this->evicted,
+            'gone' => $this->goneAt,
+            'boxless' => $this->boxless,
+            'digest' => $this->geometryDigest,
+            'geometry' => $this->geometry,
+            'baseline' => $this->geometryBaseline,
+            'paint' => $this->paint,
+            'network' => $this->network,
+            'async' => $this->async,
+            'bodies' => $this->bodies,
+            'frameId' => $this->frameId,
+            'highlighted' => $this->highlightNode,
+            'highlightFrame' => $this->highlightFrame,
+            'overlay' => $this->overlayDrawn,
+        ];
     }
 
     // ------------------------------------------------------------------ 查询
@@ -942,240 +931,6 @@ final class Recorder implements PaintObserver
     public function script(): ?Script
     {
         return $this->options->script();
-    }
-
-    /**
-     * 节点登记表：id ⇒ 父 id（`-1` 根 / `-2` 未解析）+ Widget 短类名 + 是否 Flex
-     * 容器 + 最后见到帧 `s` + 出生帧 `f`（旧证据包没有 `f`）。
-     *
-     * 摘要与将来的跨进程传输都要它：光有一串 id，换台机器就不知道是谁。
-     *
-     * 摘要只取 `c` 与 `p`（见 {@see Digest::ofMode()}）—— `s` / `f` 是时间轴上的
-     * 位置，不是结构，进指纹会让"同一棵树多跑一帧"看起来像另一个应用。
-     *
-     * @return array<int, array{p: int, c: string, x: bool, s: int, f?: int}>
-     */
-    public function nodeIndex(): array
-    {
-        return $this->nodes;
-    }
-
-    /**
-     * 已回收节点：id ⇒ `['p' => 父, 'c' => 类名, 'x' => Flex, 'f' => 出生帧,
-     * 's' => 最后见到帧, 'g' => 离开树的那帧]`。
-     *
-     * `g = 0` 表示"没有离开树的记录"（几何采集关着时无从得知）。旧证据包里这个值
-     * 是单个 int，{@see self::hydrate()} 已归一。
-     *
-     * @return array<int, array{p: int, c: string, x: bool, f: int, s: int, g: int}>
-     */
-    public function evictedNodes(): array
-    {
-        /** @var array<int, array{p: int, c: string, x: bool, f: int, s: int, g: int}> $rows */
-        $rows = [];
-        foreach ($this->evicted as $id => $meta) {
-            $rows[(int) $id] = self::evictedRow($meta);
-        }
-
-        return $rows;
-    }
-
-    /**
-     * 回收记录的形状归一。
-     *
-     * 两种形状都必须能读：新的是数组（父 / 类型 / 寿命三端），旧证据包与
-     * "直接往属性里塞 int"的测试路径只有最后见到帧。归一放在读取口，不要在
-     * 每个消费者里各判一次类型 —— `pathOf()` 在父链循环里逐层读它，多一个分支
-     * 就是每条路径多一次判断。
-     *
-     * @param array<string, mixed>|int $meta
-     * @return array{p: int, c: string, x: bool, f: int, s: int, g: int}
-     */
-    private static function evictedRow(array|int $meta): array
-    {
-        if (\is_array($meta)) {
-            return [
-                'p' => (int) ($meta['p'] ?? -2),
-                'c' => (string) ($meta['c'] ?? ''),
-                'x' => (bool) ($meta['x'] ?? false),
-                // 旧包里没有 `f`：拿 `s` 顶上而不是 0 —— 0 会被读成"出生帧未知"，
-                // 让整张表报"不可回放"，而它其实是"只知道活到 `s`"。
-                'f' => (int) ($meta['f'] ?? $meta['s'] ?? 0),
-                's' => (int) ($meta['s'] ?? 0),
-                'g' => (int) ($meta['g'] ?? 0),
-            ];
-        }
-
-        return ['p' => -2, 'c' => '', 'x' => false, 'f' => $meta, 's' => $meta, 'g' => 0];
-    }
-
-    /**
-     * 节点 ⇒ 离开树的那一帧。
-     *
-     * 只在几何采样的先序遍历里写（`sampleGeometry()`），所以它答的是"那一帧的树上
-     * 已经看不到它了"，不是"它被 GC 了"。几何采集关着时这份表是空的 —— 回放必须
-     * 把这种情况报成"未知"而不是"一直活着"（见 {@see Query::tree()}）。
-     *
-     * @return array<int, int>
-     */
-    public function goneNodes(): array
-    {
-        return $this->goneAt;
-    }
-
-    /** 查询侧的单一出口：活动 / 已回收 / 从未发号，三者不可混。 */
-    public function nodeStatus(int $node): string
-    {
-        if (isset($this->nodes[$node])) {
-            return 'active';
-        }
-
-        return isset($this->evicted[$node]) ? 'evicted' : 'unknown';
-    }
-
-    /**
-     * 这个节点是不是 Flex 容器（`Column` / `Row` / 任何 `extends Flex`）。
-     *
-     * 归因要用：Flex 父在 `performLayout()` 里按 grow/shrink 给子分配尺寸，
-     * 子拿到的 `applied` 因此不等于"父 inner 原样传下来"，与基类默认链对不上。
-     * 这是**合法的对不上**，要归成 `parent-flex` 而不是兜底的 `child-custom`。
-     */
-    public function isFlex(int $nodeId): bool
-    {
-        return ($this->nodes[$nodeId]['x'] ?? false) === true;
-    }
-
-    /**
-     * 取某帧某节点的几何事实。
-     *
-     * 该帧没记不代表"那时没这个节点"——只代表**这一帧几何没变**，所以往前找最近
-     * 的一次记录。找不到时返回 null，调用方必须区分"节点不存在"和"窗口外"，不能
-     * 把 null 当成默认几何（那会凭空造出一个盒子）。
-     *
-     * ★ **未来帧一律返回 null**，不 clamp 到窗口末端。
-     *   早先是 `for ($f = \min($frame, $max); ...)`：查 `frame=99`（窗口只到 2）
-     *   会拿到 `frame=1` 的记录并报 `found=true` —— 一个根本没采样过的帧看起来
-     *   有几何。这类答案比"没查到"危险得多，因为它自洽、可读、且完全错。
-     *
-     *   上界是**最新几何记录**而不是最新帧，这是刻意的：它同时是"这一帧真的采过
-     *   几何吗"的答案。静止 140 帧后主循环帧号会跑出窗口，而快照锚点必须落在
-     *   窗口内（否则底图套上另一帧的线框）—— `LiveTicker` 就靠这个空表判锚点。
-     *   要"该帧生效的几何"而不是"该帧采过几何"，调用方自己把帧号夹到窗口内
-     *   （见 {@see Query::tree()}）。
-     *
-     *   修在这里而不是修在每个查询里：四个查询（`boxModel` / `boxes` /
-     *   `constraints` / `align`）各判一遍窗口，必然只修到其中几处 —— 之前就是
-     *   只有 `align` 判了，另外三个照样返回旧帧。
-     */
-    public function geometryAt(int $frame, int $node): ?GeometryRecord
-    {
-        if ($this->geometry === []) {
-            return null;
-        }
-
-        $keys = \array_keys($this->geometry);
-        $min = \min($keys);
-        $max = \max($keys);
-        if ($frame > $max) {
-            return null; // 窗口里没有这一帧的采样：往前找等于把"没采"说成"采了"
-        }
-        if (($this->goneAt[$node] ?? \PHP_INT_MAX) <= $frame) {
-            return null; // 这一帧时节点已经离开树；旧记录只属于更早的帧
-        }
-        for ($f = $frame; $f >= $min; --$f) {
-            if (isset($this->geometry[$f][$node])) {
-                return $this->geometry[$f][$node];
-            }
-        }
-
-        // 窗口滚动裁掉了祖先那一条唯一记录（签名此后没变、不再重采）。基线保留最后
-        // 一次采样，用它补出父链；只在本帧之前记过才算，查更早的历史帧不能拿现在补。
-        $base = $this->geometryBaseline[$node] ?? null;
-        if ($base !== null && $base->frame <= $frame) {
-            return $base;
-        }
-
-        return null;
-    }
-
-    /** 这个节点有没有自己的盒；复合控件（PageShell 等）没有，只能看它的盒子类后代。 */
-    public function isBoxless(int $node): bool
-    {
-        return isset($this->boxless[$node]);
-    }
-
-    /** 给无盒节点找一个有盒的直接孩子，供查询给"去查这个"的建议而不是空手。 */
-    public function firstBoxedChild(int $node): ?int
-    {
-        foreach ($this->nodes as $id => $meta) {
-            if ($meta['p'] === $node && !isset($this->boxless[$id]) && isset($this->geometryDigest[$id])) {
-                return $id;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * 目标帧上生效的全部盒几何：每个节点取不晚于该帧的最新一条。
-     *
-     * 与 {@see geometryAt()} 是同一套"往前找最近记录"的语义，只是这里一次给全，
-     * 供投影层跨盒扫描（例如比较父给子的约束与子实际收到的约束）。逐节点各问一次
-     * 会得到同样的答案，但那要多 N 次往返，而且让消费者自己拼一张表。
-     *
-     * 离开树的节点不再算"生效"：否则切窗后上一页的盒会一直挂在新画面上。
-     *
-     * @return array<int, GeometryRecord> node id => 该帧生效的几何记录
-     */
-    public function geometryRows(int $frame): array
-    {
-        // 未来帧不给"每节点最近一次"：那会把窗口末端的一整套几何当成"该帧生效"，
-        // 与 `geometryAt()` 的 clamp 是同一个错误，只是从单节点变成整张表。
-        // 上界取最新几何记录的理由同 {@see self::geometryAt()}：它同时是"采过没有"。
-        if ($this->geometry === [] || $frame > \max(\array_keys($this->geometry))) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($this->geometry as $f => $rows) {
-            if ($f > $frame) {
-                break;
-            }
-            foreach ($rows as $node => $record) {
-                if (($this->goneAt[(int) $node] ?? \PHP_INT_MAX) <= $frame) {
-                    continue;
-                }
-                $out[$node] = $record;
-            }
-        }
-
-        // 稳定祖先的唯一记录被窗口裁掉后，用基线补回，让绝对坐标的父链不断。
-        // 窗口里已有更新的记录时不覆盖；离树节点、晚于目标帧的记录不补。
-        foreach ($this->geometryBaseline as $node => $record) {
-            if (isset($out[$node]) || $record->frame > $frame) {
-                continue;
-            }
-            if (($this->goneAt[(int) $node] ?? \PHP_INT_MAX) <= $frame) {
-                continue;
-            }
-            $out[$node] = $record;
-        }
-
-        return $out;
-    }
-
-    /**
-     * 该帧**新采**的几何（不含前序帧累积）。
-     *
-     * 与 {@see self::geometryRows()} 的区别是致命的：那个是"到该帧为止每个节点最近
-     * 一次"（查询要的语义），这个是"这一帧真的记了哪些"。导出证据包必须用后者——
-     * 用前者会把每一帧的前序记录重复写一遍，文件大一倍，而条数账会立刻对不上。
-     *
-     * @return array<int, GeometryRecord>
-     */
-    public function geometrySamples(int $frame): array
-    {
-        return $this->geometry[$frame] ?? [];
     }
 
     // ------------------------------------------------------------------ 网络
@@ -1291,22 +1046,6 @@ final class Recorder implements PaintObserver
         );
     }
 
-    public function bodyAt(int $requestId): ?NetworkBodyRecord
-    {
-        return $this->bodies[$requestId] ?? null;
-    }
-
-    /**
-     * 证据脱敏总开关（属性域与报文域共用同一份状态与同一张规则表）。
-     *
-     * ★ 属性会读任意 State 字段，里面可能有 password / token。报文已经默认脱敏，
-     *   属性若原样进证据包，同一个威胁模型就出现两种口径。
-     */
-    public function redactionEnabled(): bool
-    {
-        return $this->options->redact();
-    }
-
     /** 属性查询是否由本会话发号：旧会话的元素带着旧号，不能拿来查本会话的节点。 */
     public function owns(Element $element): bool
     {
@@ -1314,59 +1053,8 @@ final class Recorder implements PaintObserver
     }
 
     /** @return array{captured: bool, requests: int, capacity: int, from: int, to: int, bytes: int} */
-    public function bodyCoverage(): array
-    {
-        $keys = \array_keys($this->bodies);
-        $bytes = 0;
-        foreach ($this->bodies as $body) {
-            $bytes += $body->request['bytes'] + $body->response['bytes'];
-        }
-
-        return [
-            'captured' => $this->options->bodies(),
-            'requests' => \count($keys),
-            'capacity' => self::BODY_CAPACITY,
-            'from' => $keys === [] ? 0 : \min($keys),
-            'to' => $keys === [] ? 0 : \max($keys),
-            'bytes' => $bytes,
-        ];
-    }
-
     /** @return list<NetworkRecord> 按 requestId 升序 */
-    public function networkRows(): array
-    {
-        $rows = \array_values($this->network);
-        \usort($rows, static fn(NetworkRecord $a, NetworkRecord $b): int => $a->requestId <=> $b->requestId);
-
-        return $rows;
-    }
-
-    public function networkAt(int $requestId): ?NetworkRecord
-    {
-        return $this->network[$requestId] ?? null;
-    }
-
     /** @return array{captured: bool, requests: int, capacity: int, from: int, to: int, inFlight: int} */
-    public function networkCoverage(): array
-    {
-        $keys = \array_keys($this->network);
-        $inFlight = 0;
-        foreach ($this->network as $record) {
-            if ($record->settledAtFrame === 0) {
-                ++$inFlight;
-            }
-        }
-
-        return [
-            'captured' => $this->options->network(),
-            'requests' => \count($keys),
-            'capacity' => self::NETWORK_CAPACITY,
-            'from' => $keys === [] ? 0 : \min($keys),
-            'to' => $keys === [] ? 0 : \max($keys),
-            'inFlight' => $inFlight,
-        ];
-    }
-
     // ------------------------------------------------------------------ 异步任务
 
     public function noteAsyncSubmit(string $backend, string $job, int $worker): int
@@ -1420,40 +1108,7 @@ final class Recorder implements PaintObserver
     }
 
     /** @return list<AsyncRecord> 按 id 升序 */
-    public function asyncRows(): array
-    {
-        $rows = \array_values($this->async);
-        \usort($rows, static fn(AsyncRecord $a, AsyncRecord $b): int => $a->id <=> $b->id);
-
-        return $rows;
-    }
-
-    public function asyncAt(int $id): ?AsyncRecord
-    {
-        return $this->async[$id] ?? null;
-    }
-
     /** @return array{captured: bool, jobs: int, capacity: int, from: int, to: int, inFlight: int} */
-    public function asyncCoverage(): array
-    {
-        $keys = \array_keys($this->async);
-        $inFlight = 0;
-        foreach ($this->async as $record) {
-            if ($record->settledAtFrame === 0) {
-                ++$inFlight;
-            }
-        }
-
-        return [
-            'captured' => $this->options->async(),
-            'jobs' => \count($keys),
-            'capacity' => self::ASYNC_CAPACITY,
-            'from' => $keys === [] ? 0 : \min($keys),
-            'to' => $keys === [] ? 0 : \max($keys),
-            'inFlight' => $inFlight,
-        ];
-    }
-
     private static function hostOf(string $url): string
     {
         $pos = \strpos($url, '://');
@@ -1464,24 +1119,6 @@ final class Recorder implements PaintObserver
     }
 
     /** @return array{mode: string, frames: int, capacity: int, from: int, to: int, nodes: int} */
-    public function geometryCoverage(): array
-    {
-        $keys = \array_keys($this->geometry);
-        $nodes = 0;
-        foreach ($this->geometry as $rows) {
-            $nodes += \count($rows);
-        }
-
-        return [
-            'mode' => $this->options->geometry()->value,
-            'frames' => \count($keys),
-            'capacity' => self::GEOMETRY_FRAMES,
-            'from' => $keys === [] ? 0 : \min($keys),
-            'to' => $keys === [] ? 0 : \max($keys),
-            'nodes' => $nodes,
-        ];
-    }
-
     /**
      * 帧末把绘制盒映射回节点号。
      *
@@ -1653,131 +1290,9 @@ final class Recorder implements PaintObserver
         return $element->debugId;
     }
 
-    /**
-     * 哪些请求的落地改过这个节点（按 requestId 升序）。
-     *
-     * 只读 `landed[]`，不建第二份 `node → request` 索引：网络窗口 500 条，扫一遍
-     * 比维护一份会与骨架漂移的镜像便宜，也更诚实——索引一旦漏更新，就会给出
-     * "没有请求落地"这种看起来正常、实际错误的答案。
-     *
-     * @return list<int>
-     */
-    public function requestsLandingOn(int $node): array
-    {
-        $ids = [];
-        foreach ($this->network as $id => $record) {
-            if (\in_array($node, $record->landed, true)) {
-                $ids[] = $id;
-            }
-        }
-        \sort($ids, \SORT_NUMERIC);
-
-        return $ids;
-    }
-
     /** 节点的 Widget 短类名（树按类型展开、按类型聚合都用它）。 */
-    public function typeOf(int $nodeId): string
-    {
-        return $this->nodes[$nodeId]['c'] ?? '';
-    }
-
     /** 从根到该节点的类名路径，用于面板显示与"这是哪个节点"的自证。 */
-    public function pathOf(int $nodeId): string
-    {
-        $parts = [];
-        $cursor = $nodeId;
-        $guard = 0;
-        // 已回收节点也走这条链：回放早期帧时，画面上大半是"后来消失了的东西"，
-        // 它们的路径正是"它当时在哪"的答案。只在注册表里找会让它们集体变成空串，
-        // 而空串看起来跟"这是个根"一模一样。
-        while ($cursor > 0 && $guard++ < 32) {
-            $meta = $this->nodes[$cursor] ?? $this->evicted[$cursor] ?? null;
-            if ($meta === null) {
-                break;
-            }
-            $type = (string) ($meta['c'] ?? '');
-            if ($type === '') {
-                break; // 旧证据包里的回收节点没有类型：给半截路径不如给空，别编
-            }
-            \array_unshift($parts, $type);
-            $cursor = (int) ($meta['p'] ?? -1);
-        }
-
-        return \implode(' > ', $parts);
-    }
-
-    /**
-     * 为什么这个节点在这一帧变了。
-     *
-     * `trail` 是从目标沿父边一路走到根的链路（目标在前、根在末尾）。
-     * 只印直接边等于回答"因为父节点重建了"却不说父是谁 —— 开发者要的正是
-     * "哪条链把我带下来的"。链路来自 `FrameRecord::parentOf()`，与 `cascade`
-     * 共用同一份拓扑，不另算。
-     *
-     * @return array<string, mixed>
-     */
-    public function why(int $nodeId, ?int $frameId = null): array
-    {
-        // 不指定帧时取**最近一次重建它的帧**，不是最后一帧：多动作场景里最后一帧
-        // 往往是静止帧，按最后一帧回答会得到"它没有重建"，把问题原样退回来。
-        $frame = $frameId !== null ? $this->frame($frameId) : $this->latestRebuiltFrame($nodeId);
-        $causes = [];
-        $trail = [];
-        if ($frame !== null) {
-            foreach ($frame->causes as $edge) {
-                if ($edge->toId === $nodeId) {
-                    $causes[] = $edge->toArray();
-                }
-            }
-
-            $parent = $frame->parentOf();
-            $causeOf = $frame->causeOf();
-            $cursor = $nodeId;
-            $guard = 0;
-            while ($guard++ < 64) {
-                $edge = $causeOf[$cursor] ?? null;
-                $trail[] = [
-                    'id' => $cursor,
-                    'path' => $this->pathOf($cursor),
-                    'kind' => $edge?->kind ?? 'none',
-                    'site' => $edge?->site ?? '',
-                    'detail' => $edge?->detail ?? '',
-                ];
-                $next = $parent[$cursor] ?? null;
-                // 因果链到根因为止：`state` 是"为什么"的答案本身，再往上问的是
-                // "谁带着它重建" —— 那是层级问题，由 `cascade` 的树回答。
-                if ($edge !== null && $edge->kind === 'state') {
-                    break;
-                }
-                if ($next === null || $next === $cursor) {
-                    break;
-                }
-                $cursor = $next;
-            }
-        }
-
-        return [
-            'node' => $nodeId,
-            'path' => $this->pathOf($nodeId),
-            'frame' => $frame?->id,
-            'rebuilt' => $frame?->rebuilt($nodeId) ?? false,
-            'causes' => $causes,
-            'trail' => $trail,
-        ];
-    }
-
     /** 最近一次重建过该节点的帧；一次都没有则退回最后一帧（好让 `why` 如实说"没重建"）。 */
-    private function latestRebuiltFrame(int $nodeId): ?FrameRecord
-    {
-        foreach (\array_reverse($this->frames, true) as $frame) {
-            if ($frame->rebuilt($nodeId)) {
-                return $frame;
-            }
-        }
-
-        return $this->frame($this->lastFrameId());
-    }
-
     public function frame(?int $id = null): ?FrameRecord
     {
         if ($id === null) {

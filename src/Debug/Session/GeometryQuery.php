@@ -32,7 +32,7 @@ use Drift\Geometry\Size;
  */
 final class GeometryQuery
 {
-    public function __construct(private readonly Recorder $recorder)
+    public function __construct(private readonly History $history)
     {
     }
 
@@ -56,7 +56,7 @@ final class GeometryQuery
         //   用 `lastFrameId()` 当缺省，静止几十秒后它必然跑出几何覆盖范围，
         //   于是"打开面板一片空白"而每个环节都自认为正常。缺省值必须落在
         //   它自己要查的那个窗口里。
-        $window = $this->recorder->geometryCoverage();
+        $window = $this->history->geometryCoverage();
         $frameId = $frame ?? (int) ($window['to'] ?? 0);
         if ($frameId < (int) ($window['from'] ?? 0) || $frameId > (int) ($window['to'] ?? 0)) {
             return [
@@ -67,7 +67,7 @@ final class GeometryQuery
             ];
         }
 
-        $records = $this->recorder->geometryRows($frameId);
+        $records = $this->history->geometryRows($frameId);
         \ksort($records, \SORT_NUMERIC);
 
         $rows = [];
@@ -79,7 +79,7 @@ final class GeometryQuery
             $rows[] = [
                 'node' => $node,
                 'parent' => $record->parent,
-                'type' => $this->recorder->typeOf($node),
+                'type' => $this->history->typeOf($node),
                 'applied' => $record->applied,
                 'inner' => $record->inner,
                 'size' => $record->size,
@@ -210,7 +210,7 @@ final class GeometryQuery
      */
     public function boxModel(int $node, ?int $frame = null): array
     {
-        $frameId = $frame ?? $this->recorder->lastFrameId();
+        $frameId = $frame ?? $this->history->lastFrameId();
         $hit = $this->lookup($node, $frameId);
         if ($hit['record'] === null) {
             return $hit['reason'] === 'frame-out-of-window'
@@ -241,7 +241,7 @@ final class GeometryQuery
      */
     public function constraints(int $node, ?int $frame = null, int $maxDepth = 12): array
     {
-        $frameId = $frame ?? $this->recorder->lastFrameId();
+        $frameId = $frame ?? $this->history->lastFrameId();
         $hit = $this->lookup($node, $frameId);
         if ($hit['record'] === null) {
             return $hit['reason'] === 'frame-out-of-window'
@@ -256,7 +256,7 @@ final class GeometryQuery
         // 与 `pathOf()` 的 `$guard` 同一条纪律：报告不该陪着记录一起死。
         $guard = 0;
         while ($cursor !== null && $cursor->parent > 0 && $guard++ < 64) {
-            $parent = $this->recorder->geometryAt($frameId, $cursor->parent);
+            $parent = $this->history->geometryAt($frameId, $cursor->parent);
             if ($parent === null) {
                 $all[] = [
                     'from' => $cursor->parent,
@@ -301,13 +301,13 @@ final class GeometryQuery
             // 有 box/aspect 的子不算：那是子侧改的，即使父是 Flex 也归 `child-custom`
             // —— 归因要指向真正动手的那一方。
             $childTweaked = $cursor->box !== null || $cursor->aspect !== null;
-            $parentFlex = $this->recorder->isFlex($parent->node);
+            $parentFlex = $this->history->isFlex($parent->node);
 
             $all[] = [
                 'from' => $parent->node,
-                'fromType' => $this->recorder->typeOf($parent->node),
+                'fromType' => $this->history->typeOf($parent->node),
                 'to' => $cursor->node,
-                'toType' => $this->recorder->typeOf($cursor->node),
+                'toType' => $this->history->typeOf($cursor->node),
                 'received' => $cursor->applied,
                 'expected' => GeometryRecord::pack($expectedApplied),
                 'parentInner' => $parent->inner,
@@ -334,7 +334,7 @@ final class GeometryQuery
             'found' => true,
             'frame' => $frameId,
             'node' => $node,
-            'type' => $this->recorder->typeOf($node),
+            'type' => $this->history->typeOf($node),
             'hops' => $total,
             'chain' => $chain,
             'verified' => $verified,
@@ -360,14 +360,14 @@ final class GeometryQuery
      */
     public function lookup(int $node, int $frame, ?array $window = null): array
     {
-        $window ??= $this->recorder->geometryCoverage();
+        $window ??= $this->history->geometryCoverage();
         $from = (int) ($window['from'] ?? 0);
         $to = (int) ($window['to'] ?? 0);
         if ($frame < $from || $frame > $to) {
             return ['record' => null, 'window' => $window, 'reason' => 'frame-out-of-window'];
         }
 
-        return ['record' => $this->recorder->geometryAt($frame, $node), 'window' => $window, 'reason' => null];
+        return ['record' => $this->history->geometryAt($frame, $node), 'window' => $window, 'reason' => null];
     }
 
     /**
@@ -399,14 +399,14 @@ final class GeometryQuery
      */
     public function miss(int $node, int $frame, array $window): array
     {
-        $boxless = $this->recorder->isBoxless($node);
+        $boxless = $this->history->isBoxless($node);
         $out = [
             'found' => false,
             'node' => $node,
             'frame' => $frame,
             'reason' => $boxless
                 ? 'no-render-box'
-                : match ($this->recorder->nodeStatus($node)) {
+                : match ($this->history->nodeStatus($node)) {
                     'evicted' => 'node-evicted',
                     'unknown' => 'unknown-node',
                     default => 'outside-geometry-window',
@@ -415,10 +415,10 @@ final class GeometryQuery
         ];
 
         if ($boxless) {
-            $child = $this->recorder->firstBoxedChild($node);
+            $child = $this->history->firstBoxedChild($node);
             $out['suggest'] = $child === null
                 ? '这个节点是复合节点，没有自己的盒；往下找有盒的后代'
-                : \sprintf('查有盒的子节点 %d（%s）', $child, $this->recorder->typeOf($child));
+                : \sprintf('查有盒的子节点 %d（%s）', $child, $this->history->typeOf($child));
         }
 
         return $out;

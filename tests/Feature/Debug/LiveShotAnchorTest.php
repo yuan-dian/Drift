@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\Debug\Session\GeometryCapture;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -22,6 +23,7 @@ final class LiveShotAnchorTest extends SmokeTestCase
     public function testIdleLoopFramesOutrunTheGeometryWindow(): void
     {
         $recorder = Recorder::install(RecordOptions::default()->withGeometry(GeometryCapture::Changed));
+        $history = new History($recorder);
         $constraints = BoxConstraints::loose(new Size(200.0, 120.0));
 
         try {
@@ -29,25 +31,25 @@ final class LiveShotAnchorTest extends SmokeTestCase
             $app->attach(new SurfaceProbe(), $constraints);
             $app->frame(0.0, $constraints);
 
-            $first = $recorder->geometryCoverage();
-            check('首帧几何落了账', $first['to'] > 0 && $recorder->geometryRows($first['to']) !== [], \json_encode($first));
+            $first = $history->geometryCoverage();
+            check('首帧几何落了账', $first['to'] > 0 && $history->geometryRows($first['to']) !== [], \json_encode($first));
 
             // 静止应用照常空转：帧号推进，但结构没变 ⇒ 几何不再落行。
             for ($i = 1; $i <= 200; ++$i) {
                 $app->frame($i * 16.0, $constraints);
             }
 
-            $coverage = $recorder->geometryCoverage();
+            $coverage = $history->geometryCoverage();
             $frame = $recorder->frameId();
             check(
                 '主循环帧号跑出了几何窗口',
                 $frame > $coverage['to'],
                 "frame={$frame} geometryTo={$coverage['to']}",
             );
-            check('拿主循环帧号取几何会落空', $recorder->geometryRows($frame) === [], 'frame=' . $frame);
+            check('拿主循环帧号取几何会落空', $history->geometryRows($frame) === [], 'frame=' . $frame);
             check(
                 '拿几何覆盖帧仍取得到几何',
-                $recorder->geometryRows($coverage['to']) !== [],
+                $history->geometryRows($coverage['to']) !== [],
                 'geometryTo=' . $coverage['to'],
             );
         } finally {

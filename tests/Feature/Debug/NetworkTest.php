@@ -10,6 +10,7 @@ use Drift\App\Io\HttpTransport;
 use Drift\App\TaskDispatch;
 use Drift\Async\Future;
 use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -29,6 +30,7 @@ final class NetworkTest extends SmokeTestCase
     public function testInlinePathRecordsSkeletonAndSettlesOnFacade(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);
@@ -36,8 +38,8 @@ final class NetworkTest extends SmokeTestCase
             $recorder->beginFrame(0.0);
             $future = $http->get('https://api.example.com/rows.php');
             $recorder->endFrame([], 0.0);
-            check('发起帧记下请求骨架', \count($recorder->networkRows()) === 1, '请求数=' . \count($recorder->networkRows()));
-            $row = $recorder->networkRows()[0];
+            check('发起帧记下请求骨架', \count($history->networkRows()) === 1, '请求数=' . \count($history->networkRows()));
+            $row = $history->networkRows()[0];
             check('骨架有 URL / host / 发起帧', $row->url === 'https://api.example.com/rows.php'
                 && $row->host === 'api.example.com' && $row->startedAtFrame === 1, \json_encode($row->toArray()));
             check('发起者取业务调用点（跳过 IO 门面自身）', $row->initiator !== ''
@@ -49,7 +51,7 @@ final class NetworkTest extends SmokeTestCase
             $transport->settle(new HttpResponse(200, [], '{"rows":[]}', 'https://api.example.com/rows.php', 18.2));
             $recorder->endFrame([], 0.0);
 
-            $settled = $recorder->networkAt($row->requestId);
+            $settled = $history->networkAt($row->requestId);
             check('结算帧号对齐当前帧', $settled?->settledAtFrame === 2, 'settled=' . ($settled?->settledAtFrame ?? -1));
             check('pendingFrames 可复算', $settled?->pendingFrames() === 1, 'pending=' . ($settled?->pendingFrames() ?? -1));
             $json = \json_encode($settled?->toArray()) ?: '';
@@ -57,8 +59,8 @@ final class NetworkTest extends SmokeTestCase
                 && $settled?->bytes === \strlen('{"rows":[]}') && \abs(($settled?->elapsedMs ?? 0.0) - 18.2) < 0.001
                 && !\str_contains($json, '{"rows":[]}'), $json);
             check('Future 正常结算，观测没改语义', $future->isDone(), 'done=' . \var_export($future->isDone(), true));
-            check('窗口自报独立', $recorder->networkCoverage()['capacity'] === Recorder::NETWORK_CAPACITY,
-                \json_encode($recorder->networkCoverage()));
+            check('窗口自报独立', $history->networkCoverage()['capacity'] === Recorder::NETWORK_CAPACITY,
+                \json_encode($history->networkCoverage()));
         } finally {
             Recorder::uninstall();
         }
@@ -69,6 +71,7 @@ final class NetworkTest extends SmokeTestCase
     public function testWorkerPathRecordsToo(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $wire = [
                 'status' => 201,
@@ -86,8 +89,8 @@ final class NetworkTest extends SmokeTestCase
             $http->post('https://api.example.com/upload', $big);
             $recorder->endFrame([], 0.0);
 
-            $row = $recorder->networkRows()[0] ?? null;
-            check('worker 路径也记了请求', $row !== null, '请求数=' . \count($recorder->networkRows()));
+            $row = $history->networkRows()[0] ?? null;
+            check('worker 路径也记了请求', $row !== null, '请求数=' . \count($history->networkRows()));
             check('路径标 worker（不是 inline）', $row?->path === 'worker', 'path=' . ($row?->path ?? '?'));
             check('补发的结算记下真实 status / 耗时', $row?->status === 201 && \abs(($row?->elapsedMs ?? 0.0) - 42.0) < 0.001,
                 \json_encode($row?->toArray()));
@@ -101,6 +104,7 @@ final class NetworkTest extends SmokeTestCase
     public function testFailedRequestSettlesAsFailureNotInFlight(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);
@@ -109,14 +113,14 @@ final class NetworkTest extends SmokeTestCase
                 // 失败必须有人接，否则 Future 的 Fatal 序列会 abort 整个进程 ——
                 // 这与网络记录无关，是异步契约的一部分。
             });
-            $id = $recorder->networkRows()[0]->requestId;
+            $id = $history->networkRows()[0]->requestId;
             $recorder->endFrame([], 0.0);
 
             $recorder->beginFrame(16.0);
             $transport->fail(new \RuntimeException('DNS 失败：不要记进证据（可能含主机名）'));
             $recorder->endFrame([], 0.0);
 
-            $row = $recorder->networkAt($id);
+            $row = $history->networkAt($id);
             check('失败请求也结算，不永远挂在途', $row?->settledAtFrame === 2 && !$row?->ok, \json_encode($row?->toArray()));
             check('失败不记错误全文', !\str_contains(\json_encode($row?->toArray()) ?: '', 'DNS'), \json_encode($row?->toArray()));
         } finally {
@@ -129,6 +133,7 @@ final class NetworkTest extends SmokeTestCase
     public function testProgressScalarIsPreservedThroughSettlement(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $recorder->beginFrame(0.0);
             $id = Recorder::tapNetworkStart('POST', 'https://api.example.com/upload', 'worker');
@@ -136,7 +141,7 @@ final class NetworkTest extends SmokeTestCase
             Recorder::tapNetworkProgress($id, 0.42);
             Recorder::tapNetworkSettle($id, 200, 10, 5.0, true);
 
-            $row = $recorder->networkAt($id);
+            $row = $history->networkAt($id);
             check('进度标量结算后仍在（不被空串擦掉）', $row?->progress === '42%', 'progress=' . ($row?->progress ?? '?'));
         } finally {
             Recorder::uninstall();
@@ -148,6 +153,7 @@ final class NetworkTest extends SmokeTestCase
     public function testSettledRequestAttributesLandedRebuild(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $constraints = \Drift\Geometry\BoxConstraints::loose(new \Drift\Geometry\Size(200.0, 120.0));
             $app = new CounterApplication();
@@ -163,7 +169,7 @@ final class NetworkTest extends SmokeTestCase
             $recorder->endFrame([], 0.0);
 
             $nodeId = CounterState::$last?->element()?->debugId ?? 0;
-            $row = $recorder->networkAt($id);
+            $row = $history->networkAt($id);
             check('结算同帧的状态写入回填到 landed', $row !== null && \in_array($nodeId, $row->landed, true),
                 'node=' . $nodeId . ' landed=' . \json_encode($row?->landed ?? []));
 
@@ -193,6 +199,7 @@ final class NetworkTest extends SmokeTestCase
     public function testSettleMarkerDoesNotLeakIntoNextFrame(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $constraints = \Drift\Geometry\BoxConstraints::loose(new \Drift\Geometry\Size(200.0, 120.0));
             $app = new CounterApplication();
@@ -208,7 +215,7 @@ final class NetworkTest extends SmokeTestCase
             CounterState::$last?->increment();
             $app->frame(32.0, $constraints);
 
-            $row = $recorder->networkAt($id);
+            $row = $history->networkAt($id);
             check('结算帧没写状态 ⇒ landed 为空', $row !== null && $row->landed === [],
                 'landed=' . \json_encode($row?->landed ?? []));
 
@@ -235,14 +242,15 @@ final class NetworkTest extends SmokeTestCase
     public function testNetworkWindowTrimsIndependentlyAndReports(): void
     {
         $recorder = Recorder::install(2); // 帧窗口只有 2，网络窗口仍应是 500
+        $history = new History($recorder);
         try {
             for ($i = 1; $i <= 3; ++$i) {
                 $recorder->beginFrame((float) $i);
                 Recorder::tapNetworkStart('GET', 'https://api.example.com/r' . $i, 'inline');
                 $recorder->endFrame([], 0.0);
             }
-            $coverage = $recorder->networkCoverage();
-            check('网络窗口独立于帧窗口：帧被裁但请求留着', \count($recorder->networkRows()) === 3
+            $coverage = $history->networkCoverage();
+            check('网络窗口独立于帧窗口：帧被裁但请求留着', \count($history->networkRows()) === 3
                 && $coverage['capacity'] === 500, \json_encode($coverage));
             check('裁剪账自报 from/to', $coverage['from'] === 1 && $coverage['to'] === 3, \json_encode($coverage));
         } finally {
@@ -255,6 +263,7 @@ final class NetworkTest extends SmokeTestCase
     public function testNetworkQueryReportsWindowAndMisses(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $query = new \Drift\Debug\Session\Query($recorder);
             $recorder->beginFrame(0.0);
@@ -285,6 +294,7 @@ final class NetworkTest extends SmokeTestCase
     public function testNetworkMissDistinguishesEmptyWindowAndTakesNewest(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $query = new \Drift\Debug\Session\Query($recorder);
 
@@ -397,6 +407,7 @@ final class NetworkTest extends SmokeTestCase
     public function testDefaultBudgetDoesNotCaptureBodies(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);
@@ -416,7 +427,7 @@ final class NetworkTest extends SmokeTestCase
             );
             check('报文窗口自报 captured=false', ($answer['window']['captured'] ?? true) === false,
                 \json_encode($answer['window'] ?? []));
-            check('骨架仍在，省的是正文不是请求事实', \count($recorder->networkRows()) === 1);
+            check('骨架仍在，省的是正文不是请求事实', \count($history->networkRows()) === 1);
         } finally {
             Recorder::uninstall();
         }
@@ -427,6 +438,7 @@ final class NetworkTest extends SmokeTestCase
     public function testBodyQueryMissesAreDistinct(): void
     {
         $recorder = Recorder::install(RecordOptions::of(bodies: true));
+        $history = new History($recorder);
         try {
             $query = new \Drift\Debug\Session\Query($recorder);
             $before = $query->networkBody(1);
@@ -464,6 +476,7 @@ final class NetworkTest extends SmokeTestCase
     public function testBodyQueryAndViewKeepRequestIdAndRedactSecrets(): void
     {
         $recorder = Recorder::install(RecordOptions::of(bodies: true));
+        $history = new History($recorder);
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);
@@ -475,7 +488,7 @@ final class NetworkTest extends SmokeTestCase
                 '{"user":"bob","password":"hunter2"}',
             );
             $recorder->endFrame([], 0.0);
-            $id = $recorder->networkRows()[0]->requestId;
+            $id = $history->networkRows()[0]->requestId;
 
             $recorder->beginFrame(16.0);
             $transport->settle(new HttpResponse(

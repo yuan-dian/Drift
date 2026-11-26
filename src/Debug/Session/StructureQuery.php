@@ -24,7 +24,7 @@ namespace Drift\Debug\Session;
 final class StructureQuery
 {
     public function __construct(
-        private readonly Recorder $recorder,
+        private readonly History $history,
         private readonly GeometryQuery $geometry,
     ) {
     }
@@ -74,8 +74,8 @@ final class StructureQuery
     {
         $depth = \max(0, \min($depth, 32));
         $limit = \max(0, \min($limit, 2000));
-        $window = $this->recorder->geometryCoverage();
-        $lastFrame = $this->recorder->frameId();
+        $window = $this->history->geometryCoverage();
+        $lastFrame = $this->history->frameId();
         // ★ 结构与几何是**两个窗口**：帧 600、几何 60，而且几何按"有变化才落记录"
         //   跳帧。一个默认值不可能同时落在两个窗口里：
         //   · 结构默认取帧窗口最新 —— 取几何最新会让回放停在几十帧前的旧树；
@@ -105,9 +105,9 @@ final class StructureQuery
                 'root' => $root,
                 'rows' => [],
                 'coverage' => [
-                    'active' => \count($this->recorder->nodeIndex()),
+                    'active' => \count($this->history->nodeIndex()),
                     'evicted' => 0,
-                    'evictedTotal' => \count($this->recorder->evictedNodes()),
+                    'evictedTotal' => \count($this->history->evictedNodes()),
                     'roots' => 0, 'boxless' => 0, 'unresolved' => 0, 'orphan' => 0,
                     'cycle' => 0, 'shown' => 0, 'omittedDepth' => 0, 'omittedLimit' => 0,
                     'geometryFrame' => 0, 'geometryEffective' => 0,
@@ -128,12 +128,12 @@ final class StructureQuery
 
         [$nodes, $lifecycle] = $this->replayNodes($lastFrame > 0 ? $frameId : null);
         $boxless = [];
-        foreach ($this->recorder->boxlessNodes() as $id) {
+        foreach ($this->history->boxlessNodes() as $id) {
             $boxless[(int) $id] = true;
         }
 
         // 该帧重建了谁：只有帧记录在窗口里才给结论。
-        $record = $this->recorder->frame($frameId);
+        $record = $this->history->frame($frameId);
         $rebuiltSet = null;
         if ($record !== null) {
             $rebuiltSet = [];
@@ -143,7 +143,7 @@ final class StructureQuery
         }
 
         $active = \count($nodes);
-        $evicted = $this->recorder->evictedNodes();
+        $evicted = $this->history->evictedNodes();
         $coverage = static fn(): array => [
             // `active` 是**这一帧的节点数**（含当时还活着的回收节点），`evicted` 是
             // 其中已回收的条数，`evictedTotal` 才是回收表总量。三个数分开，读者才能
@@ -178,7 +178,7 @@ final class StructureQuery
                     $reason = 'node-gone';
                 }
             } else {
-                $known = $this->recorder->nodeIndex()[$root] ?? null;
+                $known = $this->history->nodeIndex()[$root] ?? null;
                 if ($known !== null && (int) ($known['f'] ?? 0) > $frameId) {
                     $reason = 'node-not-born';
                 }
@@ -291,7 +291,7 @@ final class StructureQuery
                 'id' => $id,
                 'parent' => isset($meta['p']) ? (int) $meta['p'] : -2,
                 'type' => (string) ($meta['c'] ?? ''),
-                'path' => $this->recorder->pathOf($id),
+                'path' => $this->history->pathOf($id),
                 'depth' => $level,
                 'children' => \count($kids),
                 'boxed' => !isset($boxless[$id]),
@@ -358,14 +358,14 @@ final class StructureQuery
      */
     private function replayNodes(?int $at): array
     {
-        $gone = $this->recorder->goneNodes();
-        $evicted = $this->recorder->evictedNodes();
+        $gone = $this->history->goneNodes();
+        $evicted = $this->history->evictedNodes();
 
         /** @var array<int, array<string, mixed>> $nodes */
         $nodes = [];
         $unknownBirth = 0;
         $oldestBirth = 0;
-        foreach ($this->recorder->nodeIndex() as $id => $meta) {
+        foreach ($this->history->nodeIndex() as $id => $meta) {
             $id = (int) $id;
             $born = (int) ($meta['f'] ?? 0);
             if ($born === 0) {
@@ -428,12 +428,12 @@ final class StructureQuery
             // `goneKnown` 单列：几何采集关着时 `goneAt` 从来没人写，"没有节点离开过"
             // 与"根本不知道谁离开过"在空表上看不出来 —— 而后者会让回放把整棵已经
             // 卸载的树一直画到帧末。
-            'goneKnown' => $gone !== [] || $this->recorder->options()->geometry() !== GeometryCapture::Off,
+            'goneKnown' => $gone !== [] || $this->history->options()->geometry() !== GeometryCapture::Off,
             // 没有时间轴（一帧都没记录）时整张表都不可判：不是"完整"，是"无帧可回放"。
             'complete' => $at !== null
                 && $unknownBirth === 0
                 && $unknownGone === 0
-                && ($gone !== [] || $this->recorder->options()->geometry() !== GeometryCapture::Off),
+                && ($gone !== [] || $this->history->options()->geometry() !== GeometryCapture::Off),
             'unknownBirth' => $unknownBirth,
             'unknownGone' => $unknownGone,
             'recycled' => $recycled,

@@ -76,4 +76,36 @@ final readonly class EvidenceBag
         public array $domains = [],
     ) {
     }
+
+    /**
+     * 回收记录的形状归一：两种形状读成同一种。
+     *
+     * 新的是数组（父 / 类型 / 寿命三端），旧证据包与"直接往属性里塞 int"的测试
+     * 路径只有最后见到帧。归一放在**读口**，不要在消费者里各判一次类型。
+     *
+     * ★ 放在这里而不是 `Recorder` 或 `History`：`Recorder::hydrate()`（写面）与
+     *   `History::evictedNodes()`（审查面）都要用它，而 `Recorder` 引用的每个类型都
+     *   会被 tpc 编进产物 —— 反过来（`History` 持有它）就把审查面带进了写面。
+     *   本类本来就在写面白名单里（它是 `hydrate()` 的参数类型），两边都能用。
+     *
+     * @param array<string, mixed>|int $meta
+     * @return array{p: int, c: string, x: bool, f: int, s: int, g: int}
+     */
+    public static function evictedRow(array|int $meta): array
+    {
+        if (\is_array($meta)) {
+            return [
+                'p' => (int) ($meta['p'] ?? -2),
+                'c' => (string) ($meta['c'] ?? ''),
+                'x' => (bool) ($meta['x'] ?? false),
+                // 旧包里没有 `f`：拿 `s` 顶上而不是 0 —— 0 会被读成"出生帧未知"，
+                // 让整张表报"不可回放"，而它其实是"只知道活到 `s`"。
+                'f' => (int) ($meta['f'] ?? $meta['s'] ?? 0),
+                's' => (int) ($meta['s'] ?? 0),
+                'g' => (int) ($meta['g'] ?? 0),
+            ];
+        }
+
+        return ['p' => -2, 'c' => '', 'x' => false, 'f' => $meta, 's' => $meta, 'g' => 0];
+    }
 }

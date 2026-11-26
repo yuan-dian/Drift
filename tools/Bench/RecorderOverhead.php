@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Bench;
 
 use Drift\Debug\Session\GeometryCapture;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -94,15 +95,17 @@ final class RecorderOverhead
 
                 $median = Samples::of($samples)->median;
                 $baseline ??= $median;
+                $live = Recorder::current();
+                $history = $live === null ? null : new History($live);
                 $out[$name] = [
                     'rows' => $rows,
                     'frames' => $frames,
                     'medianUs' => \round($median, 2),
                     'overheadPct' => \round(($median - $baseline) / \max($baseline, 0.0001) * 100.0, 2),
                     'budgetPct' => \round(($median - $baseline) / self::FRAME_BUDGET_US * 100.0, 3),
-                    'recordedFrames' => Recorder::current()?->stats()['frames'] ?? 0,
-                    'geometryFrames' => Recorder::current()?->geometryCoverage()['frames'] ?? 0,
-                    'networkRequests' => \count(Recorder::current()?->networkRows() ?? []),
+                    'recordedFrames' => $history?->stats()['frames'] ?? 0,
+                    'geometryFrames' => $history?->geometryCoverage()['frames'] ?? 0,
+                    'networkRequests' => \count($history?->networkRows() ?? []),
                 ];
             } finally {
                 Recorder::uninstall();

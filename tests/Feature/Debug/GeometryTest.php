@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\DebugSession;
 use Drift\App\Replay;
+use Drift\Debug\Session\History;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\Brief;
@@ -196,7 +197,7 @@ final class GeometryTest extends SmokeTestCase
         //   查询层判窗口是"消费者各自守规矩"，而 `geometryAt()` 的 clamp 会让**任何**
         //   直接调它的地方（新查询、面板、将来的消费者）静默拿到旧帧。两道都要有牙，
         //   否则修掉一道另一道就会悄悄退回。
-        $raw = $session->recorder()->geometryAt($future, $node);
+        $raw = (new History($session->recorder()))->geometryAt($future, $node);
         check('记录层的 geometryAt 对未来帧返回 null（不许 clamp 到窗口末端）', $raw === null,
             'record=' . ($raw === null ? 'null' : 'frame#' . $raw->frame));
     }

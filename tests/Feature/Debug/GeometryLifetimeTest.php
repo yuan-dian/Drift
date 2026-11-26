@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -44,10 +45,10 @@ final class GeometryLifetimeTest extends SmokeTestCase
     }
 
     /** 这一帧真正登记过的节点（几何会累积，节点表里的 `s` 不会）。 */
-    private function liveIds(Recorder $recorder, int $frame): array
+    private function liveIds(History $history, int $frame): array
     {
         $ids = [];
-        foreach ($recorder->nodeIndex() as $id => $meta) {
+        foreach ($history->nodeIndex() as $id => $meta) {
             if ((int) ($meta['s'] ?? 0) === $frame) {
                 $ids[] = (int) $id;
             }
@@ -60,15 +61,16 @@ final class GeometryLifetimeTest extends SmokeTestCase
     public function testSwitchingTreeDropsOldBoxesButKeepsHistory(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             // `attach()` 自己就跑首帧，不需要再 pump —— 恰好是"切窗那一刻"。
             $old = $this->app('old');
-            $atOld = \array_keys($recorder->geometryRows($recorder->lastFrameId()));
+            $atOld = \array_keys($history->geometryRows($recorder->lastFrameId()));
             check('前提：第一棵树真的采到了盒', $atOld !== [], 'rows=' . \count($atOld));
 
             $new = $this->app('new');
-            $atNew = \array_keys($recorder->geometryRows($recorder->lastFrameId()));
-            $newIds = $this->liveIds($recorder, 2);
+            $atNew = \array_keys($history->geometryRows($recorder->lastFrameId()));
+            $newIds = $this->liveIds($history, 2);
             \sort($atOld);
             \sort($atNew);
 
@@ -78,8 +80,8 @@ final class GeometryLifetimeTest extends SmokeTestCase
                 '实得 ' . \json_encode($atNew) . ' 应得 ' . \json_encode($newIds));
             check(
                 '历史帧还能查到旧树（不是把旧记录删掉）',
-                \array_keys($recorder->geometryRows(1)) === $atOld,
-                'old=' . \count($atOld) . ' at1=' . \count($recorder->geometryRows(1)),
+                \array_keys($history->geometryRows(1)) === $atOld,
+                'old=' . \count($atOld) . ' at1=' . \count($history->geometryRows(1)),
             );
         } finally {
             Recorder::uninstall();
@@ -90,14 +92,15 @@ final class GeometryLifetimeTest extends SmokeTestCase
     public function testSwitchingBackRestoresTheSameNodes(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $old = $this->app('old');
             $new = $this->app('new');
             $old->frame(32.0, $this->constraints()); // 切回：同一批元素、同一个节点号
 
-            $rows = \array_keys($recorder->geometryRows($recorder->lastFrameId()));
+            $rows = \array_keys($history->geometryRows($recorder->lastFrameId()));
             \sort($rows);
-            $live = $this->liveIds($recorder, $recorder->lastFrameId());
+            $live = $this->liveIds($history, $history->lastFrameId());
 
             check('切回后旧节点重新有几何', $rows === $live,
                 '实得 ' . \json_encode($rows) . ' 应得 ' . \json_encode($live));
@@ -112,18 +115,19 @@ final class GeometryLifetimeTest extends SmokeTestCase
     public function testHiddenPageLeavesNoBoxesAndComesBackWithThem(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app = new SwitchPagesApplication();
             $surface = new SurfaceProbe();
             $surface->resize(200, 120, 1.0);
             $app->attach($surface, $this->constraints());
             $firstFrame = $recorder->lastFrameId();
-            $firstIds = \array_keys($recorder->geometryRows($firstFrame));
+            $firstIds = \array_keys($history->geometryRows($firstFrame));
 
             SwitchPagesApplication::$state?->switchTo('b');
             $app->frame(16.0, $this->constraints());
             $secondFrame = $recorder->lastFrameId();
-            $secondRows = \array_keys($recorder->geometryRows($secondFrame));
+            $secondRows = \array_keys($history->geometryRows($secondFrame));
             $hidden = \array_diff($firstIds, $secondRows);
 
             check('前提：第一页有被隐藏的专属节点', $hidden !== [], 'ids=' . \json_encode($firstIds));
@@ -133,14 +137,14 @@ final class GeometryLifetimeTest extends SmokeTestCase
             SwitchPagesApplication::$state?->switchTo('a');
             $app->frame(32.0, $this->constraints());
             $backFrame = $recorder->lastFrameId();
-            $backRows = \array_keys($recorder->geometryRows($backFrame));
+            $backRows = \array_keys($history->geometryRows($backFrame));
 
             check('切回原页的盒全部回来', \array_diff($hidden, $backRows) === [],
                 '缺 ' . \json_encode(\array_diff($hidden, $backRows)));
             check(
                 '切回后几何窗口跟着推进（底图不会再配到切页前的旧帧）',
-                (int) $recorder->geometryCoverage()['to'] === $backFrame,
-                'coverage=' . \json_encode($recorder->geometryCoverage()) . ' frame=' . $backFrame,
+                (int) $history->geometryCoverage()['to'] === $backFrame,
+                'coverage=' . \json_encode($history->geometryCoverage()) . ' frame=' . $backFrame,
             );
         } finally {
             Recorder::uninstall();
@@ -152,20 +156,21 @@ final class GeometryLifetimeTest extends SmokeTestCase
     public function testQuietFrameKeepsTheLastSampledTree(): void
     {
         $recorder = Recorder::install();
+        $history = new History($recorder);
         try {
             $app = $this->app('quiet');
-            $lastGeometry = (int) $recorder->geometryCoverage()['to'];
-            $sampled = \array_keys($recorder->geometryRows($lastGeometry));
+            $lastGeometry = (int) $history->geometryCoverage()['to'];
+            $sampled = \array_keys($history->geometryRows($lastGeometry));
 
             // 静止帧按约定跳过采样：画面没变，盒必须还在，不能因为"这一帧没看见"就清空。
             $recorder->beginFrame(16.0);
             $recorder->endFrame(['settleSkipped' => true, 'paintSkipped' => true], 0.0, $app->root());
 
             check('静止帧沿用上一棵树的盒',
-                \array_keys($recorder->geometryRows((int) $recorder->geometryCoverage()['to'])) === $sampled,
-                'before=' . \count($sampled) . ' after=' . \count($recorder->geometryRows($lastGeometry)),
+                \array_keys($history->geometryRows((int) $history->geometryCoverage()['to'])) === $sampled,
+                'before=' . \count($sampled) . ' after=' . \count($history->geometryRows($lastGeometry)),
             );
-            check('静止帧没有多采几何', \count($recorder->geometryFrames()) === 1);
+            check('静止帧没有多采几何', \count($history->geometryFrames()) === 1);
         } finally {
             Recorder::uninstall();
         }

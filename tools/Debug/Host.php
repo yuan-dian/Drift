@@ -9,6 +9,7 @@ use Drift\Debug\Protocol\Methods;
 use Drift\Debug\Protocol\ProtocolError;
 use Drift\Debug\Protocol\Server;
 use Drift\Debug\Protocol\Wire;
+use Drift\Debug\Session\History;
 use Drift\Debug\Session\InputScript;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
@@ -594,10 +595,13 @@ final class Host
         // 与本地调用抛的异常是同一件事。
         $session->highlight($node, $t === null ? null : (float) $t);
 
-        $drawn = $session->recorder()->overlayDrawn();
+        // 高亮的两个事实都在读面：`overlayDrawn()` 答"真上屏了吗"，`highlightedNode()`
+        // 答"现在请求的是谁"。两者分开记，正是为了不把请求当成证据。
+        $history = new History($session->recorder());
+        $drawn = $history->overlayDrawn();
 
         return [
-            'node' => $session->recorder()->highlightedNode(),
+            'node' => $history->highlightedNode(),
             'drawnFrame' => $drawn === null ? null : $drawn['frame'],
         ];
     }
