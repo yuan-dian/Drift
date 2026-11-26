@@ -39,7 +39,6 @@ require __DIR__ . '/autoload.php';
 
 use Drift\App\DebugSession;
 use Drift\Debug\Session\Evidence;
-use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Session;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Reopen;

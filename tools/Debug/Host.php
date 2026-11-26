@@ -167,11 +167,6 @@ final class Host
         $this->session = $session;
     }
 
-    public function session(): ?DebugSession
-    {
-        return $this->session;
-    }
-
     /** 已接受的通道：关监听之前先断开，避免观察者握着半死的连接。 */
     public function closeChannels(): void
     {

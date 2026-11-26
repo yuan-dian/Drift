@@ -32,7 +32,6 @@ use Drift\App\Replay;
 use Drift\Debug\Protocol\RemoteSession;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\Panel;

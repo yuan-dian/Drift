@@ -392,6 +392,10 @@ h2 {
   border-radius: 3px;
 }
 .treenode:hover { color: var(--accent); background: #272c2b; }
+/* 悬停联动：与画布上的蓝色悬停框同色同义 —— 两边读的是同一个 state.hover。
+   与 .on（青绿 = 选中）必须一眼分开：选中是"钉住了"，悬停是"正在指"。
+   放在 .on 之前：一行同时被选中和悬停时，选中态赢（它是更强的意图）。 */
+.treenode.hover { background: #20293b; color: #7aa7ff; }
 .treenode.on { background: #1d3b36; color: var(--accent); }
 #children { margin-bottom: 12px; }
 #children .child {

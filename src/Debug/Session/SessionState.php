@@ -54,10 +54,4 @@ final class SessionState
             ? ['state' => 'finished', 'reason' => null]
             : ['state' => 'paused', 'reason' => 'at'];
     }
-
-    /** @return array{session: string, state: string, reason: ?string} */
-    public function toArray(): array
-    {
-        return ['session' => $this->token, 'state' => $this->state, 'reason' => $this->reason];
-    }
 }

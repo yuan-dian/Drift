@@ -122,9 +122,10 @@ final class Web
             '/api/paint' => $this->json($this->queries->query('paint', [
                 'frame' => (int) ($query['frame'] ?? 0) ?: null,
             ])),
-            '/api/repaints' => $this->json($this->queries->query('repaints', [
-                'limit' => (int) ($query['limit'] ?? 200),
-            ])),
+            // `repaints` 没有 HTTP 路由：跨帧重画聚合是**规则**的口径（`repaint-storm`
+            // / `layer-miss` 经 `Facts` 取它），页面上要看的已经由 `/api/paint` 按帧
+            // 给全。曾经挂过 `/api/repaints`，前端一次都没调 —— 死路由由
+            // `tools/check-web-routes.php` 守。
             // 网络泳道与请求详情走同一个查询面；列表只给骨架，报文仍要显式问。
             '/api/network' => $this->json($this->queries->query('network', [
                 'limit' => (int) ($query['limit'] ?? 100),

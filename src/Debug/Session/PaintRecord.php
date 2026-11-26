@@ -47,16 +47,6 @@ final readonly class PaintRecord
     ) {
     }
 
-    public function hasNode(int $node): bool
-    {
-        return \in_array($node, $this->painted, true);
-    }
-
-    public function missOf(int $node): ?string
-    {
-        return $this->misses[$node] ?? null;
-    }
-
     /** 层缓存命中率；没有边界绘制时是 0，不是 100%。 */
     public function hitRate(): float
     {

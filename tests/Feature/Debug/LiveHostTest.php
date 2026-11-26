@@ -5,7 +5,6 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\Debug\Protocol\ProtocolError;
 use Drift\Debug\Protocol\RemoteSession;
-use Drift\Dev\Debug\Cursor;
 use Drift\Dev\Debug\Discovery;
 use Drift\Dev\Debug\SocketChannel;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -219,7 +218,13 @@ final class LiveHostTest extends SmokeTestCase
         $session->detach();
     }
 
-    /** 判据 6：宿主重启后令牌换了，老游标必须识别出"这不是同一场会话"。 */
+    /**
+     * 判据 6：宿主重启后令牌换了，观察者靠 `session` 字段识别"这不是同一场会话"。
+     *
+     * ★ 帧号每会话从 1 重发，`since=590` 落到新会话上意味着"全都读过了" —— 观察者
+     *   会以为没有新帧。所以游标必须带上会话号；`frames` 响应自带 `session`，
+     *   观察者自己比对，不需要一个共享的游标类型。
+     */
     public function testRestartChangesTheSessionToken(): void
     {
         $first = $this->startHost(['--page=table', '--frames=1']);
@@ -236,11 +241,10 @@ final class LiveHostTest extends SmokeTestCase
         check('两次的访问令牌不同', $first['token'] !== $second['token']);
         check('两次的会话令牌不同', $old !== $new, \json_encode([$old, $new]));
         check('frames 响应带的是新会话的令牌', ($frames['session'] ?? null) === $new, \json_encode($frames['session'] ?? null));
-
-        // 老游标在新会话上必须归零，而不是"接着往下数"。
-        $stale = new Cursor((string) $old, 590);
-        check('老游标判出会话不符', !$stale->isFreshFor($frames));
-        check('归零后重取', $stale->advance($frames)->frame === 0);
+        // 光比帧号是判不出来的：老会话也停在 1，与新的第一帧撞号。
+        check('这一条不能靠帧号判：两边帧号会撞', $frames['frames'] !== []
+            && (int) $frames['frames'][0]['id'] === 1);
+        check('老会话号与新响应不符（观察者据此归零）', $old !== ($frames['session'] ?? null));
 
         $b->detach();
     }

@@ -58,6 +58,13 @@ const state = {
 
 const colorCache = new Map();
 
+/**
+ * 节点号 → 树行元素。悬停时只动"离开的那一行"与"进入的那一行"：树有几百行，
+ * 每次 mousemove 全量扫一遍白烧 CPU（画布那边一帧一次，这里一次移动一次）。
+ * 真正的数据仍是 `state.tree`，这只是渲染索引，`renderTree()` 重建时同步重建。
+ */
+let treeIndex = new Map();
+
 function colorOf(type) {
   const key = String(type || '?');
   let c = colorCache.get(key);
@@ -163,13 +170,11 @@ async function boot() {
     zoomAt(e.clientX - rect.left, e.clientY - rect.top, e.deltaY < 0 ? 1.15 : 1 / 1.15);
   }, { passive: false });
 
-  cv.addEventListener('mouseleave', () => {
-    if (state.hover) {
-      state.hover = 0;
-      scheduleDraw();
-    }
-    restoreHint();
-  });
+  // 离开就清悬停。画布与树各管自己：鼠标只可能在一个地方，两处都清不会互相打架，
+  // 反而漏清会让"鼠标早走了、框还亮着"。
+  cv.addEventListener('mouseleave', () => setHover(0));
+  const treeHost = document.getElementById('tree');
+  if (treeHost) treeHost.addEventListener('mouseleave', () => setHover(0));
 
   document.getElementById('fit').onclick = () => resetView();
   document.getElementById('actual').onclick = () => actualSize();
@@ -725,6 +730,7 @@ function renderTree() {
   const scope = document.getElementById('treescope');
   if (!host) return;
   host.textContent = '';
+  treeIndex = new Map();
   if (count) count.textContent = state.tree.length ? `${state.tree.length} 行` : '';
   if (scope && state.treeCoverage) {
     const c = state.treeCoverage;
@@ -744,9 +750,28 @@ function renderTree() {
     line.style.paddingLeft = `${4 + Number(row.depth || 0) * 12}px`;
     line.dataset.node = String(id);
     line.onclick = () => select(id);
+    // 树 → 画布：扫过一行就让画布上那颗盒亮起来，不必先点。
+    line.onmouseenter = () => setHover(id);
+    treeIndex.set(id, line);
     host.appendChild(line);
   }
   markTreeSelection();
+  // DOM 是新建的，class 跟着上一批元素一起没了 —— 把悬停态补回去。
+  markTreeHover();
+}
+
+/**
+ * 树行的悬停态跟随 `state.hover`（画布悬停时也要能在树里看出"是哪一层"）。
+ *
+ * ★ 不 `scrollIntoView`：鼠标在图上扫过时把树滚来滚去，反而找不到位置。
+ *   只有点选（`markTreeSelection()`）才滚 —— 那是"我要去看它"的明确意图。
+ */
+function markTreeHover() {
+  const host = document.getElementById('tree');
+  if (!host) return;
+  for (const line of host.querySelectorAll('.treenode.hover')) line.classList.remove('hover');
+  const on = treeIndex.get(state.hover);
+  if (on) on.classList.add('hover');
 }
 
 /** 选中态只有一个真相；轮询改了 selected 时树只是跟着改一个 class。 */
@@ -1062,7 +1087,9 @@ function updateZoom() {
 
 function restoreHint() {
   const hint = document.getElementById('hint');
-  hint.textContent = state.hintBase + (state.hidden ? ` · ${state.hidden} 个盒在视口外` : '');
+  // 悬停时换成那颗节点的事实：鼠标停在哪，答案就在哪，不用点。其余时候是基线文案。
+  hint.textContent = hoverFact()
+    || (state.hintBase + (state.hidden ? ` · ${state.hidden} 个盒在视口外` : ''));
 
   const info = document.getElementById('shotinfo');
   if (!state.shotUrl) {
@@ -1112,21 +1139,43 @@ function hover(event) {
     || event.clientY < rect.top || event.clientY > rect.bottom) {
     return;
   }
+  setHover(hitTest(event));
+}
 
-  const node = hitTest(event);
-  if (node !== state.hover) {
-    state.hover = node;
-    scheduleDraw();   // hover 也要重绘：高亮就画在这层画布上，不重绘等于没高亮
-  }
+/**
+ * 悬停只有一个真相：`state.hover`。画布与结构树都读它、都能写它 —— 谁先动，
+ * 另一处跟着亮。这是"看着图想知道它在树里哪一层"唯一的低摩擦答案，也是
+ * Chrome Elements 与 Flutter Inspector 都有的那条双向联动。
+ *
+ * ★ 这里**不写 hint**：`draw()` 末尾会跑 `restoreHint()`，命令式写进去会被那一跑
+ *   立刻抹掉（实测悬停信息只闪一帧就变回基线文案）。hint 一律从 state 派生，
+ *   见 `restoreHint()` —— 少一个写点，就少一条"谁最后写谁赢"的隐性顺序。
+ */
+function setHover(node) {
+  if (node === state.hover) return;
+  state.hover = node;
+  markTreeHover();
+  restoreHint();     // 悬停信息不等下一帧（早到的这一跑与 draw 末尾那跑同值）
+  scheduleDraw();    // 画布蓝框画在这层，不重绘等于没高亮
+}
 
-  const hint = document.getElementById('hint');
-  if (!node) {
-    restoreHint();
-    return;
+/**
+ * 悬停节点的现场事实。纯派生：不写 state、不读时钟 —— `restoreHint()` 每次重绘
+ * 都会调它，写 state 就成了第二个真相。
+ *
+ * 取不到盒也要说清是哪一种"没有"：无盒节点与历史帧节点在画布上本来就画不出框，
+ * 这时退回一句泛泛的基线文案，会让人以为悬停没生效。
+ */
+function hoverFact() {
+  if (!state.hover) return '';
+  const box = state.boxes.find((r) => r.node === state.hover);
+  if (box) {
+    return `#${box.node} ${box.type || '?'} · ${box.rect.w}×${box.rect.h} @ ${box.rect.x},${box.rect.y}`;
   }
-  const row = state.boxes.find((r) => r.node === node);
-  if (!row) return;
-  hint.textContent = `#${row.node} ${row.type || '?'} · ${row.rect.w}×${row.rect.h} @ ${row.rect.x},${row.rect.y}`;
+  const line = state.tree.find((r) => Number(r.id) === state.hover);
+  return line
+    ? `#${state.hover} ${line.type || '?'} · 这一帧没有几何`
+    : `#${state.hover} · 这一帧没有这个节点`;
 }
 
 function updateSelectionSource() {

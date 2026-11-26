@@ -227,7 +227,7 @@ final class Shot
      * 对应得上的录制帧号（前端据此取几何）。两个数必须一起给 —— 分两次请求就会
      * 拿到"图是第 3 张、几何是第 5 张"的错位，而错位看起来像布局错了。
      */
-    public function publishMeta(int $serial, int $frame, int $w, int $h): void
+    private function publishMeta(int $serial, int $frame, int $w, int $h): void
     {
         $dir = $this->shotDir();
         $json = \json_encode([
