@@ -10,7 +10,7 @@
 
 1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
 2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），并已能**按帧回放**（A67：出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照 —— 它只在"当时的类型 / 父与现在不同"时才值得立预算。
-3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议与文档存在多处漂移。
+3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移。
 
 这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。
 
@@ -43,6 +43,7 @@
 | 源码位置 | 已落地：`debug probe --what=source` 用 `ReflectionMethod::getFileName()/getStartLine()/getEndLine()` 把 `site` 翻成"哪个方法、定义第几行"；只看已加载类、当场反射、不是证据（A55） | Chrome Sources、LLDB `image lookup` | 补上从因果 site 跳到方法定义的最后一跳 |
 | 异步 / worker 时间线 | 已落地（A63）：三个 TaskHost 后端内侧 tap，记提交 / 派发 / 结算帧、状态、耗时、发起者与落地节点；默认关，`debug async` + Web 异步泳道读同一查询面 | Chrome async stacks、Perfetto | 只记后端调度过的 job；await 每步成为 span 要另立 trace |
 | 崩溃 / 生产黑匣子 | 已落地：每应用一份 Core 标量环，帧末写一条，Frame 异常边界先留现场再响亮失败；release 可恢复错误另记独立面包屑环，不顶掉致命现场（A61）；sidecar 每 30 帧原子替换，native 过滤器崩溃时原样附加（A62）；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留（A60） | Sentry breadcrumb、Chrome trace | 已覆盖 PHP 异常、可恢复告警与 native context；符号化仍靠 `/MAP` + `rva2sym` |
+| 协议版本 / 能力发现 | 已落地（A71）：`capabilities` 在 `open` 之前可问，目录从动词表 / 查询规格 / 错误表派生，`available` 与实际拒绝同源；信封带版本，不认识就显式报错；离线查询面同形 | CDP `Schema.getDomains`、LSP `initialize`、Flutter VM `getVersion` | 客户端不再靠试探认识宿主；不是可执行契约 |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
 | 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
@@ -238,7 +239,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
-| **P7** | 协议版本与能力发现 | 协议版本、能力列表、错误码表；老客户端遇到未知能力显式报错 | P3 | M |
+| **P7** | 协议版本与能力发现 | 已落地（A71）：`Methods::CAPABILITIES` 在 open 前可问；`Capabilities` 从动词表 / 查询面 / 错误表单向派生并双向闭合；宿主的 `available` 与分派拒绝同源；信封版本非法回 `unsupported_version`，老宿主缺动词回 `unknown_method` 表示太老；`debug capabilities` 与 Web 页眉共用查询，离线包同形 | P3 | M |
 | **P8** | 编译归属守门 | 已落地（A54）：`ignore` 唯一声明在 `build/base.yml`，各应用不再重写；`tools/check-debug-scope.php` 守“编译进产物的调试侧文件集合 **恰好等于** 16 项写面白名单”（属性降级后 PropSnapshot 移除），多一项报审查面泄漏、少一项报热路径被排、拼错路径报条目不存在；`--selftest` 四组变异全咬红；8 个应用全绿，已接 `verify` 工作流。showcase 实测 −7,931 行 / −39%；**链接级构建验证待跑**（本机 `cl.exe` 并发挂死，`--jobs 1` 太慢已停） | A54 | S |
 | **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
 | **P8** | 结构树导航 | 已落地（A64）：`tree(root, depth, limit, frame)` 从节点注册表投影扁平先序行；断父 / 孤儿 / 环与深度 / 条数截断都自报；几何从 `boxes(frame)` 一次对齐，CLI `debug tree` 与 Web 侧栏共用查询，选中写宿主 `highlight` 并轮询校正。不新增证据域 / 预算 / 指纹 | A55、A64 |
@@ -264,7 +265,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 |---|---|---|
 | **生产可用** | AOT 常驻默认开销 < 2%；崩溃文件可检出截断；多窗口隔离；慢帧可回看；**产物不含审查面**（`ignore` + 检查） | P1、P3、P4、P8 |
 | **调试体验** | 真窗口 attach；点选 + 高亮；因果树 / 时间线 / 绘制页可在同一会话里联动 | P2、P3 |
-| **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议有能力发现；使用指南可独立走通 | P5、P7 |
+| **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议版本与能力发现已落地（A71）；使用指南可独立走通 | P5、P7 |
 
 三扇门都过，才谈“成熟 DevTools”。只过第一扇，是“可用的生产诊断器”；只过第二扇，是“好用的开发检查器”；三扇都过，才是别人愿意长期依赖的工具。
 

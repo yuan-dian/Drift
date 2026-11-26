@@ -25,6 +25,16 @@ final class ProtocolError extends \RuntimeException
     /** 方法名不在 {@see Methods::ALL} 里。 */
     public const string UNKNOWN_METHOD = 'unknown_method';
 
+    /**
+     * 客户端报的协议版本这个宿主不认。
+     *
+     * ★ 不叫 `version_too_new`：版本两头都可能不兼容 —— 老客户端发得出新宿主
+     *   已经删掉的字段，新客户端也可能要求老宿主给不出的语义。给个方向性的名字
+     *   会让客户端按错的方向重试（"等宿主升级"），而真相可能是它自己太新。
+     * 客户端先 `capabilities` 握手再调用，是避免撞上这个码的正路。
+     */
+    public const string UNSUPPORTED_VERSION = 'unsupported_version';
+
     /** 还没 `open` 就驱动或查询。 */
     public const string NOT_OPEN = 'not_open';
 
@@ -58,6 +68,28 @@ final class ProtocolError extends \RuntimeException
 
     /** 对端在等待响应时关掉了管道。 */
     public const string CLOSED = 'closed';
+
+    /**
+     * 稳定的错误码全集，能力发现按它列目录。
+     *
+     * 手写一份是必要的：常量本身没有可遍历的反射入口（`ReflectionClass::getConstants()`
+     * 会把数组常量也混进来）。判据逐个核对这里列出的码确实存在，反过来再核对
+     * 类里的码没有漏列 —— 少的那一个会让客户端遇到它时没有名字可分支。
+     *
+     * @var list<string>
+     */
+    public const array ALL = [
+        self::BAD_REQUEST,
+        self::UNKNOWN_METHOD,
+        self::UNSUPPORTED_VERSION,
+        self::NOT_OPEN,
+        self::ALREADY_OPEN,
+        self::UNAUTHORIZED,
+        self::NOT_APPLICABLE,
+        self::CALL_FAILED,
+        self::BAD_RESPONSE,
+        self::CLOSED,
+    ];
 
     public function __construct(
         public readonly string $errorCode,

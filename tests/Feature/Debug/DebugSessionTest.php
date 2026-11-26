@@ -121,7 +121,7 @@ final class DebugSessionTest extends SmokeTestCase
             // 自产的三条不进规格表，是因为它们没有 `Query` 方法可转发：`digest` 算
             // 指纹、`script` 回脚本、`state` 回会话身份与状态。把它们塞进规格表就得
             // 给 `Query` 造三个假方法，而 `Query` 只认 `Recorder`。
-            $selfServed = ['digest', 'script', 'state'];
+            $selfServed = \Drift\Debug\Session\QueryRouter::SELF_SERVED;
             $declared = \array_keys(DebugSession::QUERIES);
             $shaped = \array_merge(\array_keys(DebugSession::QUERY_SPECS), $selfServed);
             \sort($declared);

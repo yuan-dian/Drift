@@ -12,6 +12,7 @@ namespace Drift\Debug\Protocol;
  * |---|---|---|
  * | 会话 | `open` / `close` | 客户端说，宿主做 |
  * | 驱动 | `frame` / `input` / `effect` | 同上 |
+ * | 发现 | `capabilities` | 客户端说，宿主答；**open 之前就能问** |
  * | 读 | `query` | 同上 |
  * | 内省 | `eval` | 同上；**只对活宿主有意义**，默认关，结果不是证据 |
  * | 干预 | `pause` / `resume` / `highlight` | 同上，但 `pause`/`resume` **只对自走宿主有意义** |
@@ -44,6 +45,16 @@ final class Methods
 
     /** 执行具名副作用。参数 `name` + `args`。返回 `{value}`。 */
     public const string EFFECT = 'effect';
+
+    /**
+     * 问这个宿主说什么协议、有哪些能力、其中哪些此刻可用。
+     *
+     * ★ 不放在 `query` 里重复一遍：`query` 要会话，而能力发现的第一用途恰恰是
+     *   **还没 open 时**知道该发哪些方法、该带哪个版本。要求先 open 等于让客户端
+     *   靠试探来发现能力 —— 而试探一个不支持的方法，在这套协议里会回错误信封。
+     *   同一份声明也通过 `query('capabilities')` 暴露给离线读者，形状由这里派生。
+     */
+    public const string CAPABILITIES = 'capabilities';
 
     /** 分派一次查询。参数 `name` + `args`（与本地 `query()` 完全同形）。 */
     public const string QUERY = 'query';
@@ -103,6 +114,7 @@ final class Methods
         self::FRAME,
         self::INPUT,
         self::EFFECT,
+        self::CAPABILITIES,
         self::QUERY,
         self::EVAL,
         self::PAUSE,

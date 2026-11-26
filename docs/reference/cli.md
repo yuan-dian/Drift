@@ -55,6 +55,8 @@
 
 `debug targets` 把所有活会话并列成一份只读视图：发现文件里每个进程一行，给发现数、最慢帧与指纹；连接不上的单独标成不可达并附诊断，其他会话照常。它只并列、不按节点号或帧号合并 —— 两个窗口的节点编号不是同一个节点；深挖仍走既有出口并点名会话。裁决 A59。
 
+`debug capabilities` 回答"这个调试面说什么协议、有哪些能力、现在哪些能用"：不带参数只读本地声明（不用起应用、不用证据包），带 `--session=ID` 才接活会话取宿主的可用性（`eval` 开没开、帧谁推、拾取有没有窗口）。方法名来自动词表、查询形状来自查询规格表、错误码来自协议错误表，不在出口里另抄一份；客户端也可在 `open` 之前发 `capabilities` 消息做同样的事。老宿主回 `unknown_method`，那是"版本太老"而不是"没有能力"。裁决 A71。
+
 `debug tree` 是结构树的导航出口：把节点注册表投影成扁平先序行，按 `--root` / `--depth` / `--limit` 收敛。`--frame` 决定**回放哪一帧**——那时还没出生的节点不出现，那时已经离开的节点同样不出现，而现在已回收、当时还活着的节点照样画出来并标 `已回收`；行尾的 `重建` 说明这一帧重建过它。默认帧是最新一帧，所以不带 `--frame` 时看到的就是当下。几何按同一帧在查询层贴好（几何窗口只有 60 帧且"有变化才记"，超出时夹到窗口内并标"沿用旧记录"）。断父链、孤儿与成环都会单独标出并计入覆盖率，不会静默丢节点；旧证据包缺出生帧时整张表会标 `生命周期 不完整`，不把"不知道"显示成"没有"。裁决 A64 / A67。
 
 `debug tree-diff` 回答另一个问题：两帧之间**发生了什么**（A70）。`--base` 是不含的起点、`--frame` 是含的终点，所以 `(2,4]` 与 `(4,6]` 拼起来正好是 `(2,6]`。事件取生命周期两端与帧记录：出生、离开、区间内重建；同一节点在区间内既出生又离开会给两条事件。它不是"两次 tree() 相减"——后者拿到的是两份被 depth / limit 截断的投影。没有逐帧父 / 类型快照，移位与改型不报；缺帧记录或起点早于节点保留期时，第二行会把缺口写出来，空结果不等于"没发生"。裁决 A70。
@@ -68,6 +70,7 @@
 |---|---|---|---|---|
 | `brief` | `debug-brief.php` | driver | 预算内的证据简报：哪里不对、为什么、下一步查哪 | `--budget` `--text-width` `--from` `--out` `--session` `--attach` `--rules` `--baseline` `--save-baseline` `--assert` `--tolerance` `--slow` `--fanout` `--repeat` `--rule` `--without` `--min-severity` |
 | `targets` | `debug-targets.php` | protocol | 把当前目录所有活会话并列成一份视图（不跨窗口 join） | — |
+| `capabilities` | `debug-capabilities.php` | protocol | 协议版本与能力目录：方法 / 查询形状 / 错误码 / 宿主可用性 | — |
 | `report` | `debug-report.php` | driver | 帧因果报告：哪些节点重建了、因为谁 | `--verify` `--top` `--depth` `--why` `--frame` `--save` `--replay` |
 | `panel` | `debug-panel.php` | driver | 同一个会话上反复追问：时间轴 + 因果树 + 原因 | `--shots` `--replay` `--keys` `--frame` `--screen` `--save` |
 | `network` | `debug-network.php` | driver | 网络骨架与报文（按 requestId 取，脱敏 + 截断） | `--request` `--part` `--limit` `--maxBytes` `--from` `--out` `--attach` `--session` |

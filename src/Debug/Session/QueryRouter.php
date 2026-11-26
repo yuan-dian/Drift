@@ -60,7 +60,21 @@ final class QueryRouter implements SessionQueries
         'digest' => '记录指纹：节点表 + 逐帧因果哈希（不含时间，可跨进程比对）',
         'script' => '本次会话录下的驱动脚本：目标 / 视口 / 环境 / 步骤',
         'state' => '会话身份与状态：令牌 / 末帧 / running|paused|finished|offline',
+        'capabilities' => '协议版本与能力目录：方法 / 查询形状 / 错误码（离线也能问）',
     ];
+
+    /**
+     * 没有 `Query` 方法可转发、由会话自己答的四条查询。
+     *
+     * `digest` 算指纹、`script` 回脚本、`state` 回会话身份与状态、`capabilities`
+     * 回协议目录（{@see \Drift\Debug\Protocol\Capabilities}）。它们都不属于任何
+     * 记录域：给 `Query` 造四个假方法只会让门面多四条空转分派。
+     *
+     * 这张表同时被协议目录与闭合判据消费，别再在别处写第四遍。
+     *
+     * @var list<string>
+     */
+    public const array SELF_SERVED = ['digest', 'script', 'state', 'capabilities'];
 
     /**
      * 查询的**协议形状**：转发到哪个 `Query` 方法、按什么顺序收哪些参数。
@@ -219,6 +233,10 @@ final class QueryRouter implements SessionQueries
             // 会话状态不是证据事实（`Query` 只认 `Recorder`），所以走这里而不是
             // `stats`：`stats` 答的是"录到了什么"，`state` 答的是"这个会话还在动吗"。
             'state' => $this->stateQuery(),
+            // 能力目录不依赖会话状态；离线包也能问。真正"这个宿主现在能不能用"
+            // 由 Methods::CAPABILITIES 的回执加 host 一栏回答 —— 那栏需要宿主，
+            // 不属于查询面。
+            'capabilities' => \Drift\Debug\Protocol\Capabilities::describe(),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
             ),

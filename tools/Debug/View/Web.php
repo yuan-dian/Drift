@@ -105,6 +105,9 @@ final class Web
             '/style.css' => $this->asset('style.css', 'text/css; charset=utf-8'),
             '/api/brief' => $this->briefResponse($query),
             '/api/state' => $this->json($this->queries->query('state')),
+            // 协议目录走同一个查询面：离线读包也能问。页面只在页眉显示版本，
+            // 具体有哪些查询由 CLI 的 capabilities 出口给人看，不在 Web 里再列一份。
+            '/api/capabilities' => $this->json($this->queries->query('capabilities')),
             // 选中只有宿主那一份真相。页面自己的高亮只是它的镜像，轮询这里校正；
             // 若让页面自己记"我选了谁"，真窗口拾取和别的观察者改的选中永远传不进来。
             '/api/highlight' => $this->json($this->selection()),

@@ -56,8 +56,41 @@ final class RemoteSession implements Session
      */
     private ?bool $live = null;
 
+    /** 宿主在能力发现里报的版本；`null` = 没问过，不猜。 */
+    private ?int $peerProtocol = null;
+
     public function __construct(private readonly Transport $transport)
     {
+    }
+
+    /**
+     * 问宿主的版本与能力；**open 之前就能问**。
+     *
+     * 老宿主没有这个动词，会回 `unknown_method` —— 那是明确的不支持，不是
+     * "没有能力"，调用方别把异常吞成空目录。新宿主回执里的 `protocol` 会记到
+     * {@see self::peerProtocol()}，后续每条消息都会带版本号。
+     *
+     * @return array<array-key, mixed>
+     */
+    public function capabilities(): array
+    {
+        $reply = $this->callObject(Methods::CAPABILITIES);
+        $version = $reply['protocol'] ?? null;
+        if (!\is_int($version) || !Capabilities::supports($version)) {
+            throw new ProtocolError(
+                ProtocolError::BAD_RESPONSE,
+                '能力发现回执的 protocol 不是支持的整数版本',
+            );
+        }
+        $this->peerProtocol = $version;
+
+        return $reply;
+    }
+
+    /** 宿主报的协议版本；没问过为 `null`，不猜。 */
+    public function peerProtocol(): ?int
+    {
+        return $this->peerProtocol;
     }
 
     /**
@@ -353,7 +386,14 @@ final class RemoteSession implements Session
         }
 
         $id = ++$this->seq;
-        $this->transport->write(Wire::encode(['id' => $id, 'method' => $method, 'params' => $params]));
+        // 每条消息都带版本。老宿主忽略信封上不认识的键，所以这不是硬握手；新宿主
+        // 见到不认识的版本会明确拒绝（unsupported_version），而不是拿新字段猜语义。
+        $this->transport->write(Wire::encode([
+            'id' => $id,
+            'method' => $method,
+            'params' => $params,
+            'protocol' => Capabilities::VERSION,
+        ]));
 
         $line = $this->transport->read();
         if ($line === null) {

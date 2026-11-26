@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Debug;
 
 use Drift\App\DebugSession;
+use Drift\Debug\Protocol\Capabilities;
 use Drift\Debug\Protocol\Channel;
 use Drift\Debug\Protocol\Methods;
 use Drift\Debug\Protocol\ProtocolError;
@@ -219,9 +220,36 @@ final class Host
             return;
         }
 
+        // 版本在信封上，不在 params 里：每条消息都带，才能挡住"先握手成功、后来
+        // 用了新语义"这种漂移。老宿主忽略这个额外键，所以新客户端发过来不会断。
+        $version = $message['protocol'] ?? null;
+        if ($version !== null && !\is_int($version)) {
+            $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'protocol 必须是整数');
+
+            return;
+        }
+        if ($version !== null && !Capabilities::supports($version)) {
+            $this->fail(
+                $channel,
+                $id,
+                ProtocolError::UNSUPPORTED_VERSION,
+                "协议版本 {$version} 不受支持（支持 " . Capabilities::MIN_VERSION . '..' . Capabilities::VERSION . '）',
+            );
+
+            return;
+        }
+
         $params = $message['params'] ?? [];
         if (!\is_array($params)) {
             $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'params 必须是对象');
+
+            return;
+        }
+
+        if ($method === Methods::CAPABILITIES) {
+            // 发现必须先于 open：要求先开会话等于让客户端靠"发一个不支持的方法
+            // 看它报什么"来认识这个宿主，而那正是能力发现要消灭的试探。
+            $this->ok($channel, $id, $this->capabilities($version));
 
             return;
         }
@@ -269,15 +297,9 @@ final class Host
         }
 
         if ($method === Methods::FINISH) {
-            if ($this->drive !== null) {
-                // 何时停由自走宿主自己判（`Drive::settle()`）；让它听客户端的
-                // 就会出现两套"跑完了"的定义，而两边的状态会各自说一套。
-                $this->fail(
-                    $channel,
-                    $id,
-                    ProtocolError::NOT_APPLICABLE,
-                    '这个宿主自己按帧循环判停：别告诉它什么时候结束',
-                );
+            $why = $this->unavailable(Methods::FINISH);
+            if ($why !== null) {
+                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
 
                 return;
             }
@@ -301,13 +323,10 @@ final class Host
         if ($method === Methods::EVAL) {
             // 默认关，在分派的最前面判：不开时连参数都不解析。任意代码执行
             // 是安全面，"参数写错了"和"这个宿主根本不允许求值"不是一回事。
-            if (!$this->allowEval) {
-                $this->fail(
-                    $channel,
-                    $id,
-                    ProtocolError::NOT_APPLICABLE,
-                    '这个宿主没开 eval：起 serve 时加 --allow-eval（任意代码执行，只绑 loopback）',
-                );
+            // ★ 拒绝理由与 capabilities() 里那一行同源，不能各写一句。
+            $why = $this->unavailable(Methods::EVAL);
+            if ($why !== null) {
+                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
 
                 return;
             }
@@ -323,18 +342,16 @@ final class Host
             return;
         }
 
-        if ($method === Methods::FRAME && $this->drive !== null) {
+        if ($method === Methods::FRAME) {
             // 两条时间轴：脚本里的 `t` 与客户端编的 `t` 混进同一条记录，而 `digest`
             // 不含时间（比不出这件事）、`t` 序列只有细看才发现断裂。单步走
             // `resume` 的 `frames`，那里推进的是脚本自己的下一帧。
-            $this->fail(
-                $channel,
-                $id,
-                ProtocolError::NOT_APPLICABLE,
-                '这个宿主自己按帧循环推帧：不要再喂 t。要单步用 resume --frames=1',
-            );
+            $why = $this->unavailable(Methods::FRAME);
+            if ($why !== null) {
+                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
 
-            return;
+                return;
+            }
         }
 
         try {
@@ -355,6 +372,66 @@ final class Host
         } catch (\Throwable $e) {
             $this->failFor($channel, $id, $e);
         }
+    }
+
+    /**
+     * 这个宿主此刻为什么不能做这个方法；能做为 `null`。
+     *
+     * ★ 分派与能力目录共用的**唯一**一处判断。把它拆成两处（调用处一个 bool、
+     *   目录里另写一份）在写的时候看不出问题，跑起来则会出现"目录说能用，
+     *   一调就 not_applicable"——客户端明明先问过，还是得靠试探。
+     *
+     * 这里只说**宿主配置**层面的不可用。会话已经结束、还没 open 这类时间状态
+     * 由分派自己判：它们下一秒就可能变，写进能力目录只会让读者以为能力没了。
+     */
+    private function unavailable(string $method): ?string
+    {
+        return match ($method) {
+            Methods::EVAL => $this->allowEval
+                ? null
+                : '这个宿主没开 eval：起 serve 时加 --allow-eval（任意代码执行，只绑 loopback）',
+            Methods::PICK => $this->armPick === null
+                ? '这个宿主没有可拾取的活窗口（pick 只对 live attach 有意义）'
+                : null,
+            Methods::FRAME => $this->drive !== null
+                ? '这个宿主自己按帧循环推帧：不要再喂 t。要单步用 resume --frames=1'
+                : null,
+            Methods::PAUSE, Methods::RESUME => $this->drive === null
+                ? '这个宿主由客户端驱动（每帧都要客户端发）：暂停就是你别再发 frame，不用问它'
+                : null,
+            Methods::FINISH => $this->drive !== null
+                ? '这个宿主自己按帧循环判停：别告诉它什么时候结束'
+                : null,
+            default => null,
+        };
+    }
+
+    /**
+     * 能力发现回执：协议目录 + 这个宿主的配置事实 + 每个方法的当前可用性。
+     *
+     * `open` 之前就能问，所以这里不能读 `$this->session` 的方法面；只报一个
+     * `sessionOpen` 布尔，让客户端知道下一步是该 `open` 还是能直接查。
+     */
+    private function capabilities(?int $version): array
+    {
+        $reply = Capabilities::describe($version);
+        $reply['host'] = [
+            'sessionOpen' => $this->session !== null,
+            'driven' => $this->drive !== null,
+            'allowEval' => $this->allowEval,
+            'pickArmable' => $this->armPick !== null,
+            // 只说"开没开令牌"，不说令牌是什么 —— 能力发现不需要变成第二道门。
+            'tokenRequired' => $this->accessToken !== null,
+            'live' => $this->drive?->live() ?? null,
+        ];
+        foreach ($reply['methods'] as &$one) {
+            $why = $this->unavailable((string) $one['name']);
+            $one['available'] = $why === null;
+            $one['reason'] = $why;
+        }
+        unset($one);
+
+        return $reply;
     }
 
     // ------------------------------------------------------------------ 方法
@@ -432,13 +509,11 @@ final class Host
         string $method,
         array $params,
     ): void {
-        if ($this->drive === null) {
-            $this->fail(
-                $channel,
-                $id,
-                ProtocolError::NOT_APPLICABLE,
-                '这个宿主由客户端驱动（每帧都要客户端发）：暂停就是你别再发 frame，不用问它',
-            );
+        // 与 capabilities() 的 available 一栏同源：目录说不能暂停而调用却成功，
+        // 或目录说能暂停而调用被拒，都是两份真相打架。
+        $why = $this->unavailable($method);
+        if ($why !== null) {
+            $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
 
             return;
         }
@@ -619,11 +694,9 @@ final class Host
         if (!\is_bool($enabled)) {
             throw new ProtocolError(ProtocolError::BAD_REQUEST, 'pick 需要布尔 enabled');
         }
-        if ($this->armPick === null) {
-            throw new ProtocolError(
-                ProtocolError::NOT_APPLICABLE,
-                '这个宿主没有可拾取的活窗口（pick 只对 live attach 有意义）',
-            );
+        $why = $this->unavailable(Methods::PICK);
+        if ($why !== null) {
+            throw new ProtocolError(ProtocolError::NOT_APPLICABLE, $why);
         }
 
         return ($this->armPick)($enabled);

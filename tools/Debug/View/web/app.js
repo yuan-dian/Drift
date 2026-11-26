@@ -205,7 +205,7 @@ async function boot() {
     }
   });
 
-  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
+  await Promise.all([loadScript(), loadCapabilities(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
 
   // 第一屏：有底图就跟"最新"（服务端缺省帧 = 几何窗口最新），画面也是最新的，
   // 两者同源；没有底图（离线包 / 自己跑的会话）才退回"最值得看的一帧"。
@@ -265,6 +265,18 @@ async function loadScript() {
     }
   } catch (e) {
     // 离线包可能没有驱动脚本：视口尺寸退化到"几何里最靠外的边"。
+  }
+}
+
+async function loadCapabilities() {
+  try {
+    const caps = await get('/api/capabilities');
+    const n = Number(caps && caps.protocol);
+    document.getElementById('protocol').textContent =
+      Number.isFinite(n) && n > 0 ? `协议 v${n}` : '协议 ?';
+  } catch (e) {
+    // 老会话的查询面没有 capabilities：页眉如实说不知道，不猜一个版本号。
+    document.getElementById('protocol').textContent = '协议 未知';
   }
 }
 
@@ -1602,7 +1614,7 @@ async function pollShot() {
 }
 
 async function refresh() {
-  await Promise.all([loadScript(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
+  await Promise.all([loadScript(), loadCapabilities(), loadBrief(), loadFrames(), loadNetwork(), loadAsync()]);
   await loadFrame(state.frame);
   await poll();
 }
