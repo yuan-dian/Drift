@@ -52,6 +52,7 @@ final class Source
         private readonly ?string $out,
         private readonly ?\Closure $cleanup,
         private readonly ?RemoteSession $remote = null,
+        private readonly ?string $sessionId = null,
     ) {
     }
 
@@ -229,12 +230,19 @@ final class Source
                 $live->detach();
             },
             $live,
+            $entry['id'],
         );
     }
 
     public function queries(): SessionQueries
     {
         return $this->queries;
+    }
+
+    /** attach 到的会话号；web 用它定位这个会话独有的快照目录。 */
+    public function sessionId(): ?string
+    {
+        return $this->sessionId;
     }
 
     /** 给人看的名字：页面路由 / 包里的目标 / 发现文件里记的目标。 */

@@ -60,6 +60,7 @@ final class Shot
     public function __construct(
         private readonly string $dir,
         private readonly float $gapMs = self::MIN_GAP_MS,
+        private readonly ?string $sessionId = null,
     ) {
         $this->serial = self::latestSerial($this->shotDir());
     }
@@ -85,9 +86,9 @@ final class Shot
      * ★ 带 TTL：观察者被 `kill -9` 或崩溃时删不掉标记，没有 TTL 就是宿主永久的
      *   白拍。标记的 mtime 是心跳 —— web 每秒请求一次图，顺便摸一下它。
      */
-    public static function installed(string $dir, float $ttlSec = 20.0): bool
+    public static function installed(string $dir, float $ttlSec = 20.0, ?string $sessionId = null): bool
     {
-        $file = $dir . '/shot/want';
+        $file = self::dirFor($dir, $sessionId) . '/want';
         $at = @\filemtime($file);
 
         return $at !== false && (\time() - $at) <= $ttlSec;
@@ -95,7 +96,22 @@ final class Shot
 
     public function shotDir(): string
     {
-        return $this->dir . '/shot';
+        return self::dirFor($this->dir, $this->sessionId);
+    }
+
+    /**
+     * 快照落在会话自己的子目录：同一目录跑两个宿主时，全局 `.drift/shot` 会让
+     * 后拍的那张盖掉前一张的 meta，web 于是拿 A 的图配 B 的几何。
+     * 空会话号留给没有登记的旧调用（单例宿主），仍用原来的平铺路径。
+     */
+    public static function dirFor(string $dir, ?string $sessionId): string
+    {
+        $root = $dir . '/shot';
+        if ($sessionId === null || $sessionId === '') {
+            return $root;
+        }
+
+        return $root . '/' . $sessionId;
     }
 
     /**
@@ -120,7 +136,7 @@ final class Shot
         }
 
         $this->lastProbeAt = $nowMs;
-        $this->wanted = self::installed($this->dir);
+        $this->wanted = self::installed($this->dir, 20.0, $this->sessionId);
     }
 
     /**

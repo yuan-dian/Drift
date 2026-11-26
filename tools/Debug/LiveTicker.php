@@ -136,7 +136,7 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
 
         // 画面通道：与证据通道并列，互不依赖。截图失败（后端读不回像素）只意味着
         // web 上没底图，几何照旧 —— 不报错、不降级会话。
-        $this->shot = new Shot(\dirname($this->discovery->path()));
+        $this->shot = new Shot(\dirname($this->discovery->path()), Shot::MIN_GAP_MS, $this->entryId);
         $this->bound = $app;
         $app->setFrameObserver(\Closure::fromCallable([$this, 'onPainted']));
 

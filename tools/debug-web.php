@@ -129,16 +129,19 @@ try {
     // 画面通道：只有接活会话才可能有像素（离线包/自己跑的会话都没有宿主进程在拍）。
     // 目录约定与宿主 `Shot` 一致：`<cwd>/.drift`。
     $evidenceDir = $attach ? \dirname(Discovery::inDirectory((string) \getcwd())->path()) : null;
+    // 底图与几何必须来自同一个会话：目录按会话号分开，别让另一个宿主覆盖这张图。
+    $shotDirFor = $attach ? Web::shotDirFor((string) $evidenceDir, $source->sessionId()) : null;
 
-    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection, $evidenceDir);
+    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection, $evidenceDir, $source->sessionId());
     $server = new HttpServer($host, $port);
 
     \fwrite(\STDERR, \sprintf(
-        "Web 视图：http://%s:%d/\n读的是 %s%s\nCtrl-C 结束\n",
+        "Web 视图：http://%s:%d/\n读的是 %s%s\n画面：%s\nCtrl-C 结束\n",
         $host === '0.0.0.0' ? '127.0.0.1' : $host,
         $server->port(),
         $label,
         $control === null ? '（只读：没有驱动面）' : '（可暂停 / 单步）',
+        $shotDirFor ?? '无（这个会话没有画面通道）',
     ));
 
     if ($host === '0.0.0.0') {

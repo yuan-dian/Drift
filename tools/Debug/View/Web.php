@@ -48,6 +48,7 @@ final class Web
         private readonly ?\Closure $control = null,
         ?RuleSelection $selection = null,
         private readonly ?string $evidenceDir = null,
+        private readonly ?string $sessionId = null,
     ) {
         $this->selection = $selection ?? RuleSelection::all();
     }
@@ -448,19 +449,30 @@ final class Web
         ]);
     }
 
-    /** `.drift/shot`（不存在就建）—— 与宿主 `Shot` 用的是同一个约定路径。 */
+    /** `.drift/shot/<sessionId>`（不存在就建）—— 与宿主 `Shot` 用的是同一个约定路径。 */
     private function shotRoot(): ?string
     {
         if ($this->evidenceDir === null) {
             return null;
         }
 
-        $dir = $this->evidenceDir . '/shot';
+        $dir = self::shotDirFor($this->evidenceDir, $this->sessionId);
         if (!\is_dir($dir)) {
             @\mkdir($dir, 0775, true);
         }
 
         return \is_dir($dir) ? $dir : null;
+    }
+
+    /** 与 {@see \Drift\Dev\Debug\Shot::dirFor()} 同一套路径约定，web 与宿主不能各拼一遍。 */
+    public static function shotDirFor(string $dir, ?string $sessionId): string
+    {
+        $root = $dir . '/shot';
+        if ($sessionId === null || $sessionId === '') {
+            return $root;
+        }
+
+        return $root . '/' . $sessionId;
     }
 
     /**
