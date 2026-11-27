@@ -311,45 +311,30 @@ final class Panel
         $this->frames = $page['frames'];
     }
 
-    /** 最慢的**有重建**的帧；全都没有重建就退回最后一帧。 */
+    /**
+     * 最慢的**有重建**的帧；全都没有重建就退回最后一帧。
+     *
+     * "挑"归 {@see FrameTable}，"挑不到怎么办"留在这里：面板要看的是**当下**，
+     * 所以退最后一帧；报告问的是"为什么慢"，它退最慢帧（`ReportRunner`）。
+     */
     private function pickFrame(): int
     {
-        $best = 0;
-        $bestWall = -1.0;
-        foreach ($this->frames as $frame) {
-            if ((int) $frame['rebuilt'] === 0) {
-                continue;
-            }
-            $wall = $this->wallOf($frame);
-            if ($wall > $bestWall) {
-                $bestWall = $wall;
-                $best = (int) $frame['id'];
-            }
-        }
-        if ($best > 0) {
-            return $best;
-        }
+        $table = $this->table();
+        $best = $table->slowest(true);
 
-        return $this->frames === [] ? 0 : (int) $this->frames[\count($this->frames) - 1]['id'];
+        return $best > 0 ? $best : $table->last();
     }
 
-    /** @param array<string, mixed> $frame */
-    private function wallOf(array $frame): float
+    /** 帧表 + 驱动量到的墙钟。建一次只存两个数组引用，可以随手调。 */
+    private function table(): FrameTable
     {
-        $id = (int) $frame['id'];
-
-        return $this->wall[$id] ?? (float) $frame['cost'];
+        return FrameTable::of($this->frames, $this->wall);
     }
 
     /** @return list<int> */
     private function frameIds(): array
     {
-        $ids = [];
-        foreach ($this->frames as $frame) {
-            $ids[] = (int) $frame['id'];
-        }
-
-        return $ids;
+        return $this->table()->ids();
     }
 
     /**
@@ -479,24 +464,17 @@ final class Panel
 
     private function frameWall(int $id): float
     {
-        foreach ($this->frames as $frame) {
-            if ((int) $frame['id'] === $id) {
-                return $this->wallOf($frame);
-            }
-        }
+        $table = $this->table();
+        $frame = $table->find($id);
 
-        return 0.0;
+        return $frame === null ? 0.0 : $table->wallOf($frame);
     }
 
     private function rebuiltOf(int $id): int
     {
-        foreach ($this->frames as $frame) {
-            if ((int) $frame['id'] === $id) {
-                return (int) $frame['rebuilt'];
-            }
-        }
+        $frame = $this->table()->find($id);
 
-        return 0;
+        return $frame === null ? 0 : (int) $frame['rebuilt'];
     }
 
     /** @return list<string> */
@@ -642,15 +620,16 @@ final class Panel
     /** @return list<FrameRow> */
     private function frameRows(): array
     {
+        $table = $this->table();
         $max = 0.0;
         foreach ($this->frames as $frame) {
-            $max = \max($max, $this->wallOf($frame));
+            $max = \max($max, $table->wallOf($frame));
         }
 
         $rows = [];
         foreach ($this->frames as $frame) {
             $id = (int) $frame['id'];
-            $wall = $this->wallOf($frame);
+            $wall = $table->wallOf($frame);
             $rows[] = new FrameRow(
                 frameId: $id,
                 wall: $wall,

@@ -11,7 +11,7 @@ use Drift\DevTools\Host\ProcessTransport;
 use Drift\DevTools\Host\Runner;
 use Drift\DevTools\Protocol\RemoteSession;
 use Drift\DevTools\Session\Digest;
-use Drift\DevTools\View\Report;
+use Drift\DevTools\View\FrameTable;
 
 /**
  * `debug report` 的编排层：跑一次、概括脚本、比对两次、取某一帧的归因。
@@ -97,9 +97,10 @@ final class ReportRunner
             foreach ($frameTimes as [$id, $ms]) {
                 $wall[$id] = $ms;
             }
-            foreach ($recorded as $i => $frame) {
-                $recorded[$i]['wall'] = $wall[(int) $frame['id']] ?? (float) $frame['cost'];
-            }
+            // 墙钟并进帧表、挑最慢帧、挑"最慢的有重建帧"三件事都在 {@see FrameTable}：
+            // 面板用的是同一份实现，两处不会再各自漂一个兜底口径。
+            $frameTable = FrameTable::of($recorded, $wall);
+            $recorded = $frameTable->merged();
 
             // 逐帧归因走 `explain`：不另读 Recorder，免得 CLI 与面板各写一份"怎么展开一帧"。
             $attribution = [];
@@ -137,8 +138,8 @@ final class ReportRunner
             // 因果树只会得到"（没有重建节点）"，而"点了之后那一帧动的是什么"就在旁边
             // 几行里。所以退一格：优先"最慢的**有重建**的帧"，都没有才回到最慢帧
             // （那时"没有重建"是这一整段的事实，不是选错了帧）。
-            $slowestId = Report::slowestFrame($recorded);
-            $cascadeId = Report::slowestFrame($recorded, true);
+            $slowestId = $frameTable->slowest();
+            $cascadeId = $frameTable->slowest(true);
             if ($cascadeId <= 0) {
                 $cascadeId = $slowestId;
             }

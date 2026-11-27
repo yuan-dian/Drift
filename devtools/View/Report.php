@@ -41,9 +41,10 @@ final class Report
         /** @var list<array<string, mixed>> $frames */
         $frames = $report['frames'] ?? [];
 
-        $walls = \array_map(static fn(array $f): float => (float) $f['wall'], $frames);
+        $table = FrameTable::of($frames);
+        $walls = $table->walls();
         $last = $walls === [] ? 0.0 : $walls[\count($walls) - 1];
-        $slowest = self::slowestFrame($frames);
+        $slowest = $table->slowest();
 
         $out = [
             \sprintf(
@@ -88,7 +89,7 @@ final class Report
             $out[] = $line;
         }
 
-        $profile = self::frameById($frames, $slowest);
+        $profile = $table->find($slowest);
         if ($profile !== null) {
             foreach (self::stageLines($profile) as $line) {
                 $out[] = $line;
@@ -538,31 +539,6 @@ final class Report
     }
 
     /**
-     * 最慢的那一帧。
-     *
-     * `$rebuiltOnly` 只要"重建过的帧"：因果树问的是"这一帧为什么动"，而最慢帧常常是
-     * 挂载帧 —— 它最贵，却一个节点都不重建，拿它做因果树只会得到"（没有重建节点）"。
-     *
-     * @param list<array<string, mixed>> $frames
-     */
-    public static function slowestFrame(array $frames, bool $rebuiltOnly = false): int
-    {
-        $best = 0;
-        $bestWall = -1.0;
-        foreach ($frames as $frame) {
-            if ($rebuiltOnly && (int) $frame['rebuilt'] === 0) {
-                continue;
-            }
-            if ((float) $frame['wall'] > $bestWall) {
-                $bestWall = (float) $frame['wall'];
-                $best = (int) $frame['id'];
-            }
-        }
-
-        return $best;
-    }
-
-    /**
      * 分位数（最近秩法）：n 个样本取第 `ceil(p*n)` 个。
      *
      * 不用插值：帧耗时的样本本来就少，插值出来的数在报告里不可回指到某一帧。
@@ -578,21 +554,5 @@ final class Report
         $rank = (int) \ceil($p * \count($values));
 
         return $values[\min(\count($values) - 1, \max(0, $rank - 1))];
-    }
-
-    /**
-     * @param list<array<string, mixed>> $frames
-     *
-     * @return array<string, mixed>|null
-     */
-    private static function frameById(array $frames, int $id): ?array
-    {
-        foreach ($frames as $frame) {
-            if ((int) $frame['id'] === $id) {
-                return $frame;
-            }
-        }
-
-        return null;
     }
 }
