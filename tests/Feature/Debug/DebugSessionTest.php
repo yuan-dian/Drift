@@ -10,6 +10,7 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Size;
+use Drift\Input\SemanticsTree;
 use Drift\Rendering\SurfaceProfile;
 
 /**
@@ -86,6 +87,9 @@ final class DebugSessionTest extends SmokeTestCase
                 'async' => [],
                 'tree' => [],
                 'treeDiff' => [],
+                'semantics' => [],
+                'semanticsNode' => ['index' => 0],
+                'semanticsHit' => ['x' => 1.0, 'y' => 2.0],
                 'align' => ['node' => $nodeId, 'frame' => 2],
                 'find' => ['pattern' => 'Text'],
                 'props' => ['node' => $nodeId],
@@ -160,7 +164,11 @@ final class DebugSessionTest extends SmokeTestCase
                     }
 
                     $rt = $p->getType();
-                    $want = $type === 'inject' ? 'array' : \ltrim($type, '?');
+                    // 注入参数按注入源定类型：树根是数组，语义树是 `SemanticsTree`
+                    // 对象（A77 要复用生产 hitTest，不能压成标量数组）。
+                    $want = $type === 'inject'
+                        ? (($spec[1] ?? '') === 'semanticsTree' ? SemanticsTree::class : 'array')
+                        : \ltrim($type, '?');
                     if (!$rt instanceof \ReflectionNamedType || $rt->getName() !== $want
                         || ($type !== 'inject' && \str_starts_with($type, '?') !== $rt->allowsNull())) {
                         $mismatch[] = \sprintf('%s.%s: 类型不是 %s', $name, $key, $type);

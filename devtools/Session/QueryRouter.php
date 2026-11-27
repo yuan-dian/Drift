@@ -5,6 +5,7 @@ namespace Drift\DevTools\Session;
 
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\SessionState;
+use Drift\Input\SemanticsTree;
 
 /**
  * 查询的**协议面**：按名字分派一次查询，拿回一份纯数组。
@@ -53,6 +54,9 @@ final class QueryRouter implements SessionQueries
         'async' => '异步任务时间线：提交 / 派发 / 结算帧、状态、耗时与落地节点（默认关）',
         'tree' => '结构树：第 N 帧那棵树（按出生/离开帧过滤，已回收节点在它活着的帧里照样画出）',
         'treeDiff' => '两帧结构对比：出生 / 离开 / 重建事件（区间左开右闭，不假装记录了父与类型的旧值）',
+        'semantics' => '语义树：读屏看到的节点、三态与几何（L2 内省，现建、不进证据）',
+        'semanticsNode' => '单个语义节点：按下标取全部字段（下标是 UIA 快照下标，不是结构节点号）',
+        'semanticsHit' => '按视口坐标取包含该点的最深语义节点（与生产 hitTest 同口径）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）',
@@ -146,6 +150,19 @@ final class QueryRouter implements SessionQueries
             'frame' => ['?int'],
             'limit' => ['int', 200],
         ]],
+        'semantics' => ['semantics', [
+            'tree' => ['inject', 'semanticsTree'],
+            'limit' => ['int', 200],
+        ]],
+        'semanticsNode' => ['semanticsNode', [
+            'tree' => ['inject', 'semanticsTree'],
+            'index' => ['int'],
+        ]],
+        'semanticsHit' => ['semanticsHit', [
+            'tree' => ['inject', 'semanticsTree'],
+            'x' => ['float'],
+            'y' => ['float'],
+        ]],
         'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
         'find' => ['find', [
             'pattern' => ['string'],
@@ -178,6 +195,7 @@ final class QueryRouter implements SessionQueries
     /**
      * @param (callable(): array<int, mixed>)|null $treeRoots       活树根（离线为 null）
      * @param (callable(): array<int, mixed>)|null $treeRootOrigins 活树根原点（离线为 null）
+     * @param (callable(): SemanticsTree)|null     $semanticsTree   现建语义树（离线为 null，A77）
      */
     public function __construct(
         private readonly Recorder $recorder,
@@ -185,6 +203,7 @@ final class QueryRouter implements SessionQueries
         private readonly mixed $treeRoots = null,
         private readonly mixed $treeRootOrigins = null,
         private readonly mixed $state = null,
+        private readonly mixed $semanticsTree = null,
     ) {
         $this->history = new History($recorder);
     }
@@ -307,17 +326,22 @@ final class QueryRouter implements SessionQueries
         return $out;
     }
 
-    private function injected(string $name, string $source): array
+    private function injected(string $name, string $source): mixed
     {
         $callback = match ($source) {
             'treeRoots' => $this->treeRoots,
             'treeRootOrigins' => $this->treeRootOrigins,
+            'semanticsTree' => $this->semanticsTree,
             default => throw new \LogicException('规格表里的未知注入源：' . $source),
         };
 
         if (!\is_callable($callback)) {
-            // 离线会话没有活树。这里必须明确失败：返回空数组会让 `props` 被读成
-            // "这个节点没有配置字段"，而真相是"这份证据里根本没有活树"。
+            // 语义树是 L2 内省：离线包没有活树是**可回答的问题**，由查询面回
+            // `semantics-unavailable`，不能在这里抛成协议错误信封（A77）。
+            // 其他活树查询返回空会被读成"这个节点没有字段"，仍然必须明确失败。
+            if ($source === 'semanticsTree') {
+                return null;
+            }
             throw new \InvalidArgumentException(
                 "查询 {$name} 需要活树（{$source}），离线会话没有——它只在 --page / --remote 下可用",
             );

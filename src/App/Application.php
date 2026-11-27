@@ -16,6 +16,7 @@ use Drift\Geometry\BoxConstraints;
 use Drift\Input\AcceleratorTable;
 use Drift\Input\CursorShape;
 use Drift\Input\InputEvent;
+use Drift\Input\SemanticsTree;
 use Drift\Layout\RenderBox;
 use Drift\Platform\Clipboard;
 use Drift\Rendering\RenderSurface;
@@ -496,6 +497,12 @@ abstract class Application
     public function setSemanticsSink(callable $sink): void
     {
         $this->shell->setSemanticsSink($sink);
+    }
+
+    /** 现建语义树给 dev 内省（A77）；与 UIA 推送同口径，不进每帧、不进证据。 */
+    public function semanticsTree(): SemanticsTree
+    {
+        return $this->shell->semanticsTree();
     }
 
     /** 按语义节点索引激活一次。 */

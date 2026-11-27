@@ -14,6 +14,7 @@ use Drift\DevTools\Session\QueryRouter;
 use Drift\DevTools\Session\Session;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
+use Drift\Input\SemanticsTree;
 use Drift\Widget\Element;
 
 /**
@@ -146,6 +147,8 @@ final class DebugSession implements Session
             static fn(): array => $app->treeRoots(),
             static fn(): array => $app->treeRootOrigins(),
             static fn(): SessionState => $state,
+            // 语义树在查询发生时才现建（与 UIA 推送同一构建器），不写记录。
+            static fn(): SemanticsTree => $app->semanticsTree(),
         );
 
         return new self($app, $constraints, $recorder, $queries, $router, $script, $state);

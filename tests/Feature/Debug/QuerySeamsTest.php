@@ -10,13 +10,14 @@ use Drift\DevTools\Session\LiveQuery;
 use Drift\DevTools\Session\PaintQuery;
 use Drift\DevTools\Session\Query;
 use Drift\DevTools\Session\QueryRouter;
+use Drift\DevTools\Session\SemanticsQuery;
 use Drift\Debug\Session\Recorder;
 use Drift\DevTools\Session\StructureQuery;
 use Drift\DevTools\Session\TrafficQuery;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
- * 查询面的接缝判据：门面只分派，六个域互不认识。
+ * 查询面的接缝判据：门面只分派，各域互不认识。
  *
  * ## 为什么要钉这个
  *
@@ -31,7 +32,7 @@ use Drift\Dev\Tests\Support\SmokeTestCase;
  * 1. 门面**不带可变状态** —— 带状态的门面就是下一轮上帝类的种子；
  * 2. 除 `align` / `find` 两个声明的组合点外，每个查询方法体是**单条分派**；
  * 3. 门面**没有私有 / 受保护方法** —— 逻辑没有地方可藏；
- * 4. 六个域类一律经读面 {@see History} 取数（结构域多一个几何域，是唯一允许的
+ * 4. 各域类一律经读面 {@see History} 取数（结构域多一个几何域，是唯一允许的
  *    域间边）；只有内省域还认识写面，因为它要给 `pick` 命中的新节点**发号**。
  *
  * 四条都不是风格偏好：去掉任何一条，"读侧的分界线与写侧（`Recorder::ledger()`
@@ -48,7 +49,7 @@ final class QuerySeamsTest extends SmokeTestCase
      */
     private const COMPOSERS = ['align', 'find'];
 
-    /** 六个域实现：门面背后的全部逻辑。 */
+    /** 各域实现：门面背后的全部逻辑（无障碍是 A77 新增的 L2 内省域）。 */
     private const DOMAINS = [
         CausalQuery::class,
         GeometryQuery::class,
@@ -56,6 +57,7 @@ final class QuerySeamsTest extends SmokeTestCase
         TrafficQuery::class,
         StructureQuery::class,
         LiveQuery::class,
+        SemanticsQuery::class,
     ];
 
     /**
@@ -83,10 +85,10 @@ final class QuerySeamsTest extends SmokeTestCase
             '可变的：' . \implode(', ', $mutable),
         );
 
-        // 一个读面 + 六个域，多一个就说明有人把状态搬回门面了。
+        // 一个读面 + 各域，多一个就说明有人把状态搬回门面了。
         check(
-            '门面只持有读面与六个域',
-            \count($ref->getProperties()) === 7,
+            '门面只持有读面与各域',
+            \count($ref->getProperties()) === 1 + \count(self::DOMAINS),
             '实际 ' . \count($ref->getProperties()) . ' 个',
         );
 

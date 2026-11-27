@@ -47,7 +47,7 @@
 | 出口生命周期 / 编排归属 | 已落地（A74）：八个取证据出口统一经 `Cli\SessionScope`（解析 / 来源 / 导出 / 渲染 / 收口各一处），`Parsed::supports()` 从 schema 派生来源能力；report 的四个编排函数住 `Report\ReportRunner`，出口只做命令行编排。不收常驻 / 多轮 / 干预出口 | Click/Cobra 的命令对象、CDP 客户端的命令封装 | 加出口不必复制十步样板 |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
-| 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
+| 无障碍检查 | 切片：语义树查询与 `debug a11y` 已落地（A77），与 UIA 共用生产构建器；语义节点 ↔ 结构节点的跳转未做 | Chrome A11y、Flutter Semantics | 跨坐标系归因 |
 
 ## 目标架构
 
@@ -211,7 +211,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 - **内存**（已落地，A55）：不做证据域，做 **dev 内省** —— `MemoryProbe` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账记对象首次见到的帧、给存活跨度。台账弱持有，观察本身不成为泄漏源；不报"单对象字节数"（PHP 无此 API，报了就是编的），不报"已消失对象数"（GC 时机不由我们定，报了就是说谎）。`debug probe --what=memory`（P8）。只有在"跨帧泄漏趋势要进 CI"这个真实需求出现时，才考虑升成 L1 域。
 - **异步**：A63 只记三个 TaskHost 后端真实调度过的 job——帧号由 `submitted` / `started` / `settled` 给出，队列深度现算，结算同帧的 state 写入回填 `landed` 并写进因果 detail；`await` / `sleep` 是等待点，不在 job 表里。
-- **无障碍**：语义树 + UIA 属性；已有 UIA 实现，缺的是查询面与投影。
+- **无障碍**：已落地（A77）：`SemanticsQuery` 读生产 `SemanticsBuilder` 现建的树，`semantics` / `semanticsNode` / `semanticsHit` 三查询 + `debug a11y` 出口；与 UIA 共用构建口径，但下标是快照下标而非结构节点号，跨界跳转未做。
 
 每个域进入主线前必须回答：采集点在哪、窗口多大、进不进 digest、AOT 是否可用、消费者是谁。
 
@@ -238,7 +238,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P5** | 证据搜索 | 已落地：`find(pattern, domain, limit, caseSensitive)` + `debug find` 出口 + `/api/find`；产物是地址且可被追问；三数对账；截断 / 空窗口 / 已回收分开自报；不做正则 | P2 | S |
 | **P6** | 内存域 | 已由 P8 的 dev 内省交付（`debug probe --what=memory`）：进程标量 + 活树对象存活跨度。**不升成 L1 证据域** —— 字节数 PHP 拿不到、跨帧趋势离了当下复算不了（A55）。若将来真要进 CI 的泄漏趋势，另立可复算格式 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
-| **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
+| **P6** | 无障碍域 | 已落地（A77）：`SemanticsQuery` 读生产 `SemanticsBuilder` 现建的树，三查询 `semantics` / `semanticsNode` / `semanticsHit` + `debug a11y` 出口；L2 内省，不进包不进指纹，三态字段独立、命中取最深；语义下标 ≠ 结构节点号，不做跨界跳转 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 已落地（A71）：`Methods::CAPABILITIES` 在 open 前可问；`Capabilities` 从动词表 / 查询面 / 错误表单向派生并双向闭合；宿主的 `available` 与分派拒绝同源；信封版本非法回 `unsupported_version`，老宿主缺动词回 `unknown_method` 表示太老；`debug capabilities` 与 Web 页眉共用查询，离线包同形 | P3 | M |
 | **P8** | DevTools 物理边界 | 已落地（A73）：`tools/Debug` 的 72 个类（Host 20 / Cli 7 / View 32 / Rules 13）与 22 个出口脚本全部进 `devtools/`，命名空间统一到 `Drift\DevTools\Host|Cli|View`，`Drift\Dev\Debug` 在 PHP 源码里零剩余；出口在 `devtools/bin/`，由 `devtools/autoload.php` 一处 bootstrap，`Entry::path()` 与宿主路径相对 `devtools/` 推导、不依赖仓库根。`DevToolsBoundaryTest` 5 条 / 33 断言 + 7 组变异全咬红（含共享启动器分流）；AOT 产物字节数不变 | A72 | S |

@@ -113,6 +113,13 @@ final class Commands
                 Opt::str('from', null, '读证据包，不再驱动'),
                 ...$live(),
             ],
+            'a11y' => [
+                Opt::int('index', 0, 0, null, '语义节点下标（来自树行首的 #N）'),
+                Opt::float('x', 0.0, null, null, '语义命中 x（逻辑像素）'),
+                Opt::float('y', 0.0, null, null, '语义命中 y（逻辑像素）'),
+                Opt::int('limit', 200, 0, null, '树模式行数，0=不截断'),
+                ...$live(),
+            ],
             'pick' => [
                 Opt::float('x', 0.0, null, null, '触点 x'),
                 Opt::float('y', 0.0, null, null, '触点 y'),

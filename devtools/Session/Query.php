@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\DevTools\Session;
 
 use Drift\Debug\Session\Recorder;
+use Drift\Input\SemanticsTree;
 
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。
@@ -17,7 +18,7 @@ use Drift\Debug\Session\Recorder;
  *
  * ## 这层只剩"协议面"与"跨域组合"
  *
- * 二十三个查询分属六个域，实现各在**自己的类**里，按它读的那份记录分：
+ * 查询按域分开，实现各在**自己的类**里，按它读的那份记录分：
  *
  * | 域 | 类 | 读什么 | 回答 |
  * |---|---|---|---|
@@ -27,6 +28,7 @@ use Drift\Debug\Session\Recorder;
  * | 外部工作 | {@see TrafficQuery} | 网络 500 / 异步 200 | 请求与任务落在哪一帧 |
  * | 结构 | {@see StructureQuery} | 节点注册表 + 几何注解 | 第 N 帧谁在树上 |
  * | 内省 | {@see LiveQuery} | 活树（不是证据） | 现在这个对象是什么样 |
+ * | 无障碍 | {@see SemanticsQuery} | 现建语义树（不是证据） | 读屏看到的是哪棵树、什么状态 |
  *
  * 分开的理由不是行数：六个域各有**只对自己成立**的口径（几个窗口宽度不同、
  * 缺省帧该落在哪个窗口、"往前找"对谁成立），混在一个类里最容易被下一个改动的
@@ -36,7 +38,7 @@ use Drift\Debug\Session\Recorder;
  *
  * 留在门面上的只有三件：
  *
- * - **协议面**：23 个签名与 {@see QueryRouter::QUERY_SPECS} 逐参一致（判据用反射钉住）。
+ * - **协议面**：每个签名与 {@see QueryRouter::QUERY_SPECS} 逐参一致（判据用反射钉住）。
  *   门面只分派，不带状态 —— 带状态的门面就是下一轮上帝类的种子。
  * - **跨域组合** {@see self::align()}：一帧里同时取因果 / 几何 / 网络，它必须同时
  *   知道三个域，这正说明它是组合者而不是某一域的主人。
@@ -70,6 +72,8 @@ final class Query
 
     private readonly LiveQuery $live;
 
+    private readonly SemanticsQuery $semantics;
+
     public function __construct(Recorder $recorder)
     {
         $history = new History($recorder);
@@ -82,6 +86,8 @@ final class Query
         $this->structure = new StructureQuery($history, $this->geometry);
         // 内省要发号（`pick` 命中一个新节点时给它一个地址），所以它还认识写面。
         $this->live = new LiveQuery($recorder, $history);
+        // 无障碍是 L2 内省：读现建的语义树，不写任何记录（A77）。
+        $this->semantics = new SemanticsQuery($history);
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
@@ -280,6 +286,30 @@ final class Query
     public function treeDiff(int $base = 0, ?int $frame = null, int $limit = 200): array
     {
         return $this->structure->treeDiff($base, $frame, $limit);
+    }
+
+    /**
+     * 语义树（前序扁平行，A77）。L2 内省：不进包、不进指纹，下标是 UIA 快照下标。
+     *
+     * @return array<string, mixed>
+     *
+     * @see SemanticsQuery::tree()
+     */
+    public function semantics(?SemanticsTree $tree, int $limit = 200): array
+    {
+        return $this->semantics->tree($tree, $limit);
+    }
+
+    /** 单个语义节点；越界与离线分开报。 @return array<string, mixed> */
+    public function semanticsNode(?SemanticsTree $tree, int $index): array
+    {
+        return $this->semantics->node($tree, $index);
+    }
+
+    /** 坐标命中语义节点（最深、跳过零面积）。 @return array<string, mixed> */
+    public function semanticsHit(?SemanticsTree $tree, float $x, float $y): array
+    {
+        return $this->semantics->hit($tree, $x, $y);
     }
 
     /**

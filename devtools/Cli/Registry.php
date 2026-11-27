@@ -34,6 +34,7 @@ final class Registry
             ['async', 'debug-async.php', '异步任务时间线：提交 / 派发 / 结算帧、状态与落地节点', true],
             ['tree', 'debug-tree.php', '结构树：第 N 帧那棵树（谁在、谁已消失、谁这一帧重建了）', true],
             ['tree-diff', 'debug-tree-diff.php', '两帧结构对比：谁出生、谁离开、谁在中间重建了', true],
+            ['a11y', 'debug-a11y.php', '语义树：读屏看到的节点与状态（L2 内省，不是证据）', true],
             ['node', 'debug-node.php', '一个节点的三域对齐：因果 / 几何 / 网络', true],
             ['find', 'debug-find.php', '在证据里找：给一段文本，回一串可追问的地址', true],
             ['eval', 'debug-eval.php', 'dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据）', false],

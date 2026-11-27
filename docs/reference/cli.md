@@ -55,6 +55,8 @@
 
 `debug targets` 把所有活会话并列成一份只读视图：发现文件里每个进程一行，给发现数、最慢帧与指纹；连接不上的单独标成不可达并附诊断，其他会话照常。它只并列、不按节点号或帧号合并 —— 两个窗口的节点编号不是同一个节点；深挖仍走既有出口并点名会话。裁决 A59。
 
+`debug a11y` 是读屏视角的出口：把生产 `SemanticsBuilder` 当场建出的语义树投影成前序行，也可以按 `--index=N` 看单个节点、按 `--x=N --y=N` 看那个坐标命中的最深控件。三态字段（`selectState` / `expandState` / `scrollAxis`）各自成列，不合成 bool；下标是 UIA 快照下标，**不是**结构节点号，不能拿去 `debug node --node=N`。它是 A55 的 L2 内省——不进证据包、不进指纹，离线包问它会明确回 `semantics-unavailable`。裁决 A77。
+
 `debug capabilities` 回答"这个调试面说什么协议、有哪些能力、现在哪些能用"：不带参数只读本地声明（不用起应用、不用证据包），带 `--session=ID` 才接活会话取宿主的可用性（`eval` 开没开、帧谁推、拾取有没有窗口）。方法名来自动词表、查询形状来自查询规格表、错误码来自协议错误表，不在出口里另抄一份；客户端也可在 `open` 之前发 `capabilities` 消息做同样的事。老宿主回 `unknown_method`，那是"版本太老"而不是"没有能力"。裁决 A71。
 
 `debug tree` 是结构树的导航出口：把节点注册表投影成扁平先序行，按 `--root` / `--depth` / `--limit` 收敛。`--frame` 决定**回放哪一帧**——那时还没出生的节点不出现，那时已经离开的节点同样不出现，而现在已回收、当时还活着的节点照样画出来并标 `已回收`；行尾的 `重建` 说明这一帧重建过它。默认帧是最新一帧，所以不带 `--frame` 时看到的就是当下。几何按同一帧在查询层贴好（几何窗口只有 60 帧且"有变化才记"，超出时夹到窗口内并标"沿用旧记录"）。断父链、孤儿与成环都会单独标出并计入覆盖率，不会静默丢节点；旧证据包缺出生帧时整张表会标 `生命周期 不完整`，不把"不知道"显示成"没有"。裁决 A64 / A67。
@@ -77,6 +79,7 @@
 | `async` | `debug-async.php` | driver | 异步任务时间线：提交 / 派发 / 结算帧、状态与落地节点 | `--job` `--limit` `--from` `--out` `--attach` `--session` |
 | `tree` | `debug-tree.php` | driver | 结构树：第 N 帧那棵树（谁在、谁已消失、谁这一帧重建了） | `--root` `--depth` `--limit` `--frame` `--from` `--out` `--attach` `--session` |
 | `tree-diff` | `debug-tree-diff.php` | driver | 两帧结构对比：谁出生、谁离开、谁在中间重建了 | `--base` `--frame` `--limit` `--from` `--out` `--attach` `--session` |
+| `a11y` | `debug-a11y.php` | driver | 语义树：读屏看到的节点与状态（L2 内省，不是证据） | `--index` `--x` `--y` `--limit` `--attach` `--session` |
 | `node` | `debug-node.php` | driver | 一个节点的三域对齐：因果 / 几何 / 网络 | `--node` `--frame` `--attach` `--session` |
 | `find` | `debug-find.php` | driver | 在证据里找：给一段文本，回一串可追问的地址 | `--pattern` `--domain` `--limit` `--case-sensitive` `--from` `--attach` `--session` |
 | `eval` | `debug-eval.php` | protocol | dev 壳内省：对活宿主求任意 PHP 表达式（默认关，不是证据） | — |

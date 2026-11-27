@@ -22,6 +22,7 @@ use Drift\Input\SemanticsExpandEvent;
 use Drift\Input\SemanticsInvokeEvent;
 use Drift\Input\SemanticsScrollEvent;
 use Drift\Input\SemanticsSetValueEvent;
+use Drift\Input\SemanticsTree;
 use Drift\Input\TapTracker;
 use Drift\Input\ThemeChangedEvent;
 use Drift\Input\WindowDeactivatedEvent;
@@ -1086,6 +1087,23 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     public function setSemanticsSink(callable $sink): void
     {
         $this->semanticsSink = \Closure::fromCallable($sink);
+    }
+
+    /**
+     * 现建一棵语义树给 dev 内省（A77）：与 UIA 推送共用 `SemanticsBuilder::build()`
+     * 的同一口径（焦点 / 可聚焦表 / 子树禁用 / 几何），但**不挂 sink、不进每帧**。
+     *
+     * ★ 返回对象只在 dev 进程内存里转一圈，不写记录、不进证据包；下标口径与
+     *   `toArrays()['nodes']`（即 UIA 快照）同源。两次查询之间树可能变，与 UIA
+     *   的快照竞态同一性质，所以查询面必须带 `liveFrame`。
+     */
+    public function semanticsTree(): SemanticsTree
+    {
+        return SemanticsBuilder::build(
+            $this->root,
+            $this->focus?->focused(),
+            $this->focus?->focusableIds(),
+        );
     }
 
     /**

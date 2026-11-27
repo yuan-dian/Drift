@@ -62,7 +62,7 @@
 
 ## 测试与诊断
 
-- `SemanticsTree::toArrays()` 是 devtools 快照的语义段；`text()` 是人读转储。加语义字段只改 `SemanticsNode` 与 `toArrays()` 两处。
+- `SemanticsTree::toArrays()` 是 devtools 语义查询的唯一字段搬运工（`debug a11y` / `query('semantics')`，A77）；`text()` 是人读转储。加语义字段只改 `SemanticsNode` 与 `toArrays()` 两处。查询拿到的下标是这份数组的顺序（与 UIA 快照同源），**不是**结构节点号，别拿去 `debug node --node=N`。
 - `toArrays()` 里的三态字段各自独立成键，不要合成一个 bool——C++ 侧据此决定给不给对应 Pattern。
 - `SemanticsTree::hitTest()` 与 `RenderBox::hitTest()` 同口径（最深、跳过零面积），检查器据此定位"光标下那个控件"。
 - 探针脚本按**语义名**定位并点击真机窗口，而不是截图量像素：名字是应用自己声明的，改布局不会失效；矩形来自 `get_BoundingRectangle`；找不到就响亮失败。语义动作事件也有专用探针。
