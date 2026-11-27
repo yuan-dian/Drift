@@ -283,6 +283,73 @@ final class CliTest extends SmokeTestCase
         $this->flushChecks();
     }
 
+    /**
+     * A75：收敛前的三个平级旧名必须真的退役，不能只是"不再写进文档"。
+     * 反假绿：同时验一个正式动词仍可用，否则把整个入口改坏也会全绿。
+     */
+    public function testRetiredAliasesAreGoneButTheRealVerbStillWorks(): void
+    {
+        $root = \dirname(__DIR__, 3);
+
+        foreach (['panel', 'brief', 'debug-host'] as $alias) {
+            [$code, $out, $err] = $this->drift([$alias, '--help']);
+            check("旧名 {$alias} 不再被分发", $code === 2 && \str_contains($err, "未知子命令：{$alias}"), \trim($err . $out));
+        }
+
+        // 反假绿：入口整体坏了的话上面三条也会绿，这里必须亮。
+        [$code, $out, $err] = $this->drift(['debug', 'panel', '--help']);
+        check('正式动词 debug panel 仍可用', $code === 0 && \str_contains($out, 'debug-panel'), \trim($err . $out));
+
+        $composer = (string) \file_get_contents($root . '/composer.json');
+        $json = \json_decode($composer, true);
+        check('composer scripts 解析成功', \is_array($json));
+        if (\is_array($json)) {
+            foreach (['panel', 'brief', 'debug-host'] as $alias) {
+                check("composer scripts 无 {$alias}", !\array_key_exists($alias, $json['scripts'] ?? []));
+                check("composer 说明无 {$alias}", !\array_key_exists($alias, $json['scripts-descriptions'] ?? []));
+            }
+        }
+
+        $entry = (string) \file_get_contents($root . '/bin/drift');
+        foreach (['panel', 'brief', 'debug-host'] as $alias) {
+            check("主入口没有 {$alias} 的分支", \preg_match('/^\s*\'' . $alias . '\' =>/m', $entry) !== 1);
+        }
+
+        foreach (['docs/reference/cli.md', 'docs/guides/debugging.md'] as $doc) {
+            $md = (string) \file_get_contents($root . '/' . $doc);
+            foreach (['panel', 'brief', 'debug-host'] as $alias) {
+                check("{$doc} 不再教 composer {$alias}", !\str_contains($md, 'composer ' . $alias . ' '));
+            }
+        }
+
+        // 动词位上的旧名最容易漏：它不是 composer 别名、也不是 match 分支，
+        // 而是一个字符串数组元素（`[PHP_BINARY, $drift, 'panel', ...]`）。
+        // A75 首次就漏了 PanelTest，靠全量测试才咬出来 —— 这里补成结构判据。
+        $callers = [];
+        foreach (['tests', 'tools', 'devtools', 'apps'] as $dir) {
+            $it = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root . '/' . $dir, \FilesystemIterator::SKIP_DOTS));
+            foreach ($it as $file) {
+                if ($file->isFile() && $file->getExtension() === 'php') {
+                    $callers[] = $file->getPathname();
+                }
+            }
+        }
+        $stale = [];
+        foreach ($callers as $path) {
+            $src = (string) \file_get_contents($path);
+            if (!\str_contains($src, 'bin/drift')) {
+                continue;
+            }
+            // 只认紧跟在 bin/drift 路径后面的那个字符串：别的文件里出现
+            // 'panel' 作为 schema 名、数组键或本判据的字面量都不算。
+            if (\preg_match("/bin\\/drift['\"]\\s*,\\s*['\"](panel|brief|debug-host)['\"]/", $src, $m) === 1) {
+                $stale[] = \substr($path, \strlen($root) + 1) . ':' . $m[1];
+            }
+        }
+        check('没有调用方把旧名放在 bin/drift 的动词位', $stale === [], \implode(', ', $stale));
+        $this->flushChecks();
+    }
+
     /** @return array{int, string, string} */
     private function drift(array $args): array
     {

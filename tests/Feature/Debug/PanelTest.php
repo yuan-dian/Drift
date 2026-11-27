@@ -440,7 +440,7 @@ final class PanelTest extends SmokeTestCase
      */
     private function runPanel(array $args): ?array
     {
-        $command = [\PHP_BINARY, \dirname(__DIR__, 3) . '/bin/drift', 'panel', ...$args, '--json'];
+        $command = [\PHP_BINARY, \dirname(__DIR__, 3) . '/bin/drift', 'debug', 'panel', ...$args, '--json'];
         $pipes = [];
         $process = \proc_open(
             $command,
