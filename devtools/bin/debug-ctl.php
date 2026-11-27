@@ -111,7 +111,8 @@ try {
     if ($e->errorCode === ProtocolError::NOT_APPLICABLE) {
         \fwrite(\STDERR, "（拿 state 的 driven 判断：true = 它自己推帧，能用 pause / resume）\n");
     }
-    exit(1);
+    // 2 = 这次不能这么做（宿主不支持 / 会话形态不对），不是进程异常。
+    exit(2);
 } catch (\Throwable $e) {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);

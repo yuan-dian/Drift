@@ -52,7 +52,9 @@ final readonly class PaintRecord
     {
         $total = $this->layerHits + \count($this->misses);
 
-        return $total === 0 ? 0.0 : $this->layerHits / $total;
+        // ★ `(float)` 不能省：`int / int` 在 AOT 下是整数除法，这一行会退化成
+        //   0 或 1，而解释器里的 `/` 是浮点 —— 同一份记录两个答案。
+        return $total === 0 ? 0.0 : (float) $this->layerHits / $total;
     }
 
     /**

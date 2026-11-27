@@ -139,6 +139,16 @@ final class CapabilitiesTest extends SmokeTestCase
         check('注入源不当成默认值', ($injected[0]['source'] ?? '') === 'treeRootOrigins' && !\array_key_exists('default', $injected[0] ?? []), self::show($injected));
     }
 
+    /**
+     * 角色声明必须与动词表**双向**闭合：少一项在 `methods()` 里会抛，多一项
+     * 原先没人管 —— 退役一个动词却留下角色声明，目录会继续替它回答。
+     */
+    public function testMethodMetaHasNoRetiredLeftovers(): void
+    {
+        $meta = (new \ReflectionClassConstant(Capabilities::class, 'METHOD_META'))->getValue();
+        check('角色声明逐项等于动词表', \array_keys($meta) === Methods::ALL, self::show(\array_keys($meta)));
+    }
+
     public function testVersionIsEnforcedNotDecoration(): void
     {
         check('当前版本被接受', Capabilities::supports(Capabilities::VERSION));

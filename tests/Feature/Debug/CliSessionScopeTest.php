@@ -99,6 +99,51 @@ final class CliSessionScopeTest extends SmokeTestCase
         check('提示里的用法来自脚本文档块', $first !== '' && \str_contains($run['err'], $first), $run['err']);
     }
 
+    /**
+     * 自动 attach 必须先于「要一个页面」的守卫。
+     *
+     * A74 把顺序调反过：无参数时在 `autoAttach()` 之前就退出，于是"当前目录
+     * 恰有一个活会话就自动接"永远走不到，而 `debug web` 不走这条壳、仍能自动接。
+     * 判据不靠读源码：造一份指向**没人监听**端口的活会话登记，正确的顺序会走到
+     * 连接并报"连不上"，错误的顺序则连发现都没发生。
+     */
+    public function testAutoAttachRunsBeforeTheMissingPageGuard(): void
+    {
+        $dir = \sys_get_temp_dir() . '/a76-attach-' . \bin2hex(\random_bytes(4));
+        \mkdir($dir . '/.drift', 0700, true);
+        \file_put_contents($dir . '/.drift/session.json', (string) \json_encode([
+            'protocol' => 1,
+            'sessions' => [[
+                'id' => 'probe',
+                'pid' => (int) \getmypid(),
+                'port' => self::closedPort(),
+                'token' => 'x',
+                'target' => 'async-table',
+                'startedAt' => \gmdate('c'),
+            ]],
+        ]));
+        try {
+            $run = $this->runExportIn($dir, 'debug-tree.php', '--json');
+            check('无参数时先发现活会话', !\str_contains($run['err'], '要一个页面'), $run['err']);
+            check('随后如实报连不上', \str_contains($run['err'], '连不上 127.0.0.1:'), $run['err']);
+            check('不能继续时退出 2', $run['code'] === 2, (string) $run['code']);
+        } finally {
+            @\unlink($dir . '/.drift/session.json');
+            @\rmdir($dir . '/.drift');
+            @\rmdir($dir);
+        }
+    }
+
+    /**
+     * `--session` 单独给时，提示要指向它真正需要的搭档，而不是笼统的「要一个页面」。
+     */
+    public function testSessionWithoutAttachSaysWhatItNeeds(): void
+    {
+        $run = $this->runExport('debug-tree.php', '--session=abc');
+        check('--session 单独给退出 2', $run['code'] === 2, (string) $run['code']);
+        check('提示要配合 --attach', \str_contains($run['err'], '要配合 --attach'), $run['err']);
+    }
+
     public function testEvidenceStillExportsThroughTheScope(): void
     {
         $out = \sys_get_temp_dir() . '/a74-scope-' . \bin2hex(\random_bytes(4)) . '.evidence';
@@ -155,6 +200,37 @@ final class CliSessionScopeTest extends SmokeTestCase
         }
         foreach (['runOnce', 'scriptSummary', 'reportVerify'] as $method) {
             check("report 出口调用 {$method}()", \str_contains($src, 'ReportRunner::' . $method . '('));
+        }
+        // 判据不通过与"进程崩了"必须分开：CI 才能区分"跑挂了"与"跑完了但结论否定"。
+        check(
+            '--verify 不通过用 3',
+            \preg_match('/reportVerify\(.*\)\s*\?\s*0\s*:\s*3/s', $src) === 1,
+        );
+        check('--verify 与 --save 明确互斥', \str_contains($src, "--verify 与 --save 不能同用"));
+    }
+
+    /**
+     * `--verify --save=x` 曾经静默不写、也不报错：验证先 exit，保存永远到不了。
+     * 现在要么写要么响亮拒绝 —— 不能"看起来做了，实际没做"。
+     */
+    public function testVerifyRefusesToSaveAScriptItNeverProduces(): void
+    {
+        $dir = \sys_get_temp_dir() . '/a76-verify-' . \bin2hex(\random_bytes(4));
+        \mkdir($dir, 0700, true);
+        $script = $dir . '/case.json';
+        \file_put_contents($script, Plan::build('table', 800.0, 600.0, [], 1, 1, [])->json());
+        $saved = $dir . '/must-not-exist.json';
+        try {
+            $run = $this->runExport(
+                'debug-report.php', '--replay=' . $script, '--verify', '--save=' . $saved,
+            );
+            check('同用退出 2', $run['code'] === 2, (string) $run['code'] . ' ' . $run['err']);
+            check('说明两者不能同用', \str_contains($run['err'], '不能同用'), $run['err']);
+            check('不静默写一半', !\is_file($saved), $saved);
+        } finally {
+            @\unlink($script);
+            @\unlink($saved);
+            @\rmdir($dir);
         }
     }
 
@@ -226,13 +302,23 @@ final class CliSessionScopeTest extends SmokeTestCase
      */
     private function runExport(string ...$args): array
     {
+        return $this->runExportIn(null, ...$args);
+    }
+
+    /**
+     * @param list<string> $args
+     *
+     * @return array{code: int, out: string, err: string}
+     */
+    private function runExportIn(?string $cwd, string ...$args): array
+    {
         $cmd = [\PHP_BINARY, \dirname(__DIR__, 3) . '/devtools/bin/' . \array_shift($args), ...$args];
         $pipes = [];
         $proc = \proc_open($cmd, [
             0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
             2 => ['pipe', 'w'],
-        ], $pipes);
+        ], $pipes, $cwd);
         if (!\is_resource($proc)) {
             throw new \RuntimeException('起不了出口进程');
         }
@@ -243,5 +329,18 @@ final class CliSessionScopeTest extends SmokeTestCase
         \fclose($pipes[2]);
 
         return ['code' => \proc_close($proc), 'out' => $out, 'err' => $err];
+    }
+
+    /** 拿一个"刚关掉、肯定没人监听"的本机端口（先绑 0 再立刻释放）。 */
+    private static function closedPort(): int
+    {
+        $probe = @\stream_socket_server('tcp://127.0.0.1:0', $errno, $errstr);
+        if ($probe === false) {
+            return 1;
+        }
+        $name = (string) \stream_socket_get_name($probe, false);
+        \fclose($probe);
+
+        return (int) \substr($name, (int) \strrpos($name, ':') + 1);
     }
 }

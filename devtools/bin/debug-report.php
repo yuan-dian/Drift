@@ -164,6 +164,14 @@ if ($verify && $replay === null) {
     exit(2);
 }
 
+if ($verify && $savePath !== null) {
+    // 验证跑两遍做比对，没有"这一份结果"可存；先存下来的又是原脚本（--replay 已有）。
+    // 曾经两者同用时 --verify 先 exit，--save 静默不写 —— 看起来做了，实际没做。
+    \fwrite(\STDERR, "--verify 与 --save 不能同用：验证跑两遍做比对，不产出可保存的脚本\n");
+    \fwrite(\STDERR, "先 --save=<脚本> 存一份，再用 --replay=<脚本> --verify 验它\n");
+    exit(2);
+}
+
 // 规划路径上的 `--resolve` 同样要有取数替身。以前是跑到那一步才在 stderr 提一句，
 // 于是一份 600 帧的报告白跑完才告诉人"这一笔什么都没结算"。
 if ($replay === null && $rows <= 0) {
@@ -206,7 +214,9 @@ try {
 }
 
 if ($verify) {
-    exit(ReportRunner::reportVerify($a, $b, (string) $replayPath, $json) ? 0 : 1);
+    // 判据不通过统一用 3（与 `--assert` / `loop --assert` 同一口径）：
+    // 1 留给"进程自己崩了"，否则 CI 分不清"跑挂了"与"跑完了但结论是否定"。
+    exit(ReportRunner::reportVerify($a, $b, (string) $replayPath, $json) ? 0 : 3);
 }
 
 if ($savePath !== null) {

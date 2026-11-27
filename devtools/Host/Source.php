@@ -138,7 +138,6 @@ final class Source
                 \PHP_BINARY,
                 \dirname(__DIR__) . '/bin/debug-host.php',
             ]));
-            $live->open($drive->fork(), $recordOptions);
         } else {
             $opened = Runner::open(
                 $drive->target,
@@ -151,13 +150,26 @@ final class Source
             $live = $opened['session'];
         }
 
-        Replay::apply($live, $drive, [], $at, static function (int $id, float $ms): void {
-        });
+        // 从这里到 `finish()` 之间任何一步抛，都要把已经开出去的东西关掉再上抛：
+        // `--remote` 的子进程没有别的读者，`Replay::apply()` 抛时录制器也不会自己消失。
+        // 原先这三步是裸的，失败时 `SessionScope` 手里的 `$source` 还是 null，兜不住。
+        try {
+            // 远端要显式 open；本地 `Runner::open()` 已经把会话开好了。
+            if ($remote) {
+                $live->open($drive->fork(), $recordOptions);
+            }
 
-        // 收尾状态由会话自己翻译：本地与远端调同一个动作，调用方不知道自己连的是
-        // 哪一个。--at 是 paused(at) 而不是 finished —— 与自走宿主同一套语义。
-        // 不标的话 `web` 的状态栏会一直说"还在跑"，而它早就不动了。
-        $live->finish($at);
+            Replay::apply($live, $drive, [], $at, static function (int $id, float $ms): void {
+            });
+
+            // 收尾状态由会话自己翻译：本地与远端调同一个动作，调用方不知道自己连的是
+            // 哪一个。--at 是 paused(at) 而不是 finished —— 与自走宿主同一套语义。
+            // 不标的话 `web` 的状态栏会一直说"还在跑"，而它早就不动了。
+            $live->finish($at);
+        } catch (\Throwable $e) {
+            $live->close();
+            throw $e;
+        }
 
         return new self($live, $drive->target, false, $out, static function () use ($live): void {
             $live->close();
@@ -217,8 +229,17 @@ final class Source
     {
         $discovery ??= Discovery::inDirectory((string) \getcwd());
         $entry = self::pick($discovery, $session);
-        $live = new RemoteSession(self::connect($discovery, $entry));
-        $live->attach($entry['token']);
+        $channel = self::connect($discovery, $entry);
+
+        try {
+            $live = new RemoteSession($channel);
+            $live->attach($entry['token']);
+        } catch (\Throwable $e) {
+            // 连上了但没谈成（宿主不认令牌 / 半路断了）：socket 已经开出去，
+            // 不在这里关就得等进程退出才回收。多 target 出口逐条调用时尤其明显。
+            $channel->close();
+            throw $e;
+        }
 
         return new self(
             $live,

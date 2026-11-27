@@ -228,7 +228,10 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         // 60 帧窗口之外，`boxes?frame=N` 回 frame-out-of-window，前端退回缺省帧，
         // 于是当前画面套上了另一页的线框。几何窗口最新帧才是这张图能配上的几何。
         $history = $this->session === null ? null : new History($this->session->recorder());
-        $anchor = $history?->geometryCoverage()['to'] ?? $frame;
+        $coverage = $history?->geometryCoverage();
+        // 空几何窗口的 `to` 是 0，不是 null —— `?? $frame` 兜不住它。锚点 0 写进
+        // meta 后，`boxes?frame=0` 只会回 frame-out-of-window，前端照样退回缺省帧。
+        $anchor = $coverage !== null && $coverage['to'] > 0 ? $coverage['to'] : $frame;
         $this->shot?->capture($canvas, $anchor, \hrtime(true) / 1e6);
     }
 

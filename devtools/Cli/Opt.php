@@ -3,11 +3,6 @@ declare(strict_types=1);
 
 namespace Drift\DevTools\Cli;
 
-/** 用户输入不合法。出口把它翻成 stderr + 退出码 2。 */
-final class CliError extends \RuntimeException
-{
-}
-
 /** 一个选项的声明。重名（含别名）在 schema 合并时就拒绝，不留给运行时猜。 */
 final class Opt
 {

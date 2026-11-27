@@ -47,21 +47,30 @@ final class SessionScope
         $attach = $args->bool('attach');
         $session = $args->supports('session') ? $args->str('session') : null;
 
-        if ($label === null && $from === null && !$attach) {
-            // 提示从注册表派生：出口脚本文档块里的「用法：」是唯一声明。
-            // 手写第二份用法迟早会漏掉新增参数，而且漏了没人会发现。
-            \fwrite(\STDERR, "debug-{$verb} 要一个页面：给位置参数、--page=…，或 --from / --attach\n");
-            $examples = Commands::examples($verb);
-            if ($examples !== null) {
-                \fwrite(\STDERR, "用法：\n{$examples}\n");
-            }
-            exit(2);
-        }
-
+        // ★ 顺序是判据：先让 `autoAttach()` 看有没有唯一活会话，再判"什么都没给"。
+        //   反过来（A74 一度如此）会让"当前目录恰有一个活会话就自动接"永远到不了 ——
+        //   无参数运行在发现会话之前就被挡下，而 `debug web` 不走这条壳、仍能自动接，
+        //   于是同一台机器上两个出口对"有没有会话"给出相反答案。
         try {
             $attach = Source::autoAttach($attach, $from, $label, $session);
         } catch (Throwable $e) {
             \fwrite(\STDERR, $e->getMessage() . "\n");
+            exit(2);
+        }
+
+        if ($label === null && $from === null && !$attach) {
+            // 提示从注册表派生：出口脚本文档块里的「用法：」是唯一声明。
+            // 手写第二份用法迟早会漏掉新增参数，而且漏了没人会发现。
+            if ($session !== null) {
+                // `--session` 只负责"多个里挑一个"，没有 `--attach` 就不知道要连谁。
+                \fwrite(\STDERR, "debug-{$verb} 的 --session 只用来在多个活会话里挑一个，要配合 --attach\n");
+            } else {
+                \fwrite(\STDERR, "debug-{$verb} 要一个页面：给位置参数、--page=…，或 --from / --attach\n");
+            }
+            $examples = Commands::examples($verb);
+            if ($examples !== null) {
+                \fwrite(\STDERR, "用法：\n{$examples}\n");
+            }
             exit(2);
         }
 

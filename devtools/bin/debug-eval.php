@@ -108,7 +108,8 @@ try {
     if ($e->errorCode === ProtocolError::NOT_APPLICABLE) {
         \fwrite(\STDERR, "（宿主默认不开 eval：restart 时加 --allow-eval）\n");
     }
-    exit(1);
+    // 2 = 这次不能这么做（宿主不支持 / 会话形态不对），不是进程异常。
+    exit(2);
 } catch (\Throwable $e) {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);

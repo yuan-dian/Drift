@@ -62,11 +62,18 @@ final class LiveShotAnchorTest extends SmokeTestCase
         $src = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/Host/LiveTicker.php');
         $at = \strpos($src, 'public function onPainted(');
         check('找得到帧出口回调', $at !== false);
-        $body = \substr($src, $at === false ? 0 : $at, 900);
+        $body = \substr($src, $at === false ? 0 : $at, 2000);
 
         check(
             '锚点取几何覆盖帧',
-            \str_contains($body, "geometryCoverage()['to']"),
+            \str_contains($body, "\$coverage['to']"),
+            $body,
+        );
+        // 旧写法 `geometryCoverage()['to'] ?? $frame` 钉的是字面量：空窗口的 `to`
+        // 是 0 而不是 null，`??` 兜不住它，锚点照样写 0。判据得判"0 不算数"。
+        check(
+            '空几何窗口不把 0 当锚点',
+            \str_contains($body, "\$coverage['to'] > 0"),
             $body,
         );
         check(

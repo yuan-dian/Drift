@@ -79,16 +79,21 @@ $discovery = Discovery::inDirectory((string) \getcwd());
 
 OutputGuard::start();
 
-$id = $discovery->register($script->target, $token, $server->port());
-\fwrite(\STDERR, \sprintf(
-    "会话已就绪：%s（pid %d，端口 %d）\n连上去看：drift debug brief --attach\n"
-    . "叫停 / 单步：drift debug ctl pause / ctl resume --frames=1\n",
-    $discovery->path(),
-    (int) \getmypid(),
-    $server->port(),
-));
-
+// `exit()` 会跳过 `finally`（实测：try 里 exit(7)，finally 不执行）。所以异常
+// 路径只记退出码，统一在收口之后 exit —— 否则 `.drift/session.json` 留着一条
+// 死条目，下一个出口会报"连接被拒绝"而不是"没有会话"，把人引到错误的方向。
+$entryId = null;
+$code = 0;
 try {
+    $entryId = $discovery->register($script->target, $token, $server->port());
+    \fwrite(\STDERR, \sprintf(
+        "会话已就绪：%s（pid %d，端口 %d）\n连上去看：drift debug brief --attach\n"
+        . "叫停 / 单步：drift debug ctl pause / ctl resume --frames=1\n",
+        $discovery->path(),
+        (int) \getmypid(),
+        $server->port(),
+    ));
+
     (new Host($server, $token, $drive, $args->bool('allow-eval')))->serve(
         static fn(Script $skeleton): array => Runner::open(
             $skeleton->target,
@@ -100,11 +105,13 @@ try {
     );
 } catch (\Throwable $e) {
     \fwrite(\STDERR, '宿主异常退出：' . $e->getMessage() . "\n");
-    exit(1);
+    $code = 1;
 } finally {
-    $discovery->unregister($id);
+    if ($entryId !== null) {
+        $discovery->unregister($entryId);
+    }
     $server->close();
     OutputGuard::stop();
 }
 
-exit(0);
+exit($code);

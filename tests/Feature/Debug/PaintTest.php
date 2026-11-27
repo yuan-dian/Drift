@@ -7,6 +7,7 @@ use Drift\App\Application;
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\Session\Evidence;
 use Drift\DevTools\Session\Query;
+use Drift\Debug\Session\PaintRecord;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
@@ -297,6 +298,22 @@ final class PaintTest extends SmokeTestCase
         }
 
         $this->flushChecks();
+    }
+
+    /**
+     * 命中率声明是 float，全命中时也必须是 `1.0`，不能是 `1`。
+     *
+     * `int / int` 在解释器里"除得尽就回 int"（`4/4 === 1`），在 AOT 下更是整数
+     * 除法 —— 同一份记录两个答案。显式 `(float)` 把两端钉在同一种类型上。
+     */
+    public function testHitRateStaysFloatEvenWhenItIsWhole(): void
+    {
+        $partial = new PaintRecord(1, [], [9 => PaintRecord::MISS_FIRST], 1, 3, 0, false);
+        check('比例是浮点', \is_float($partial->hitRate()), \gettype($partial->hitRate()));
+        check('比例值正确', $partial->hitRate() === 0.75, (string) $partial->hitRate());
+
+        $full = new PaintRecord(1, [], [], 1, 4, 0, false);
+        check('全命中为 1.0', \is_float($full->hitRate()) && $full->hitRate() === 1.0, \gettype($full->hitRate()));
     }
 
     /**

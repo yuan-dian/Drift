@@ -91,7 +91,8 @@ try {
         $reason = $armed['reason'] ?? 'unknown';
         \fwrite(\STDERR, "拾取没有布防（{$reason}）："
             . ($reason === 'paused' ? '先 resume 再试' : '这个宿主没有可拾取的活窗口') . "\n");
-        exit(1);
+        // 2 = 这次不能这么做（会话形态 / 宿主状态不满足），不是进程异常。
+        exit(2);
     }
     if (!$json) {
         \fwrite(\STDERR, "请在窗口里点一下要检查的控件…\n");
@@ -146,7 +147,7 @@ try {
     if ($e->errorCode === ProtocolError::NOT_APPLICABLE) {
         \fwrite(\STDERR, "（活窗口拾取只对 live attach 有意义：先起 DRIFT_DEBUG_LIVE=1 的开发壳）\n");
     }
-    exit(1);
+    exit(2);
 } catch (\Throwable $e) {
     \fwrite(\STDERR, $e->getMessage() . "\n");
     exit(2);

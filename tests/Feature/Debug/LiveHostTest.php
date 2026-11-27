@@ -51,6 +51,50 @@ final class LiveHostTest extends SmokeTestCase
     }
 
     /**
+     * 宿主在启动阶段就抛异常时，也要注销自己的发现条目。
+     *
+     * `exit()` 跳过 `finally`（PHP 的实测行为）：原先 catch 里直接 `exit(1)`，
+     * `.drift/session.json` 会留下一条 pid 已死的僵尸，下一个出口报"连接被拒绝"
+     * 而不是"没有会话"。判据看的是**收口之后的文件系统**，不是源码顺序。
+     */
+    public function testHostStartupFailureLeavesNoZombieEntry(): void
+    {
+        $dir = \sys_get_temp_dir() . '/drift-serve-fail-' . \bin2hex(\random_bytes(4));
+        \mkdir($dir, 0700, true);
+        $root = \dirname(__DIR__, 3);
+        $devNull = \PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
+
+        try {
+            $proc = \proc_open(
+                [\PHP_BINARY, $root . '/devtools/bin/debug-serve.php', '--page=__no_such_page__', '--frames=1'],
+                [
+                    0 => ['file', $devNull, 'r'],
+                    1 => ['file', $devNull, 'w'],
+                    2 => ['pipe', 'w'],
+                ],
+                $pipes,
+                $dir,
+                null,
+                ['bypass_shell' => true],
+            );
+            if (!\is_resource($proc)) {
+                self::fail('宿主进程起不来');
+            }
+            $err = (string) \stream_get_contents($pipes[2]);
+            \fclose($pipes[2]);
+            $code = \proc_close($proc);
+
+            check('启动失败退出 1', $code === 1, (string) $code);
+            check('说明了失败原因', \str_contains($err, '宿主异常退出'), $err);
+            check('没有留下僵尸条目', !\is_file($dir . '/.drift/session.json'), $dir);
+        } finally {
+            @\unlink($dir . '/.drift/session.json');
+            @\rmdir($dir . '/.drift');
+            @\rmdir($dir);
+        }
+    }
+
+    /**
      * 起一个宿主，等它登记，返回它的发现条目。
      *
      * @param list<string> $args

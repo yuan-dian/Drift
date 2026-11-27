@@ -104,6 +104,14 @@ final class Capabilities
     /** @return list<array<string, mixed>> */
     private static function methods(): array
     {
+        // 先反向闭合：`METHOD_META` 里多出来的键不会被下面的循环看见，于是"退役了
+        // 一个动词却留着它的角色声明"不会有任何症状 —— 直到有人按目录去调用。
+        foreach (self::METHOD_META as $name => $_meta) {
+            if (!\in_array($name, Methods::ALL, true)) {
+                throw new \LogicException("能力目录给未登记的方法 {$name} 写了角色声明：Methods::ALL 里没有它");
+            }
+        }
+
         $out = [];
         foreach (Methods::ALL as $name) {
             $meta = self::METHOD_META[$name] ?? null;
