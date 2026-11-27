@@ -10,7 +10,7 @@
 
 1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
 2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），并已能**按帧回放**（A67：出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照 —— 它只在"当时的类型 / 父与现在不同"时才值得立预算。
-3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移；DevTools 的宿主 / 视图 / CLI 与出口脚本已整体收进 `devtools/`（A73），整目录可独立拆仓。
+3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移；DevTools 的宿主 / 视图 / CLI 与出口脚本已整体收进 `devtools/`（A73），整目录可独立拆仓；八个取证据出口的十步生命周期收敛到 `SessionScope`，report 的编排搬进 `ReportRunner`（A74），加出口不再复制一遍来源解析与收口。
 
 这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。A72 把这条线从“人工清单”改成了“目录”：审查面物理住 `devtools/`，`sources` 只含 `src` ⇒ 它不在编译范围里，`ignore` 表因此从 24 条回到 3 条（且与调试无关）。
 
@@ -44,6 +44,7 @@
 | 异步 / worker 时间线 | 已落地（A63）：三个 TaskHost 后端内侧 tap，记提交 / 派发 / 结算帧、状态、耗时、发起者与落地节点；默认关，`debug async` + Web 异步泳道读同一查询面 | Chrome async stacks、Perfetto | 只记后端调度过的 job；await 每步成为 span 要另立 trace |
 | 崩溃 / 生产黑匣子 | 已落地：每应用一份 Core 标量环，帧末写一条，Frame 异常边界先留现场再响亮失败；release 可恢复错误另记独立面包屑环，不顶掉致命现场（A61）；sidecar 每 30 帧原子替换，native 过滤器崩溃时原样附加（A62）；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留（A60） | Sentry breadcrumb、Chrome trace | 已覆盖 PHP 异常、可恢复告警与 native context；符号化仍靠 `/MAP` + `rva2sym` |
 | 协议版本 / 能力发现 | 已落地（A71）：`capabilities` 在 `open` 之前可问，目录从动词表 / 查询规格 / 错误表派生，`available` 与实际拒绝同源；信封带版本，不认识就显式报错；离线查询面同形 | CDP `Schema.getDomains`、LSP `initialize`、Flutter VM `getVersion` | 客户端不再靠试探认识宿主；不是可执行契约 |
+| 出口生命周期 / 编排归属 | 已落地（A74）：八个取证据出口统一经 `Cli\SessionScope`（解析 / 来源 / 导出 / 渲染 / 收口各一处），`Parsed::supports()` 从 schema 派生来源能力；report 的四个编排函数住 `Report\ReportRunner`，出口只做命令行编排。不收常驻 / 多轮 / 干预出口 | Click/Cobra 的命令对象、CDP 客户端的命令封装 | 加出口不必复制十步样板 |
 | 规则扩展 / 插件 | 切片：`Rule` + `RuleRegistry` + 严重度 + 按编号开关；加载外部规则未做 | ESLint、Lighthouse、Flutter lint | 生态门槛 |
 | 源码跳转 / 断点 | 未做（明确边界） | Flutter Debugger、Qt Creator | 不作为近期目标 |
 | 无障碍检查 | 未做：UIA 有实现，调试面无语义树 | Chrome A11y、Flutter Semantics | 可后置 |
@@ -51,7 +52,7 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 21 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 22 出口        Web 视图         AI / CI          IDE（未来）
                     \              |               |               /
 L2 投影        Brief / Findings  Inspector     Timeline     Network     Async     Tree     Loop     Paint     Memory
                     \              |               |               /

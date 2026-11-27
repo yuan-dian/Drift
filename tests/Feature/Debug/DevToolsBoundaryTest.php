@@ -147,13 +147,18 @@ final class DevToolsBoundaryTest extends SmokeTestCase
         check('Web 路由检查指向新视图目录', \str_contains($webCheck, "\$root . '/devtools/View'"));
 
         $bad = [];
-        foreach (['debug-highlight.php', 'debug-panel.php', 'debug-pick.php', 'debug-report.php'] as $script) {
-            $src = (string) \file_get_contents($root . '/devtools/bin/' . $script);
+        // A74 起 report 的宿主路径声明跟着编排层搬进 Report/，不再在出口脚本里。
+        $hostPaths = [
+            'bin/debug-highlight.php', 'bin/debug-panel.php', 'bin/debug-pick.php',
+            'Report/ReportRunner.php',
+        ];
+        foreach ($hostPaths as $script) {
+            $src = (string) \file_get_contents($root . '/devtools/' . $script);
             if (!\str_contains($src, "dirname(__DIR__) . '/bin/debug-host.php'")) {
                 $bad[] = $script;
             }
         }
-        check('四个 --remote 出口的宿主路径同形', $bad === [], \implode(', ', $bad));
+        check('四处 --remote 宿主路径同形（含 report 编排层）', $bad === [], \implode(', ', $bad));
 
         // 共享启动器同时服务 debug 出口与工具链：只把前者搬走，后者必须仍在 tools/。
         $cmd = \escapeshellarg(\PHP_BINARY) . ' ' . \escapeshellarg($root . '/bin/drift') . ' build --help';

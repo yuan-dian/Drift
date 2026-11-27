@@ -27,77 +27,17 @@ declare(strict_types=1);
 
 require __DIR__ . '/../autoload.php';
 
-use Drift\DevTools\Session\SessionQueries;
-use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\TreeDiff;
 
-$args = Commands::parseOrExit('tree-diff', $argv);
-$from = $args->str('from');
-$out = $args->str('out');
-$at = $args->at();
-$remote = $args->bool('remote');
-$json = $args->bool('json');
-$base = $args->int('base');
-$frame = $args->has('frame') ? $args->int('frame') : null;
-$limit = $args->int('limit');
-$label = $args->label();
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-if ($label === null && $from === null && !$attach) {
-    \fwrite(\STDERR, "用法：debug-tree-diff <AppClass|路由id> [--page=<路由id>] [--base=N] [--frame=N]\n");
-    \fwrite(\STDERR, "      debug-tree-diff --from=<证据包> --base=N [--json]\n");
-    exit(2);
-}
-try {
-    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
-
-/** @var SessionQueries|null $session */
-$session = null;
-$source = null;
-try {
-    $drive = null;
-    if ($from === null && !$attach) {
-        $drive = $args->script();
-    }
-
-    $source = Source::resolve(
-        from: $from,
-        attach: $attach,
-        session: $sessionId,
-        remote: $remote,
-        drive: $drive,
-        at: $at,
-        out: $out,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-    $session = $source->queries();
-
-    $source->export();
-
-    $answer = $session->query('treeDiff', [
-        'base' => $base,
-        'frame' => $frame,
-        'limit' => $limit,
+SessionScope::open('tree-diff', $argv)->run(static function (SessionScope $scope): int {
+    $args = $scope->args;
+    $answer = $scope->query('treeDiff', [
+        'base' => $args->int('base'),
+        'frame' => $args->has('frame') ? $args->int('frame') : null,
+        'limit' => $args->int('limit'),
     ]);
-    if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode(
-            ['label' => $label] + $answer,
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach (TreeDiff::render($answer) as $line) {
-            \fwrite(\STDOUT, $line . "\n");
-        }
-    }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
+    $scope->emit($answer, TreeDiff::render(...));
+
+    return 0;
+});

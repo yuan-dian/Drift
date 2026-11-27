@@ -26,61 +26,21 @@ declare(strict_types=1);
 
 require __DIR__ . '/../autoload.php';
 
-use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\Align;
 
-$args = Commands::parseOrExit('node', $argv);
-$node = $args->int('node');
-$frame = $args->int('frame');
-$at = $args->at();
-$remote = $args->bool('remote');
-$json = $args->bool('json');
-$label = $args->label();
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-if ($node <= 0 || $frame <= 0) {
-    \fwrite(\STDERR, "用法：debug-node <AppClass|路由id> --page=<路由id> --node=N --frame=N [--json] [--remote]\n");
-    exit(2);
-}
-try {
-    $attach = Source::autoAttach($attach, null, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
-if (!$attach && $label === null) {
-    \fwrite(\STDERR, "用法：debug-node <AppClass|路由id> --node=N --frame=N [--json] [--remote]\n"
-        . "      debug-node --node=N --frame=N   # 当前目录只有一个活会话时自动接上\n");
-    exit(2);
-}
+SessionScope::open('node', $argv)->run(static function (SessionScope $scope): int {
+    $args = $scope->args;
+    $node = $args->int('node');
+    $frame = $args->int('frame');
+    if ($node <= 0 || $frame <= 0) {
+        \fwrite(\STDERR, "用法：debug-node <AppClass|路由id> --page=<路由id> --node=N --frame=N [--json] [--remote]\n");
 
-$source = null;
-try {
-    $source = Source::resolve(
-        attach: $attach,
-        remote: $remote,
-        drive: $attach ? null : $args->script(),
-        at: $at,
-        session: $sessionId,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-
-    $answer = $source->queries()->query('align', ['node' => $node, 'frame' => $frame]);
-    if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode(
-            ['label' => $label] + $answer,
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach (Align::lines($answer) as $line) {
-            \fwrite(\STDOUT, $line . "\n");
-        }
+        return 2;
     }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
+
+    $answer = $scope->query('align', ['node' => $node, 'frame' => $frame]);
+    $scope->emit($answer, Align::lines(...));
+
+    return 0;
+});

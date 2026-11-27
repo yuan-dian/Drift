@@ -32,6 +32,18 @@ final class Parsed
         return $this->given[$name] ?? false;
     }
 
+    /**
+     * 本出口的 schema 是否声明了这个参数。
+     *
+     * 与 `has()` 分开：`--from` 没给是"取离线包"的一种选择，而 `node` / `props`
+     * 根本没声明它 —— 后者问 `has()` 永远是 false，壳会误以为支持离线来源。
+     * 让能力从 schema 派生，出口就不必再写一遍"我支持哪几种来源"。
+     */
+    public function supports(string $name): bool
+    {
+        return isset($this->options[$name]);
+    }
+
     public function bool(string $name): bool
     {
         return (bool) ($this->values[$name] ?? false);

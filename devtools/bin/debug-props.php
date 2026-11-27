@@ -29,66 +29,24 @@ declare(strict_types=1);
 
 require __DIR__ . '/../autoload.php';
 
-use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\Props;
 
-$args = Commands::parseOrExit('props', $argv);
-$node = $args->int('node');
-$maxDepth = $args->int('maxDepth');
-$maxFields = $args->int('maxFields');
-$at = $args->at();
-$remote = $args->bool('remote');
-$json = $args->bool('json');
-$label = $args->label();
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-if ($node <= 0) {
-    \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--page=<路由id>] [--json] [--remote]\n");
-    exit(2);
-}
-try {
-    $attach = Source::autoAttach($attach, null, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
-if (!$attach && $label === null) {
-    \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--json] [--remote]\n"
-        . "      debug-props --node=N   # 当前目录只有一个活会话时自动接上\n");
-    exit(2);
-}
+SessionScope::open('props', $argv)->run(static function (SessionScope $scope): int {
+    $args = $scope->args;
+    $node = $args->int('node');
+    if ($node <= 0) {
+        \fwrite(\STDERR, "用法：debug-props <AppClass|路由id> --node=N [--page=<路由id>] [--json] [--remote]\n");
 
-$source = null;
-try {
-    $source = Source::resolve(
-        attach: $attach,
-        remote: $remote,
-        drive: $attach ? null : $args->script(),
-        at: $at,
-        session: $sessionId,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-
-    $answer = $source->queries()->query('props', [
-        'node' => $node,
-        'maxDepth' => $maxDepth,
-        'maxFields' => $maxFields,
-    ]);
-    if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode(
-            ['label' => $label] + $answer,
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach (Props::lines($answer) as $line) {
-            \fwrite(\STDOUT, $line . "\n");
-        }
+        return 2;
     }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
+
+    $answer = $scope->query('props', [
+        'node' => $node,
+        'maxDepth' => $args->int('maxDepth'),
+        'maxFields' => $args->int('maxFields'),
+    ]);
+    $scope->emit($answer, Props::lines(...));
+
+    return 0;
+});

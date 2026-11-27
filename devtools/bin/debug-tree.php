@@ -33,80 +33,18 @@ declare(strict_types=1);
 
 require __DIR__ . '/../autoload.php';
 
-use Drift\DevTools\Session\SessionQueries;
-use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\Tree;
 
-$args = Commands::parseOrExit('tree', $argv);
-$from = $args->str('from');
-$out = $args->str('out');
-$at = $args->at();
-$remote = $args->bool('remote');
-$json = $args->bool('json');
-$root = $args->int('root');
-$depth = $args->int('depth');
-$limit = $args->int('limit');
-$frame = $args->has('frame') ? $args->int('frame') : null;
-$label = $args->label();
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-if ($label === null && $from === null && !$attach) {
-    \fwrite(\STDERR, "用法：debug-tree <AppClass|路由id> [--page=<路由id>] [--root=N] [--depth=N] [--frame=N]\n");
-    \fwrite(\STDERR, "      debug-tree --from=<证据包> [--root=N] [--json]\n");
-    \fwrite(\STDERR, "      debug-tree --root=N   # 当前目录只有一个活会话时自动接上\n");
-    exit(2);
-}
-try {
-    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
-
-/** @var SessionQueries|null $session */
-$session = null;
-$source = null;
-try {
-    $drive = null;
-    if ($from === null && !$attach) {
-        $drive = $args->script();
-    }
-
-    $source = Source::resolve(
-        from: $from,
-        attach: $attach,
-        session: $sessionId,
-        remote: $remote,
-        drive: $drive,
-        at: $at,
-        out: $out,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-    $session = $source->queries();
-
-    $source->export();
-
-    $answer = $session->query('tree', [
-        'root' => $root,
-        'depth' => $depth,
-        'limit' => $limit,
-        'frame' => $frame,
+SessionScope::open('tree', $argv)->run(static function (SessionScope $scope): int {
+    $args = $scope->args;
+    $answer = $scope->query('tree', [
+        'root' => $args->int('root'),
+        'depth' => $args->int('depth'),
+        'limit' => $args->int('limit'),
+        'frame' => $args->has('frame') ? $args->int('frame') : null,
     ]);
-    if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode(
-            ['label' => $label] + $answer,
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach (Tree::render($answer) as $line) {
-            \fwrite(\STDOUT, $line . "\n");
-        }
-    }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
+    $scope->emit($answer, Tree::render(...));
+
+    return 0;
+});

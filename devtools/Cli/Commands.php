@@ -163,6 +163,12 @@ final class Commands
         return OptionSet::for($command, self::extras()[$command] ?? []);
     }
 
+    /** 出口脚本文档块里的「用法：」段，与 `--help` 同源。 */
+    public static function examples(string $verb): ?string
+    {
+        return Registry::examples(Registry::get($verb));
+    }
+
     /**
      * 两级 `--help` 共用这一段：出口自己问、从 `drift debug <verb> --help` 问，
      * 拿到的必须是同一串字节。参数表来自 schema，示例来自脚本文档块。

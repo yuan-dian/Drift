@@ -37,72 +37,26 @@ declare(strict_types=1);
 
 require __DIR__ . '/../autoload.php';
 
-use Drift\DevTools\Session\SessionQueries;
-use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\Find;
 
-$args = Commands::parseOrExit('find', $argv);
-$from = $args->str('from');
-$remote = $args->bool('remote');
-$json = $args->bool('json');
-$pattern = $args->str('pattern');
-$domain = $args->str('domain') ?? 'all';
-$limit = $args->int('limit');
-$caseSensitive = $args->bool('case-sensitive');
-$label = $args->label();
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-try {
-    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
+SessionScope::open('find', $argv)->run(static function (SessionScope $scope): int {
+    $args = $scope->args;
+    $pattern = $args->str('pattern');
+    if ($pattern === null || \trim($pattern) === '') {
+        \fwrite(\STDERR, "用法：debug-find <AppClass|路由id> --pattern=<文本> [--domain=all|node|request] [--limit=N] [--json]\n");
+        \fwrite(\STDERR, "      debug-find --from=<证据包> --pattern=<文本> [--json]\n");
 
-if ($pattern === null || \trim($pattern) === '') {
-    \fwrite(\STDERR, "用法：debug-find <AppClass|路由id> --pattern=<文本> [--domain=all|node|request] [--limit=N] [--json]\n");
-    \fwrite(\STDERR, "      debug-find --from=<证据包> --pattern=<文本> [--json]\n");
-    exit(2);
-}
-
-/** @var SessionQueries|null $session */
-$session = null;
-$source = null;
-try {
-    $source = Source::resolve(
-        from: $from,
-        attach: $attach,
-        session: $sessionId,
-        remote: $remote,
-        drive: $from === null && !$attach ? $args->script() : null,
-        at: $args->at(),
-        out: null,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-    $session = $source->queries();
-
-    $answer = $session->query('find', [
-        'pattern' => $pattern,
-        'domain' => $domain,
-        'limit' => $limit,
-        'caseSensitive' => $caseSensitive,
-    ]);
-
-    if ($json) {
-        \fwrite(\STDOUT, (string) \json_encode(
-            ['label' => $label] + $answer,
-            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-        ) . "\n");
-    } else {
-        foreach (Find::lines($answer) as $line) {
-            \fwrite(\STDOUT, $line . "\n");
-        }
+        return 2;
     }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
+
+    $answer = $scope->query('find', [
+        'pattern' => $pattern,
+        'domain' => $args->str('domain') ?? 'all',
+        'limit' => $args->int('limit'),
+        'caseSensitive' => $args->bool('case-sensitive'),
+    ]);
+    $scope->emit($answer, Find::lines(...));
+
+    return 0;
+});

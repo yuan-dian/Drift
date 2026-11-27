@@ -57,7 +57,7 @@ require __DIR__ . '/../autoload.php';
 
 use Drift\Debug\Session\Thresholds;
 use Drift\DevTools\Cli\Commands;
-use Drift\DevTools\Host\Source;
+use Drift\DevTools\Cli\SessionScope;
 use Drift\DevTools\View\Baseline;
 use Drift\DevTools\View\BaselineText;
 use Drift\DevTools\View\Brief;
@@ -72,7 +72,6 @@ $args = Commands::parseOrExit('brief', $argv);
 $json = $args->bool('json');
 
 // `--rules` 不跑会话：它问的是"这个工具能判什么"，与哪一页无关。
-// 放在 resolve 之前，是为了让它在没有页面参数时也能用。
 if ($args->bool('rules')) {
     \fwrite(\STDOUT, $json
         ? (string) \json_encode(RulesText::toArray(), \JSON_UNESCAPED_UNICODE | \JSON_PRETTY_PRINT) . "\n"
@@ -108,60 +107,19 @@ if ($assert && $baselinePath === null) {
     exit(2);
 }
 
-$from = $args->str('from');
-$out = $args->str('out');
-$attach = $args->bool('attach');
-$sessionId = $args->str('session');
-$at = $args->at();
-$remote = $args->bool('remote');
-$budget = $args->int('budget');
-$textWidth = $args->int('text-width');
-// 只开放表头显示的那三项：表头写什么，就该能配什么。
 $thresholds = Thresholds::default()
     ->with(['slowMs' => $args->float('slow')])
     ->with(['fanoutNodes' => $args->int('fanout')])
     ->with(['repeatPercent' => $args->int('repeat')]);
-$label = $args->label();
-// 真实应用先跑着、观察者后到：没点名来源时当前目录恰有一个活会话就直接接。
-// 规则只有一份（Source::autoAttach），否则 web 能接、brief 不能接，用户只觉得随机。
-try {
-    $attach = Source::autoAttach($attach, $from, $label, $sessionId);
-} catch (\RuntimeException $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-}
+$budget = $args->int('budget');
+$textWidth = $args->int('text-width');
 
-$source = null;
-$code = 0;
-try {
-    $drive = null;
-    if ($from === null && !$attach) {
-        if ($label === null) {
-            \fwrite(\STDERR, "用法：debug-brief <AppClass|路由id> [--page=<路由id>] [--frames=N] [--json]\n");
-            \fwrite(\STDERR, "      debug-brief --from=<证据包> [--json]\n");
-            \fwrite(\STDERR, "      debug-brief --attach [--session=<id>] [--json]\n");
-            exit(2);
-        }
-
-        $drive = $args->script();
-    }
-
-    $source = Source::resolve(
-        from: $from,
-        attach: $attach,
-        remote: $remote,
-        drive: $drive,
-        at: $at,
-        out: $out,
-        session: $sessionId,
-        recordOptions: $args->recordOptions(),
-    );
-    $label = $source->label();
-
-    $facts = Facts::gather($source->queries(), $label);
-
-    // 导出放在取事实之后：几何是帧末采的，早于最后一帧导出会少一段。
-    $source->export();
+SessionScope::open('brief', $argv, $args)->run(static function (SessionScope $scope) use (
+    $selection, $baselinePath, $savePath, $assert, $tolerance, $thresholds, $budget, $textWidth,
+): int {
+    $json = $scope->json();
+    $label = $scope->label();
+    $facts = Facts::gather($scope->queries(), $label);
 
     $projection = Brief::project($facts, $thresholds, $selection);
     $captured = Baseline::capture(
@@ -171,9 +129,6 @@ try {
         $projection['thresholds'],
         $projection['selection'],
     );
-
-    $brief = null;
-    $comparison = null;
 
     if ($savePath !== null) {
         $file = Baseline::snapshot($captured);
@@ -192,56 +147,48 @@ try {
                 \count($file['findings']),
                 $file['excluded'] > 0 ? \sprintf('（%d 条兜底结论未收）', $file['excluded']) : '',
             ));
-    } else {
-        if ($baselinePath !== null) {
-            $raw = @\file_get_contents($baselinePath);
-            if ($raw === false) {
-                // 不存在不能当空基线：空基线会把"每条都新增"报成结论，读者会以为
-                // 是应用真的变差了。文件缺失就是文件缺失。
-                throw new \RuntimeException("读不到基线：{$baselinePath}");
-            }
-            $decoded = \json_decode($raw, true);
-            if (!\is_array($decoded)) {
-                throw new \RuntimeException("基线不是合法 JSON：{$baselinePath}");
-            }
-            $comparison = Baseline::compare(Baseline::restore($decoded), $captured, $tolerance);
+
+        return 0;
+    }
+
+    $comparison = null;
+    if ($baselinePath !== null) {
+        $raw = @\file_get_contents($baselinePath);
+        if ($raw === false) {
+            // 不存在不能当空基线：空基线会把"每条都新增"报成结论，读者会以为
+            // 是应用真的变差了。文件缺失就是文件缺失。
+            throw new \RuntimeException("读不到基线：{$baselinePath}");
         }
+        $decoded = \json_decode($raw, true);
+        if (!\is_array($decoded)) {
+            throw new \RuntimeException("基线不是合法 JSON：{$baselinePath}");
+        }
+        $comparison = Baseline::compare(Baseline::restore($decoded), $captured, $tolerance);
+    }
 
-        $brief = BriefText::render($facts, $projection, $budget, $textWidth);
-
-        if ($json) {
-            // 与 `debug web` 的 `/api/brief` 是**同一份**：投影 + 裁剪，不含排版行。
-            // 把它做成同一个函数（见 Web::brief()）而不是两处拼装，是 B4 §9 判据 1 的前提。
-            $payload = Web::brief($label, $facts, $projection) + ['omitted' => $brief['omitted']];
-            if ($comparison !== null) {
-                $payload['baseline'] = $comparison;
-            }
-            \fwrite(\STDOUT, (string) \json_encode(
-                $payload,
-                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
-            ) . "\n");
-        } else {
-            foreach ($brief['lines'] as $line) {
+    $brief = BriefText::render($facts, $projection, $budget, $textWidth);
+    if ($json) {
+        // 与 `debug web` 的 `/api/brief` 是**同一份**：投影 + 裁剪，不含排版行。
+        $payload = Web::brief($label, $facts, $projection) + ['omitted' => $brief['omitted']];
+        if ($comparison !== null) {
+            $payload['baseline'] = $comparison;
+        }
+        \fwrite(\STDOUT, (string) \json_encode(
+            $payload,
+            \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
+        ) . "\n");
+    } else {
+        foreach ($brief['lines'] as $line) {
+            \fwrite(\STDOUT, $line . "\n");
+        }
+        if ($comparison !== null) {
+            \fwrite(\STDOUT, "\n");
+            foreach (BaselineText::render($comparison, $baselinePath, $textWidth)['lines'] as $line) {
                 \fwrite(\STDOUT, $line . "\n");
-            }
-            if ($comparison !== null) {
-                \fwrite(\STDOUT, "\n");
-                foreach (BaselineText::render($comparison, $baselinePath, $textWidth)['lines'] as $line) {
-                    \fwrite(\STDOUT, $line . "\n");
-                }
             }
         }
     }
 
     // 只数确定性回归：耗时抖动不该让 CI 红（见 DESIGN-EVIDENCE-B10 §2 方案 C）。
-    if ($assert && ($comparison['regressions'] ?? 0) > 0) {
-        $code = 3;
-    }
-} catch (\Throwable $e) {
-    \fwrite(\STDERR, $e->getMessage() . "\n");
-    exit(2);
-} finally {
-    $source?->close();
-}
-
-exit($code);
+    return $assert && ($comparison['regressions'] ?? 0) > 0 ? 3 : 0;
+});
