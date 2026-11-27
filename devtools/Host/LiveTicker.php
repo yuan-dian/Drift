@@ -184,7 +184,17 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
 
     public function afterFrame(): void
     {
-        if ($this->session !== null && $this->drive !== null) {
+        if ($this->session === null) {
+            return;
+        }
+
+        // 帧是 `EventLoop` 推的，所以"推进了一帧"这个事实只在这里知道 ——
+        // `Host::pollOnce()` 的空闲分支在 live 宿主上是空转（`LiveDrive::advance()`
+        // 故意不做事），它比帧号时什么都不会变。不在这里广播，live 宿主就一条
+        // 事件都不会发。
+        $this->host?->publishFrame();
+
+        if ($this->drive !== null) {
             $this->drive->afterFrame($this->session);
         }
     }

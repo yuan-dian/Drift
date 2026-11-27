@@ -6,6 +6,7 @@ namespace Drift\DevTools\Host;
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\Protocol\Capabilities;
 use Drift\DevTools\Protocol\Channel;
+use Drift\DevTools\Protocol\Events;
 use Drift\DevTools\Protocol\Methods;
 use Drift\DevTools\Protocol\ProtocolError;
 use Drift\DevTools\Protocol\Server;
@@ -88,6 +89,22 @@ final class Host
 
     private ?DebugSession $session = null;
 
+    /**
+     * 事件信封上的唯一单调计数器（A80）。
+     *
+     * ★ **不是帧号**：一次 `resume --frames=5` 推进五帧只发一条事件，而限速未到
+     *   的那一步推进零帧、一条都不发。拿帧号当 `seq` 会让"收到 3、4、5"与
+     *   "收到三条事件"分不开，而消费者要判的恰恰是后者（有没有漏收）。
+     */
+    private int $eventSeq = 0;
+
+    /**
+     * 已经广播到哪个帧号。推进不动时帧号不变，靠它避免重复广播同一帧。
+     *
+     * 会话一装上就对齐到它的当前帧号（`attach` 接上别人的运行时不补历史）。
+     */
+    private int $publishedFrame = 0;
+
     private ?\Closure $open = null;
 
     /**
@@ -110,7 +127,7 @@ final class Host
                 // 自走：没有客户端来发 open，会话只能由宿主自己建。
                 // live 宿主由 {@see self::adopt()} 在帧循环启动时放进来。
                 if ($this->session === null) {
-                    $this->session = ($this->open)($this->drive->script()->fork())['session'];
+                    $this->installSession(($this->open)($this->drive->script()->fork())['session']);
                 }
             }
 
@@ -119,7 +136,7 @@ final class Host
             }
         } finally {
             $this->session?->close();
-            $this->session = null;
+            $this->installSession(null);
         }
     }
 
@@ -139,8 +156,14 @@ final class Host
         if ($ready === []) {
             // 唯一一次推进一步：两处都判（这里与 `Drive::advance`）会互为冗余，
             // 去掉任一个都不出错，于是没有判据能钉住任何一个。
-            if ($this->drive !== null && $this->session !== null) {
-                $this->drive->advance($this->session);
+            $drive = $this->drive;
+            $session = $this->session;
+            if ($drive !== null && $session !== null) {
+                $this->advance(static function () use ($drive, $session): ?float {
+                    $drive->advance($session);
+
+                    return null;   // 这一步的墙钟只有客户端喂 `frame` 时量得到
+                });
             }
 
             return $this->keepServing();
@@ -166,7 +189,20 @@ final class Host
     /** live 宿主用：会话由帧循环开，宿主只接管消息面。 */
     public function adopt(DebugSession $session): void
     {
+        $this->installSession($session);
+    }
+
+    /**
+     * 装上（或卸下）会话，同时把"已广播到哪"对齐到它的当前帧号。
+     *
+     * ★ 五个赋值点走同一个入口，是因为"装上会话"还有一个副作用：事件水位线。
+     *   漏掉某一处不会报错，只会让那个宿主在第一次推帧时多发或少发一条事件 ——
+     *   而少发的那条没有任何症状。
+     */
+    private function installSession(?DebugSession $session): void
+    {
         $this->session = $session;
+        $this->publishedFrame = $session === null ? 0 : $session->lastFrameId();
     }
 
     /** 已接受的通道：关监听之前先断开，避免观察者握着半死的连接。 */
@@ -181,6 +217,74 @@ final class Host
     private function advancing(): bool
     {
         return $this->drive !== null && $this->session !== null && $this->session->canAdvance();
+    }
+
+    /**
+     * 推进一步，推完广播（A80）。
+     *
+     * 推进有两个入口：空闲空转（`Drive::advance`）与客户端喂 `frame`（`pump`）。
+     * 让它们各自记得"推完要广播"是不行的 —— 漏掉的那个不会报错，只会少几条
+     * 事件，而少发事件在消费端看起来跟"没有新帧"一模一样。
+     *
+     * @param \Closure(): ?float $step 返回这一帧的墙钟毫秒；量不到给 `null`
+     */
+    private function advance(\Closure $step): void
+    {
+        $this->publishFrame($step());
+    }
+
+    /**
+     * 广播"推进了一帧"给所有已连接的通道。
+     *
+     * ## 不设订阅
+     *
+     * 本地管道上一条事件几十字节，60fps 也就 2KB/s，为它维护"谁订了什么"是拿
+     * 三个机制换两行字节（A80）。谁不需要谁自己丢。
+     *
+     * ## 比的是帧号，不是"推了几次"
+     *
+     * 限速未到、这一步不是帧步、会话已经停了 —— 这三种情况下 `advance()` 被调了
+     * 但一帧也没推。它们都不是"又推进了一帧"。
+     *
+     * @param ?float $cost 这一帧的墙钟毫秒。`null` = 没人量过（自走宿主量不到，
+     *                     只有客户端喂 `frame` 那条路径才有）；`0.0` = 量了，且真的
+     *                     没花时间。两者不能合并。
+     *
+     * @internal 只由 {@see self::advance()} 与 live 桥（`LiveTicker::afterFrame()`）调
+     */
+    public function publishFrame(?float $cost = null): void
+    {
+        $session = $this->session;
+        if ($session === null) {
+            return;
+        }
+
+        $id = $session->lastFrameId();
+        if ($id <= $this->publishedFrame) {
+            return;
+        }
+        $this->publishedFrame = $id;
+
+        if ($this->channels === []) {
+            return;
+        }
+
+        $line = Wire::encode([
+            'event' => Events::FRAME,
+            'seq' => ++$this->eventSeq,
+            'data' => ['id' => $id, 'cost' => $cost],
+        ]);
+
+        foreach ($this->channels as $key => $channel) {
+            try {
+                $channel->write($line);
+            } catch (\Throwable) {
+                // 写不进去 = 对端已经走了。摘掉它，否则后面每一帧都要在这里失败一次，
+                // 而每次失败都在帧里（那里不该有异常）。
+                $channel->close();
+                unset($this->channels[$key]);
+            }
+        }
     }
 
     private function keepServing(): bool
@@ -349,7 +453,7 @@ final class Host
         }
 
         $opened = $this->open($params);
-        $this->session = $opened['session'];
+        $this->installSession($opened['session']);
 
         return $opened['reply'];
     }
@@ -360,7 +464,7 @@ final class Host
         // 只关会话，不退进程：另一个观察者可能还在看，而新客户端也该能重新 open。
         // 客户端通常紧跟着断开，那时 `read()` 得到 null、通道被移除、循环自己结束。
         $this->session?->close();
-        $this->session = null;
+        $this->installSession(null);
 
         return null;
     }
@@ -655,7 +759,15 @@ final class Host
         if (!\is_int($t) && !\is_float($t)) {
             throw new ProtocolError(ProtocolError::BAD_REQUEST, 'frame 需要数字 t');
         }
-        $wall = $session->pump((float) $t);
+
+        // 墙钟是这个宿主量到的、客户端拿不到的量，所以它是事件的 `cost`：
+        // 别的观察者看到"又推了一帧"时，也该看到这一帧花了多久。
+        $wall = 0.0;
+        $this->advance(static function () use ($session, $t, &$wall): ?float {
+            $wall = $session->pump((float) $t);
+
+            return $wall;
+        });
 
         // 帧号由这里（被驱动方）给：客户端自己数会和"容量裁剪""跳过 settle"错开。
         return ['id' => $session->lastFrameId(), 'wall' => $wall];
