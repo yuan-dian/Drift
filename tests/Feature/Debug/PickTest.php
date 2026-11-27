@@ -4,9 +4,9 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
-use Drift\App\DebugSession;
-use Drift\Debug\Session\Digest;
-use Drift\Debug\Session\Query;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\Session\Digest;
+use Drift\DevTools\Session\Query;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;

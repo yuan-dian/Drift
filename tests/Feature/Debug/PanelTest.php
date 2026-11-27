@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
-use Drift\App\DebugSession;
+use Drift\DevTools\App\DebugSession;
 use Drift\Dev\Debug\View\Fit;
 use Drift\Dev\Debug\View\Panel;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

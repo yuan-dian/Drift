@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\SessionState;
 
 /**
  * 查询的**协议面**：按名字分派一次查询，拿回一份纯数组。
@@ -67,7 +70,7 @@ final class QueryRouter implements SessionQueries
      * 没有 `Query` 方法可转发、由会话自己答的四条查询。
      *
      * `digest` 算指纹、`script` 回脚本、`state` 回会话身份与状态、`capabilities`
-     * 回协议目录（{@see \Drift\Debug\Protocol\Capabilities}）。它们都不属于任何
+     * 回协议目录（{@see \Drift\DevTools\Protocol\Capabilities}）。它们都不属于任何
      * 记录域：给 `Query` 造四个假方法只会让门面多四条空转分派。
      *
      * 这张表同时被协议目录与闭合判据消费，别再在别处写第四遍。
@@ -236,7 +239,7 @@ final class QueryRouter implements SessionQueries
             // 能力目录不依赖会话状态；离线包也能问。真正"这个宿主现在能不能用"
             // 由 Methods::CAPABILITIES 的回执加 host 一栏回答 —— 那栏需要宿主，
             // 不属于查询面。
-            'capabilities' => \Drift\Debug\Protocol\Capabilities::describe(),
+            'capabilities' => \Drift\DevTools\Protocol\Capabilities::describe(),
             default => throw new \InvalidArgumentException(
                 "未知查询：{$name}（可用：" . \implode(' / ', \array_keys(self::QUERIES)) . '）',
             ),

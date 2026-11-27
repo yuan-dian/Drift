@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Session\Session;
+use Drift\DevTools\Session\Session;
 
 /**
  * 一次会话上的交互视图：时间轴 + 因果树 + 原因浮层。

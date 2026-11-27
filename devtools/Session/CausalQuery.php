@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\FrameRecord;
 
 /**
  * 因果域查询：这一帧变了什么、因为谁、跨帧看谁最贵。

@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Debug\Protocol\ProtocolError;
-use Drift\Debug\Protocol\RemoteSession;
+use Drift\DevTools\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\RemoteSession;
 use Drift\Dev\Debug\Discovery;
 use Drift\Dev\Debug\SocketChannel;
 use Drift\Dev\Tests\Support\SmokeTestCase;

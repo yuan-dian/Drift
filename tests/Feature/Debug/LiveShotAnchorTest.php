@@ -5,7 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\Debug\Session\GeometryCapture;
-use Drift\Debug\Session\History;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

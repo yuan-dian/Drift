@@ -158,48 +158,21 @@ ignore:
   - tests
   - mock-server.php
 
-  # ── 调试层的「审查面」（A54 L3）──
-  # tpc 全量编译 sources、没有死码消除：类可达即整类进产物，不排就是白扛
-  # 约 7,900 行永不执行的查询 / 证据 / 协议 / 驱动代码（实测占 showcase 产物 9.3%）。
-  # 采集核心（Recorder 及记录类型）必须留 —— 热路径上有 tap，排掉会编译期炸。
+  # ── 调试层的「审查面」曾经在这里（A54 L3 → **A72 整段删除**）──
+  # 这里曾有 24 条 `../../src/Debug/...` 与 `../../src/App/{DebugSession,Replay}.php`：
+  # tpc 全量编译 sources、没有死码消除，类可达即整类进产物，所以那些"永不执行的
+  # 查询 / 证据 / 协议 / 驱动"只能逐条点名排掉，占 showcase 产物 9.3%。
   #
-  # ★ 为什么放在 base 而不是各工程：list 型项合并时是**整体替换**，放在这里
-  #   只要各工程自己不写 `ignore` 就全继承；一旦某个工程重写，就必须把整张表
-  #   抄一遍（第一版就漏了 Session.php —— 它 extends 两个已排除的父接口，
-  #   留下子接口 = 悬空继承）。`php tools/check-debug-scope.php` 守这条边界。
-  # ★ 路径基准是**各应用 project.yml 所在目录**（Translator::resolvePath 传的是
-  #   projectDir），不是本文件目录 —— 所以这里写 `../../src/...`。
-  # ★ 拼错路径不会报错：tpc 对不存在的 ignore 条目直接 continue（"optional
-  #   exclusions"）。守门器额外验条目必须命中真实文件。
-  - ../../src/Debug/Json.php
-  - ../../src/Debug/Protocol
-  - ../../src/App/DebugSession.php
-  - ../../src/App/Replay.php
-  # 记录层的**读面**：`Query` 六个域与 `Evidence` / `Digest` 都经它取数。
-  # 它在写面（Recorder）的 `ledger()` 出口之下，只被审查面引用 ⇒ 不进产物。
-  - ../../src/Debug/Session/History.php
-  - ../../src/Debug/Session/Query.php
-  # Query 门面背后的六个域实现（因果 / 几何 / 绘制 / 外部工作 / 结构 / 内省）。
-  # 它们只被 Query 引用，而 Query 已排除 ⇒ 整组随门面一起不进产物。
-  # ★ 新增域类必须同时加在这里：漏一条不会报错，只会让那一个类白扛进 exe ——
-  #   由 `php tools/check-debug-scope.php` 报「审查面泄漏进 AOT」。
-  - ../../src/Debug/Session/CausalQuery.php
-  - ../../src/Debug/Session/GeometryQuery.php
-  - ../../src/Debug/Session/PaintQuery.php
-  - ../../src/Debug/Session/TrafficQuery.php
-  - ../../src/Debug/Session/StructureQuery.php
-  - ../../src/Debug/Session/LiveQuery.php
-  - ../../src/Debug/Session/QueryRouter.php
-  - ../../src/Debug/Session/Evidence.php
-  # L2 内省：属性 / eval 共用的反射 dump、内存台账、源码定位。只在 dev 侧被
-  # Query / Evaluator 调，发布态没有活树与调用栈可读，编进产物只是白扛（A55）。
-  - ../../src/Debug/Session/ObjectDump.php
-  - ../../src/Debug/Session/MemoryProbe.php
-  - ../../src/Debug/Session/SourceLocator.php
-  - ../../src/Debug/Session/Digest.php
-  - ../../src/Debug/Session/SessionDriver.php
-  - ../../src/Debug/Session/SessionQueries.php
-  - ../../src/Debug/Session/Session.php
+  # 现在不需要了：审查面**物理上搬到了 `devtools/`**，而各应用的 sources 只有
+  # `../../src` ⇒ 它根本不在编译范围里。于是这张表从 24 条回到 3 条，
+  # 边界从「人工清单」变成「目录 + sources」——新增一个审查面类不再需要改配置。
+  #
+  # ★ 剩下三条与调试无关：`build` 是应用自己的产物目录（`sources: .` 会扫到它）、
+  #   `tests` 与 `mock-server.php` 在仓库根（当前没有任何应用以仓库根为 source）。
+  # ★ 守门器不再对账这张表：`php tools/check-debug-scope.php` 判的是结构 ——
+  #   `src/Debug` 只许写面、`src/` 不得引用 `Drift\DevTools\`、`devtools/` 不得被 sources 收进去。
+  # ★ 历史坑仍成立：`ignore` 是 list，合并时**整体替换** —— 某个工程自己写 `ignore`
+  #   就会丢掉本文件的全部条目。tpc 对不存在的条目静默跳过，拼错路径不报错。
 
 build-dir: build
 

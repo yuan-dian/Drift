@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Channel;
-use Drift\Debug\Protocol\Server;
+use Drift\DevTools\Protocol\Channel;
+use Drift\DevTools\Protocol\Server;
 
 /**
  * 只有一条连接的服务：`--remote` 走的那条 stdio。

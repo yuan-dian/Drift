@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
 /**
  * 协议里的**方法名**。客户端与宿主共用这一份，避免两边各写一串字符串。

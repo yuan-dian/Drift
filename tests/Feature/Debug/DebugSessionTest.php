@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
-use Drift\App\DebugSession;
+use Drift\DevTools\App\DebugSession;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -121,7 +121,7 @@ final class DebugSessionTest extends SmokeTestCase
             // 自产的三条不进规格表，是因为它们没有 `Query` 方法可转发：`digest` 算
             // 指纹、`script` 回脚本、`state` 回会话身份与状态。把它们塞进规格表就得
             // 给 `Query` 造三个假方法，而 `Query` 只认 `Recorder`。
-            $selfServed = \Drift\Debug\Session\QueryRouter::SELF_SERVED;
+            $selfServed = \Drift\DevTools\Session\QueryRouter::SELF_SERVED;
             $declared = \array_keys(DebugSession::QUERIES);
             $shaped = \array_merge(\array_keys(DebugSession::QUERY_SPECS), $selfServed);
             \sort($declared);
@@ -136,7 +136,7 @@ final class DebugSessionTest extends SmokeTestCase
             // `Query` 的方法签名就必须是那个样子。两处谈不拢时不会报错，只会让
             // "同一次调用在本地与远端给出不同结果"——两条路径各自看起来都正常。
             $mismatch = [];
-            $reflection = new \ReflectionClass(\Drift\Debug\Session\Query::class);
+            $reflection = new \ReflectionClass(\Drift\DevTools\Session\Query::class);
             foreach (DebugSession::QUERY_SPECS as $name => [$method, $params]) {
                 if (!$reflection->hasMethod($method)) {
                     $mismatch[] = "{$name}: Query 上没有方法 {$method}";

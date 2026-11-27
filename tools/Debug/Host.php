@@ -3,14 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\DebugSession;
-use Drift\Debug\Protocol\Capabilities;
-use Drift\Debug\Protocol\Channel;
-use Drift\Debug\Protocol\Methods;
-use Drift\Debug\Protocol\ProtocolError;
-use Drift\Debug\Protocol\Server;
-use Drift\Debug\Protocol\Wire;
-use Drift\Debug\Session\History;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\Protocol\Capabilities;
+use Drift\DevTools\Protocol\Channel;
+use Drift\DevTools\Protocol\Methods;
+use Drift\DevTools\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\Server;
+use Drift\DevTools\Protocol\Wire;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\InputScript;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;

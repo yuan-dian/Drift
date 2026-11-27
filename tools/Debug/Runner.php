@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\DebugSession;
+use Drift\DevTools\App\DebugSession;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

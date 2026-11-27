@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
 /**
  * 连接来源：能"等一会儿，看谁有话要说"。

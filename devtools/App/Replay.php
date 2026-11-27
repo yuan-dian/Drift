@@ -1,11 +1,11 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\App;
+namespace Drift\DevTools\App;
 
 use Drift\Debug\Session\InputScript;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\SessionDriver;
+use Drift\DevTools\Session\SessionDriver;
 use Drift\Debug\Session\Step;
 
 /**

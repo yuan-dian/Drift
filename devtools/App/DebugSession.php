@@ -1,16 +1,17 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\App;
+namespace Drift\DevTools\App;
 
-use Drift\Debug\Session\History;
-use Drift\Debug\Session\Query;
-use Drift\Debug\Session\QueryRouter;
-use Drift\Debug\Session\Recorder;
+use Drift\App\Application;
 use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\Session;
 use Drift\Debug\Session\SessionState;
+use Drift\DevTools\Session\History;
+use Drift\DevTools\Session\Query;
+use Drift\DevTools\Session\QueryRouter;
+use Drift\DevTools\Session\Session;
 use Drift\Geometry\BoxConstraints;
 use Drift\Input\InputEvent;
 use Drift\Widget\Element;
@@ -36,7 +37,7 @@ use Drift\Widget\Element;
  * 这类夹具，`src/` 不能依赖 `tools/`，所以由调用方决定用什么表面。
  *
  * 不管传输：帧记录仍是内存对象，搬出进程由
- * {@see \Drift\Debug\Protocol\RemoteSession} 这个**镜像**负责 —— 它实现同一对接口
+ * {@see \Drift\DevTools\Protocol\RemoteSession} 这个**镜像**负责 —— 它实现同一对接口
  * （{@see Session}），所以消费者的代码不需要知道
  * 记录是本地的还是隔着一条管道。**驱动脚本**是另一回事 —— 它只存标量、能存成
  * JSON，因为"再跑一遍"需要的只是输入与时钟，不需要把记录搬过去。
@@ -226,7 +227,7 @@ final class DebugSession implements Session
      * 少了它，重放会得到一整段静止画面，而报告本身看不出少了什么。
      *
      * 时刻默认取 `lastT`（最近一帧），重放时会显式给脚本里的那个 —— 见
-     * {@see \Drift\Debug\Session\SessionDriver::effect()} 的"为什么时刻要由调用方给"。
+     * {@see \Drift\DevTools\Session\SessionDriver::effect()} 的"为什么时刻要由调用方给"。
      *
      * @param array<string, scalar|null> $args
      *

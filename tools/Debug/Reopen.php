@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\Replay;
+use Drift\DevTools\App\Replay;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\Session;
+use Drift\DevTools\Session\Session;
 
 /**
  * 把同一份脚本**重开 N 次**，逐层比对，回答"重开这一页是不是等价的"。

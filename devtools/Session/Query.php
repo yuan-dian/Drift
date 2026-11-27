@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\Recorder;
 
 /**
  * 查询面：把录制记录读成"能回答问题的形状"。

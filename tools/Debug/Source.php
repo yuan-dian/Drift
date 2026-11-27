@@ -3,14 +3,14 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
-use Drift\Debug\Session\Evidence;
-use Drift\Debug\Session\QueryRouter;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Protocol\RemoteSession;
+use Drift\DevTools\Session\Evidence;
+use Drift\DevTools\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Session\SessionQueries;
 
 /**
  * 「这一份证据从哪来」：四种来源选一种，出口只管拿到一个可查的东西。

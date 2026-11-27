@@ -440,7 +440,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | S5（Web 切片） | 浏览器视图：几何画布 + 发现，与终端同源 | `/api/brief` 与 `brief --json` 的 findings 逐值相同；页面不重算数字；增量游标无状态；接自走宿主时可暂停 / 单步 / 继续 | `tools/Debug/View/Web.php`、`tools/Debug/View/web/`、`tools/debug-web.php` |
 | S5（搜索切片） | 在证据里找：给一段文本，回一串可追问的地址 | 命中集合 == 自身类型匹配的节点集合（不按祖先路径命中）；每个地址能被对应查询解析；`scanned`/`matched`/`returned` 三数可对账；截断、空窗口、已回收三种"没结果"分开报；不做正则（`Padding\|Text` 按字面找） | `Query::find`、`tools/Debug/View/Find.php`、`/api/find` |
 | S6（暂停 / 单步切片） | 干预只改推进节奏，不改记录 | 自走宿主每推一步回头看控制面；`resume --frames=1` 停在 `paused/step`；`state` 是唯一真相；直跑与中途暂停再跑的脚本指纹相同 | `tools/Debug/Drive.php`、`tools/Debug/Host.php`、`tools/Debug/Cli/Commands.php` |
-| S0 | 证据包：版本化导出 / 导入 + 三指纹分离 | 导出→导入逐字节相同、三指纹逐值不变、损坏包或未知版本拒绝；`EvidenceTest` 9 用例 | `src/Debug/Session/Evidence.php`、`EvidenceBag.php`、`tools/Debug/Source.php` |
+| S0 | 证据包：版本化导出 / 导入 + 三指纹分离 | 导出→导入逐字节相同、三指纹逐值不变、损坏包或未知版本拒绝；`EvidenceTest` 9 用例 | `devtools/Session/Evidence.php`、`EvidenceBag.php`、`tools/Debug/Source.php` |
 
 | S2 | 常驻黑匣子（发布态，不进证据） | 每应用一份 Core 标量环，帧末唯一写点；Frame 致命异常留第一现场，release 可恢复错误留独立面包屑且立即 flush；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留 | `src/Core/BlackBox.php`、`src/Core/Pipeline.php`、`src/Errors.php`（A60/A61） |
 
@@ -456,7 +456,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`tools/Debug/Source.php` |
 | 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `tools/Debug/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
 
-| 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`src/Debug/Protocol/Methods.php`、`tools/debug-highlight.php` |
+| 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`devtools/Protocol/Methods.php`、`tools/debug-highlight.php` |
 
 ### 未做（按执行顺序）
 
@@ -533,7 +533,9 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 | 一个录制器服务多个窗口 | **已收口** | A53：录制器属于应用，帧内由栈回答 |
 | 实时 attach 一个正在跑的真窗口 | **已落地（dev-only，A57）** | 协作式 tick：有桥时 `waitEvents` 有上界、每轮收一次消息；`t` 来自墙钟 ⇒ live 可观察不可重放，不进证据语义 |
 
-三层的界不是靠记性维持的：`ignore` 是 list 型项、合并时**整体替换**（`ProjectYamlLoader::mergeConfig` 的 `array_is_list` 分支），任何应用一重写就把基础排除整张顶掉；排父接口必须连子接口一起排（`Session extends SessionQueries, SessionDriver`）；排完还要查孤儿（`Json` 排掉两个消费者之后只剩自己）；而 tpc 对不存在的 ignore 条目静默跳过，拼错路径零报错。所以 A54 把“归属”写进裁决并落实到两个地方：**唯一声明在 `build/base.yml`**（各应用不重写），**`php tools/check-debug-scope.php` 守等集**——每个 AOT 应用里编译进产物的调试侧文件集合恰好等于 17 项写面白名单，多一项报审查面泄漏、少一项报热路径被排、拼错报条目不存在；`--selftest` 四组变异全咬红，8 个应用全绿。
+三层的界最初是靠 `ignore` 清单维持的，而清单本身有一串坑：它是 list 型项、合并时**整体替换**（`ProjectYamlLoader::mergeConfig` 的 `array_is_list` 分支），任何应用一重写就把基础排除整张顶掉；排父接口必须连子接口一起排（`Session extends SessionQueries, SessionDriver`）；排完还要查孤儿（`Json` 排掉两个消费者之后只剩自己）；而 tpc 对不存在的 ignore 条目静默跳过，拼错路径零报错。A54 当时的做法是「唯一声明在 `build/base.yml` + `check-debug-scope` 守等集」，但清单只会越写越长（A69/A70 各加一个域类），且它有一个静默口子：把审查面类误加进写面白名单永远不报。
+
+A72 把界从「清单」换成「位置」：审查面 28 个文件物理搬到 `devtools/`（命名空间 `Drift\DevTools\`），写面 17 个留 `src/Debug/Session`。各应用的 `sources` 只有 `../../src` ⇒ 审查面**不在编译范围里**，`ignore` 的 24 条调试条目全部删除。守门器随之改判四条结构断言：`src/Debug` 只许写面、`src/` 的代码不得引用 `Drift\DevTools\`（注释不算）、没有任何 sources 把 `devtools/` 收进编译范围、`ignore` 不得再有遗留调试条目；`--selftest` 16 条合成用例全咬红，8 个应用全绿。新增一个审查面类从此不需要改配置——它在 `devtools/` 里，就天然不进产物。
 
 ## 与既有裁决的关系
 

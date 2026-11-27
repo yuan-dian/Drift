@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Protocol\ProtocolError;
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Protocol\ProtocolError;
+use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Rules\RuleSelection;
 use Drift\Dev\Debug\View\Rules\Severity;

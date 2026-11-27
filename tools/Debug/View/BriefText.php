@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Session\Digest;
+use Drift\DevTools\Session\Digest;
 use Drift\Debug\Session\Thresholds;
 
 /**

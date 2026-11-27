@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\DebugSession;
+use Drift\DevTools\App\DebugSession;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Reopen;

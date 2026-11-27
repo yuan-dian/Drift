@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Bench;
 
 use Drift\Debug\Session\GeometryCapture;
-use Drift\Debug\Session\History;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

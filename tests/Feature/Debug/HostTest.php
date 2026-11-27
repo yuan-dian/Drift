@@ -3,10 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\DebugSession;
-use Drift\Debug\Protocol\Methods;
-use Drift\Debug\Protocol\ProtocolError;
-use Drift\Debug\Protocol\Wire;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\Protocol\Methods;
+use Drift\DevTools\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\Wire;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Dev\Debug\Drive;

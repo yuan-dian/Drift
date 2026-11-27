@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Session\Digest;
+use Drift\DevTools\Session\Digest;
 
 /**
  * 基线对比的终端呈现：**只列要修的**，其余只计数。

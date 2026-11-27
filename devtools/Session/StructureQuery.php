@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\GeometryCapture;
+use Drift\Debug\Session\Recorder;
 
 /**
  * 结构域查询：第 N 帧那棵树（谁在、谁已消失、谁这一帧重建了）。

@@ -5,10 +5,10 @@ namespace Drift\Dev\Debug;
 
 use Drift\App\Application;
 use Drift\App\DebugInputInterceptor;
-use Drift\App\DebugSession;
+use Drift\DevTools\App\DebugSession;
 use Drift\App\DebugTicker;
-use Drift\Debug\Protocol\Server;
-use Drift\Debug\Session\History;
+use Drift\DevTools\Protocol\Server;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
 use Drift\Geometry\BoxConstraints;

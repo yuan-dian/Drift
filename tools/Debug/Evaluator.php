@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\App\DebugSession;
-use Drift\Debug\Session\ObjectDump;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\Session\ObjectDump;
 use Drift\Widget\Element;
 
 /**

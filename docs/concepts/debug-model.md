@@ -293,8 +293,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
   同理，对象不许过线：`json_encode(new stdClass())` 是 `{}`（不报错，内容没了），
   所以编码前显式走一遍"只有标量 / 数组 / null"。
 
-传输的**实现**只在 `tools/`（stdio、子进程管道与 loopback socket）。`src/` 里只有接口和镜像，
-`Debug\Protocol` 不碰任何 I/O —— AOT 面因此不变。
+传输的**实现**只在 `tools/`（stdio、子进程管道与 loopback socket）。协议（`Wire` / `Methods` / `Capabilities` / `RemoteSession`）与查询面住在 `devtools/`（A72）—— 它们物理上不在 `src/` 里，也就不进任何应用的 `sources`；写面 `Recorder` 留在 `src/Debug/Session`，因为它要在帧热路径上被 tap。协议层不碰任何 I/O ⇒ AOT 面因此不变。
 
 可判的条件是**帧时间 `t` 来自脚本**，不是"宿主从属"。从属只是一种实现方式：宿主
 不自推帧、不读时钟，于是墙钟混不进来；但反过来不成立 —— 自走宿主照样可判，只要它

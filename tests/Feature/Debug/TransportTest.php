@@ -3,10 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Protocol\RemoteSession;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Session\SessionQueries;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;
@@ -313,8 +313,8 @@ final class TransportTest extends SmokeTestCase
         check('抛了异常', $raised !== null, '宿主已退出却当成成功');
         check(
             '是协议层的 closed，而不是别的什么',
-            $raised instanceof \Drift\Debug\Protocol\ProtocolError
-                && $raised->errorCode === \Drift\Debug\Protocol\ProtocolError::CLOSED,
+            $raised instanceof \Drift\DevTools\Protocol\ProtocolError
+                && $raised->errorCode === \Drift\DevTools\Protocol\ProtocolError::CLOSED,
             $raised === null ? '（无异常）' : $raised::class . '：' . $raised->getMessage(),
         );
     }

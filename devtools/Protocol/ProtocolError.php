@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
 /**
  * 对端拒绝了一次调用。

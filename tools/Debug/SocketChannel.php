@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Channel;
+use Drift\DevTools\Protocol\Channel;
 
 /**
  * 一条 loopback TCP 连接。

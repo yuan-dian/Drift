@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
 /**
  * 一条**有身份**的通道：仍然是 {@see Transport}，但多一个能写进日志的名字。

@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
-use Drift\Debug\Json;
+use Drift\DevTools\Json;
 
 /**
  * 一条协议消息 ⇄ 一行 JSON。
@@ -20,7 +20,7 @@ use Drift\Debug\Json;
  * ## 编码纪律不在这里
  *
  * `JSON_PRESERVE_ZERO_FRACTION` / `assertPlain` 那一套住在 {@see Json}：证据包
- * （{@see \Drift\Debug\Session\Evidence}）要用同一套，而让 `Session` 反过来依赖
+ * （{@see \Drift\DevTools\Session\Evidence}）要用同一套，而让 `Session` 反过来依赖
  * `Protocol` 会造出一个没登记的目录环。本类只保留**协议特有**的两条：
  * 单条长度上限、顶层必须是对象。
  *

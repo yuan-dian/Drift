@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Transport;
+use Drift\DevTools\Protocol\Transport;
 
 /**
  * 起一个子进程，把它的 stdin / stdout 当成通道。

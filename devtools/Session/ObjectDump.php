@@ -1,8 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
+use Drift\Debug\Session\Redactor;
 use ReflectionClass;
 use ReflectionObject;
 use ReflectionProperty;

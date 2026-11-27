@@ -5,7 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\Debug\Session\EvidenceBag;
 use Drift\Debug\Session\FrameRecord;
-use Drift\Debug\Session\Query;
+use Drift\DevTools\Session\Query;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 

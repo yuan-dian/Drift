@@ -37,7 +37,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Session\SessionQueries;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Async;

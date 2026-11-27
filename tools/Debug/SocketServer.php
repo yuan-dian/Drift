@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Channel;
-use Drift\Debug\Protocol\Server;
+use Drift\DevTools\Protocol\Channel;
+use Drift\DevTools\Protocol\Server;
 
 /**
  * loopback TCP 监听：绑定 `127.0.0.1`，端口由系统分配（`port = 0`）。

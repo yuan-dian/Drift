@@ -3,16 +3,16 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Debug\Session\CausalQuery;
-use Drift\Debug\Session\GeometryQuery;
-use Drift\Debug\Session\History;
-use Drift\Debug\Session\LiveQuery;
-use Drift\Debug\Session\PaintQuery;
-use Drift\Debug\Session\Query;
-use Drift\Debug\Session\QueryRouter;
+use Drift\DevTools\Session\CausalQuery;
+use Drift\DevTools\Session\GeometryQuery;
+use Drift\DevTools\Session\History;
+use Drift\DevTools\Session\LiveQuery;
+use Drift\DevTools\Session\PaintQuery;
+use Drift\DevTools\Session\Query;
+use Drift\DevTools\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
-use Drift\Debug\Session\StructureQuery;
-use Drift\Debug\Session\TrafficQuery;
+use Drift\DevTools\Session\StructureQuery;
+use Drift\DevTools\Session\TrafficQuery;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**

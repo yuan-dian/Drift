@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug;
 
-use Drift\Debug\Protocol\Channel;
+use Drift\DevTools\Protocol\Channel;
 
 /**
  * 走进程自己的标准输入输出。宿主进程用的就是它。

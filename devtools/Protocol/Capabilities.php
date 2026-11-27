@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
-use Drift\Debug\Session\QueryRouter;
+use Drift\DevTools\Session\QueryRouter;
 
 /**
  * 调试协议的版本与能力目录：**一份声明，多个出口共用**。

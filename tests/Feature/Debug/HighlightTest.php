@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\Replay;
-use Drift\Debug\Session\Digest;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Session\Digest;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Step;
 use Drift\Dev\Debug\Plan;

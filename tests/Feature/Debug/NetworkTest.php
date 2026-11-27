@@ -10,7 +10,7 @@ use Drift\App\Io\HttpTransport;
 use Drift\App\TaskDispatch;
 use Drift\Async\Future;
 use Drift\Debug\Session\RecordOptions;
-use Drift\Debug\Session\History;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Tests\Support\RecordingTaskHost;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -265,7 +265,7 @@ final class NetworkTest extends SmokeTestCase
         $recorder = Recorder::install();
         $history = new History($recorder);
         try {
-            $query = new \Drift\Debug\Session\Query($recorder);
+            $query = new \Drift\DevTools\Session\Query($recorder);
             $recorder->beginFrame(0.0);
             Recorder::tapNetworkStart('GET', 'https://api.example.com/ok', 'inline');
             $recorder->endFrame([], 0.0);
@@ -296,7 +296,7 @@ final class NetworkTest extends SmokeTestCase
         $recorder = Recorder::install();
         $history = new History($recorder);
         try {
-            $query = new \Drift\Debug\Session\Query($recorder);
+            $query = new \Drift\DevTools\Session\Query($recorder);
 
             $empty = $query->network(5);
             check(
@@ -419,7 +419,7 @@ final class NetworkTest extends SmokeTestCase
             $transport->settle(new HttpResponse(200, [], 'secret-body', 'https://api.example.com/x', 1.0));
             $recorder->endFrame([], 0.0);
 
-            $answer = (new \Drift\Debug\Session\Query($recorder))->networkBody(1);
+            $answer = (new \Drift\DevTools\Session\Query($recorder))->networkBody(1);
             check(
                 '默认没开报文预算时报未采集，不报正文为空',
                 ($answer['found'] ?? true) === false && ($answer['miss'] ?? '') === 'bodies-not-captured',
@@ -440,7 +440,7 @@ final class NetworkTest extends SmokeTestCase
         $recorder = Recorder::install(RecordOptions::of(bodies: true));
         $history = new History($recorder);
         try {
-            $query = new \Drift\Debug\Session\Query($recorder);
+            $query = new \Drift\DevTools\Session\Query($recorder);
             $before = $query->networkBody(1);
             check('从未开始的请求报窗口外，不是 body 丢了', ($before['miss'] ?? '') === 'outside-network-window',
                 \json_encode($before));
@@ -480,7 +480,7 @@ final class NetworkTest extends SmokeTestCase
         try {
             $transport = new PendingTransport();
             $http = new AsyncHttp(TaskDispatch::sync(), $transport);
-            $query = new \Drift\Debug\Session\Query($recorder);
+            $query = new \Drift\DevTools\Session\Query($recorder);
 
             $recorder->beginFrame(0.0);
             $http->post(

@@ -1,15 +1,15 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug;
+namespace Drift\DevTools;
 
 /**
  * 一条记录 ⇄ 一行 JSON。**只管编码纪律，不管分帧与长度上限**。
  *
  * ## 为什么单独一个类
  *
- * 这套纪律有两个消费者：{@see \Drift\Debug\Protocol\Wire}（协议消息，有单条上限、
- * 顶层必须是对象）与 {@see \Drift\Debug\Session\Evidence}（证据包的记录行，没有
+ * 这套纪律有两个消费者：{@see \Drift\DevTools\Protocol\Wire}（协议消息，有单条上限、
+ * 顶层必须是对象）与 {@see \Drift\DevTools\Session\Evidence}（证据包的记录行，没有
  * 8MB 的协议上限）。若让后者直接调前者，`Session` 目录就反向依赖 `Protocol`，
  * 而 `Protocol\RemoteSession` 又实现 `Session\Session` —— 一个没登记的目录环，
  * 将来谁想搬动其中一个都要先解开它。

@@ -4,10 +4,10 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
-use Drift\App\DebugSession;
-use Drift\Debug\Session\Evidence;
-use Drift\Debug\Session\MemoryProbe;
-use Drift\Debug\Session\SourceLocator;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\Session\Evidence;
+use Drift\DevTools\Session\MemoryProbe;
+use Drift\DevTools\Session\SourceLocator;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Cli\Registry;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;

@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Support;
 
-use Drift\Debug\Protocol\Channel;
+use Drift\DevTools\Protocol\Channel;
 
 /**
  * 内存里的一条通道：读队列 + 写记录。

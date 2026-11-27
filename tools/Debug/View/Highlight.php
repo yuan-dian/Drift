@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Session\Digest;
+use Drift\DevTools\Session\Digest;
 
 /**
  * 高亮视图：把 `highlight` 查询 + 叠加前后的像素指纹压成几行。

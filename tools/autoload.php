@@ -26,7 +26,8 @@ foreach ($config['autoload']['psr-4'] ?? [] as $prefix => $dirs) {
     );
 }
 
-// 最长前缀优先：Drift\Dev\ 必须排在 Drift\ 之前
+// 最长前缀优先：Drift\DevTools\ 与 Drift\Dev\ 必须排在 Drift\ 之前
+// （A72 之后审查面在 devtools/、命名空间 Drift\DevTools\，两者都压在 src/ 的 Drift\ 之上）
 uksort($prefixes, static fn(string $a, string $b): int => strlen($b) <=> strlen($a));
 
 spl_autoload_register(static function (string $class) use ($prefixes): void {

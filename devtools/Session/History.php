@@ -1,7 +1,18 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\EvidenceBag;
+use Drift\Debug\Session\FrameRecord;
+use Drift\Debug\Session\GeometryRecord;
+use Drift\Debug\Session\NetworkBodyRecord;
+use Drift\Debug\Session\NetworkRecord;
+use Drift\Debug\Session\PaintRecord;
+use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\Script;
 
 /**
  * 已记录事实的**读面**：把 {@see Recorder} 写进环里的东西解释成查询能直接用的形状。

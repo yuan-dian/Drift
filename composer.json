@@ -37,6 +37,7 @@
   },
   "autoload": {
     "psr-4": {
+      "Drift\\DevTools\\": "devtools/",
       "Drift\\": "src/",
       "Drift\\Dev\\": "tools/",
       "Drift\\Dev\\Tests\\": "tests/",

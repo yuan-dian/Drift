@@ -33,7 +33,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\Debug\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\ProtocolError;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\Source;
 

@@ -1,9 +1,20 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
-use Drift\Debug\Json;
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\EvidenceBag;
+use Drift\Debug\Session\FrameRecord;
+use Drift\Debug\Session\GeometryCapture;
+use Drift\Debug\Session\GeometryRecord;
+use Drift\Debug\Session\NetworkBodyRecord;
+use Drift\Debug\Session\NetworkRecord;
+use Drift\Debug\Session\PaintRecord;
+use Drift\Debug\Session\RecordOptions;
+use Drift\Debug\Session\Recorder;
+use Drift\Debug\Session\Script;
+use Drift\DevTools\Json;
 
 /**
  * 证据包的编解码：一份会话记录 ⇄ 一个文件。

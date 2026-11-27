@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Support;
 
-use Drift\Debug\Session\Session;
+use Drift\DevTools\Session\Session;
 use Drift\Input\InputEvent;
 
 /**

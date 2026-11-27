@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\DebugSession;
-use Drift\App\Replay;
-use Drift\Debug\Session\History;
+use Drift\DevTools\App\DebugSession;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Session\History;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
 use Drift\Dev\Debug\View\Brief;

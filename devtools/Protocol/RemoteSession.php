@@ -1,12 +1,12 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Protocol;
+namespace Drift\DevTools\Protocol;
 
 use Drift\Debug\Session\InputScript;
 use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Script;
-use Drift\Debug\Session\Session;
+use Drift\DevTools\Session\Session;
 use Drift\Input\InputEvent;
 
 /**
@@ -14,7 +14,7 @@ use Drift\Input\InputEvent;
  *
  * ## 它是 `DebugSession` 的镜像，不是另一种东西
  *
- * 方法、参数、返回值的形状与 {@see \Drift\App\DebugSession} 逐一对齐（同一对接口
+ * 方法、参数、返回值的形状与 {@see \Drift\DevTools\App\DebugSession} 逐一对齐（同一对接口
  * {@see Session}）。这不是巧合，是要求：消费者——重放循环、
  * 报告组装、将来的面板——只写一份，换执行器不需要改一行。判据也由此而来：
  * **同样的动作，本地跑与远端跑，读回来的值必须逐值相同**。

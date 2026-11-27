@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\AsyncRecord;
+use Drift\Debug\Session\NetworkRecord;
 
 /**
  * 外部工作域查询：请求与后端任务怎么落到帧上。

@@ -1,14 +1,14 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
 use Drift\Input\InputEvent;
 
 /**
  * 会话的**驱动**面：推一帧、喂一条输入、跑一个具名副作用。
  *
- * ## 为什么 {@see \Drift\App\Replay} 要按这个接口写
+ * ## 为什么 {@see \Drift\DevTools\App\Replay} 要按这个接口写
  *
  * 重放的全部内容是"按脚本顺序推帧、派发输入、执行效果"。这三件事本地能做，
  * 远端也能做 —— 只要它们被收在同一个接口后面，重放循环就只有一份。

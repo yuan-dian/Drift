@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\App\Replay;
-use Drift\Debug\Session\History;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Session\History;
 use Drift\Debug\Session\Recorder;
 use Drift\Dev\Debug\Plan;
 use Drift\Dev\Debug\Runner;
@@ -163,7 +163,7 @@ final class AlignTest extends SmokeTestCase
         $app->frame(0.0, $constraints);
 
         // 会话自己装录制器；再开一个会拒绝覆盖，故从会话取同一实例。
-        $session = \Drift\App\DebugSession::open($app, $constraints);
+        $session = \Drift\DevTools\App\DebugSession::open($app, $constraints);
         try {
             $recorder = $session->recorder();
             $history = new History($recorder);

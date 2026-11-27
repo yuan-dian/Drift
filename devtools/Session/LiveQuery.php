@@ -1,8 +1,9 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
+use Drift\Debug\Session\Recorder;
 use Drift\Widget\Element;
 use Drift\Widget\StatefulElement;
 

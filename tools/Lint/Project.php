@@ -17,7 +17,7 @@ final class Project
     public const FRAMEWORK_PREFIX = 'Drift\\';
 
     /** 默认扫描根（相对仓库根） */
-    public const DEFAULT_DIRS = ['src', 'tools', 'tests', 'apps'];
+    public const DEFAULT_DIRS = ['src', 'devtools', 'tools', 'tests', 'apps'];
 
     /**
      * 工具链目录。工具与测试都跑在 php.exe 里、**永不参与 AOT 编译** ⇒
@@ -27,6 +27,12 @@ final class Project
 
     /** 测试目录，与 `tools/` 同待遇（同属"不产盒"的一侧） */
     public const TESTS_DIR = 'tests/';
+
+    /**
+     * 审查面目录（A72）：协议 / 查询 / 会话审查的实现，物理上在 `src/` 之外，
+     * 因此**不会被任何应用的 sources 收进去**。与 `tools/` 同待遇。
+     */
+    public const DEVTOOLS_DIR = 'devtools/';
 
     /**
      * @param list<SourceFile> $files
@@ -150,11 +156,25 @@ final class Project
         return $this->dirToPrefix;
     }
 
-    /** 该文件是否属于工具链 / 测试（都不参与 AOT 编译） */
+    /** 该文件是否属于工具链 / 测试 / 审查面（都不参与 AOT 编译） */
     public function isToolchain(SourceFile $file): bool
     {
         return str_starts_with($file->path(), self::TOOLCHAIN_DIR)
-            || str_starts_with($file->path(), self::TESTS_DIR);
+            || str_starts_with($file->path(), self::TESTS_DIR)
+            || str_starts_with($file->path(), self::DEVTOOLS_DIR);
+    }
+
+    /**
+     * 工具链命名空间：与框架同包（`Drift\` 前缀），但**不进产物、不进公共契约面**。
+     *
+     * `Drift\Dev\` 是命令行工具，`Drift\DevTools\` 是审查面（A72 搬到 `devtools/`）。
+     * 两者都不是 `src/` 里的框架代码，按命名空间判就要在这里排除 ——
+     * 否则依赖矩阵会把「审查面调框架」当成「框架内部互调」。
+     */
+    private static function isToolkitFqn(string $fqn): bool
+    {
+        return str_starts_with($fqn, self::FRAMEWORK_PREFIX . 'Dev\\')
+            || str_starts_with($fqn, self::FRAMEWORK_PREFIX . 'DevTools\\');
     }
 
     /**
@@ -167,6 +187,9 @@ final class Project
      */
     public function isFramework(SourceFile $file): bool
     {
+        if (self::isToolkitFqn($file->namespace())) {
+            return false;
+        }
         if (str_starts_with($file->namespace(), self::FRAMEWORK_PREFIX)) {
             return true;
         }
@@ -193,7 +216,7 @@ final class Project
      */
     public function isInternal(string $fqn): bool
     {
-        if (!str_starts_with($fqn, self::FRAMEWORK_PREFIX) || str_starts_with($fqn, self::FRAMEWORK_PREFIX . 'Dev\\')) {
+        if (!str_starts_with($fqn, self::FRAMEWORK_PREFIX) || self::isToolkitFqn($fqn)) {
             return false;
         }
         $symbol = $this->symbols[$fqn] ?? null;
@@ -210,7 +233,7 @@ final class Project
         if (!str_starts_with($fqn, self::FRAMEWORK_PREFIX)) {
             return false;
         }
-        return !str_starts_with($fqn, self::FRAMEWORK_PREFIX . 'Dev\\');
+        return !self::isToolkitFqn($fqn);
     }
 
     /** @return list<string> */

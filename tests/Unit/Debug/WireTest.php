@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Debug\Protocol\Wire;
+use Drift\DevTools\Protocol\Wire;
 use PHPUnit\Framework\TestCase;
 
 /**

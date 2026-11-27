@@ -25,8 +25,8 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\App\Replay;
-use Drift\Debug\Protocol\RemoteSession;
+use Drift\DevTools\App\Replay;
+use Drift\DevTools\Protocol\RemoteSession;
 use Drift\Dev\Debug\Cli\Commands;
 use Drift\Dev\Debug\ProcessTransport;
 use Drift\Dev\Debug\Runner;

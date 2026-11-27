@@ -2,28 +2,35 @@
 declare(strict_types=1);
 
 /**
- * AOT 产物的调试面守门（A54 的机器判据）。
+ * 调试面的**物理边界**守门器（A54 L3 → A72 重写）。
  *
- * ★ 为什么需要：tpc 是**全量编译 sources、没有死代码消除**（类可达即整类进产物）。
- *   `project.yml` 的 `ignore` 写漏一条不会报任何错 —— 只是多扛几千行永不执行的
- *   审查面进 exe。而 `ignore` 是 list，合并时**整体替换**：在 base.yml 里加不算数，
- *   每个应用都得自己重复一遍。手写白名单靠不住（第一版就漏了 `Session.php`，
- *   它 `extends SessionQueries, SessionDriver`，排掉父接口留下子接口 = 悬空继承）。
+ * ★ 为什么需要它：tpc 是**全量编译 sources、没有死代码消除**（类可达即整类进产物）。
+ *   A54 时审查面还在 `src/Debug`，只能靠 `project.yml` 的 `ignore` 逐条点名排掉 ——
+ *   24 条手写清单，漏一条不报错，只是多扛几千行永不执行的代码进 exe；而
+ *   `ignore` 是 list，合并时整体替换，某个工程自己写一遍就要把整张表抄一遍
+ *   （第一版就漏了 `Session.php`，它 extends 两个已排除的父接口，留下子接口 = 悬空继承）。
  *
- * ★ 判据只有一条：**每个 AOT 应用里，调试侧能被编译的文件集合恰好等于写面白名单**。
- *   多一个 ⇒ 审查面泄漏；少一个 ⇒ 热路径上 tap 的类被排掉（构建期才炸）。
- *   外加一条：`src/` 下的 ignore 条目必须真的命中文件，拼错路径不能静默通过。
+ * ★ A72 换了机制：审查面**物理搬到 `devtools/`**，而各应用的 sources 只有
+ *   `../../src` ⇒ 它不在编译范围里，不需要任何 `ignore` 条目。边界从
+ *   「人工清单」变成「目录 + sources」，于是这组判据也从**对账白名单**
+ *   变成**结构断言**：
+ *
+ *   ① `src/Debug/` 下只许有写面文件（目录即真相；多一个 = 审查面搬回来了）；
+ *   ② `src/` 的**代码**不得引用 `Drift\DevTools\`（框架不认识审查面，注释不算）；
+ *   ③ 没有任何应用的 sources 把 `devtools/` 收进编译范围；
+ *   ④ `ignore` 里不得再出现 `src/Debug/*` 或 `devtools` 条目（那是 A54 的遗留，
+ *      留着会让人以为"这些是被排掉的"，实际是路径不存在被静默跳过）。
  *
  * ★ 纯 PHP 内建、不 require autoload —— 守门器不依赖它要检查的那套代码。
  *   只读 `project.yml` 的顶层 list 段，不做通用 YAML 解析（tpc 的 list 只有两种写法：
  *   `- value` 与 `- path: value` + 缩进的 `if:`）。
  *
  * 用法：
- *   php tools/check-debug-scope.php              # 对账全部应用，exit 0/1
+ *   php tools/check-debug-scope.php              # 对账全部应用 + 结构断言，exit 0/1
  *   php tools/check-debug-scope.php --selftest   # 守门器自证（合成用例）
  */
 
-/** 允许进 AOT 产物的调试侧文件（L1 写面：热路径 tap + 记录类型）。 */
+/** 允许留在 `src/Debug` 的写面文件（L1：热路径 tap + 记录类型）。 */
 function writeFace(): array
 {
     return [
@@ -47,7 +54,7 @@ function writeFace(): array
     ];
 }
 
-/** 调试侧的全部候选文件（写面 + 审查面），路径相对仓库根。 */
+/** `src/Debug` 下实际存在的 .php，路径相对仓库根。 */
 function debugFiles(string $root): array
 {
     $files = [];
@@ -62,16 +69,11 @@ function debugFiles(string $root): array
             $files[] = 'src/Debug/' . substr($path, strlen(str_replace('\\', '/', $root . '/src/Debug/')));
         }
     }
-    foreach (['src/App/DebugSession.php', 'src/App/Replay.php'] as $extra) {
-        if (is_file($root . '/' . $extra)) {
-            $files[] = $extra;
-        }
-    }
     sort($files);
     return $files;
 }
 
-/** 读一个顶层 list 段；键不存在返回 null（区别于“存在但是空表”）。 */
+/** 读一个顶层 list 段；键不存在返回 null（区别于"存在但是空表"）。 */
 function listSection(string $yml, string $key): ?array
 {
     $out = null;
@@ -125,9 +127,108 @@ function normalise(string $appDir, string $root, string $entry): string
 }
 
 /**
- * 一个应用的编译范围对账。
- * @return list<string> 失败原因（空 = 通过）
+ * 只留代码：注释整段剔掉。
+ *
+ * 判据 ② 要放过「注释里解释 A72 为什么这么摆」的写法 —— 那是在描述边界，
+ * 不是在依赖边界。`@see` 里提到审查面的类名同样不算引用。
  */
+function codeOnly(string $source): string
+{
+    $out = '';
+    foreach (token_get_all($source) as $t) {
+        if (is_array($t)) {
+            if ($t[0] === T_COMMENT || $t[0] === T_DOC_COMMENT) {
+                continue;
+            }
+            $out .= $t[1];
+        } else {
+            $out .= $t;
+        }
+    }
+    return $out;
+}
+
+/**
+ * 判据 ①：`src/Debug` 的文件集合恰好等于写面清单。
+ *
+ * 多一个 = 审查面搬回 `src`（会进产物）；少一个 = 写面文件被删/改名（清单过期）。
+ *
+ * @param list<string> $actual  相对仓库根的 .php 路径
+ * @param list<string> $allowed 写面清单
+ * @return list<string>
+ */
+function auditDebugDir(array $actual, array $allowed): array
+{
+    $errors = [];
+    foreach (array_diff($actual, $allowed) as $extra) {
+        $errors[] = "src 出现审查面：{$extra}（A72 后审查面住 devtools/，留在 src 会进 AOT 产物）";
+    }
+    foreach (array_diff($allowed, $actual) as $missing) {
+        $errors[] = "写面文件缺失：{$missing}（热路径 tap 会炸；或者清单过期了）";
+    }
+    return $errors;
+}
+
+/**
+ * 判据 ②：`src/` 的代码不得引用 `Drift\DevTools\`。
+ *
+ * @param array<string, string> $codeByFile 相对路径 => 去掉注释后的源码
+ * @return list<string>
+ */
+function auditStrayRefs(array $codeByFile): array
+{
+    $errors = [];
+    foreach ($codeByFile as $path => $code) {
+        if (str_contains($code, 'Drift\\DevTools\\')) {
+            $errors[] = "框架代码引用了审查面：{$path}（src 会被 AOT 编进产物，devtools 不会 ⇒ 产物里断链）";
+        }
+    }
+    return $errors;
+}
+
+/**
+ * 判据 ③：没有应用的 sources 把 `devtools/` 收进编译范围。
+ *
+ * @param list<string> $sources 已归一的 source 根（相对仓库根）
+ */
+function auditSources(array $sources): array
+{
+    $errors = [];
+    foreach ($sources as $s) {
+        $covers = $s === ''
+            || $s === 'devtools'
+            || str_starts_with($s, 'devtools/')
+            || str_starts_with('devtools', $s . '/');
+        if ($covers) {
+            $errors[] = "sources 把 devtools/ 收进了编译范围：{$s}（审查面会被编进 AOT 产物）";
+        }
+    }
+    return $errors;
+}
+
+/**
+ * 判据 ④：`ignore` 里不得再有 A54 时代的调试条目。
+ *
+ * @param list<string> $ignore 已归一的 ignore 条目
+ */
+function auditIgnore(array $ignore): array
+{
+    $errors = [];
+    foreach ($ignore as $i) {
+        $legacy = str_starts_with($i, 'src/Debug/')
+            || str_starts_with($i, 'src/Debug')
+            || $i === 'src/App/DebugSession.php'
+            || $i === 'src/App/Replay.php'
+            || $i === 'devtools'
+            || str_starts_with($i, 'devtools/');
+        if ($legacy) {
+            $errors[] = "ignore 里的调试条目已过期：{$i}（A72 后靠目录 + sources 划界，不再逐条排）";
+        }
+    }
+    return $errors;
+}
+
+/** 一个应用的结构对账 + 全仓结构断言。@return list<string> 失败原因（空 = 通过） */
 function checkApp(string $root, string $appName): array
 {
     $appDir = $root . '/apps/' . $appName;
@@ -145,71 +246,32 @@ function checkApp(string $root, string $appName): array
         $ignore = listSection($base, 'ignore') ?? [];
     }
 
-    $sourceRoots = [];
+    $roots = [];
     foreach ($sources as $s) {
-        $sourceRoots[] = normalise($appDir, $root, $s);
+        $roots[] = normalise($appDir, $root, $s);
     }
-    // 不编译框架 `src` 的应用（dev 壳只编译 dev-shell.php + 一个 ResizeHook）
-    // 没有调试面可谈；写面「被排掉」是假阳性。
-    $compilesFramework = false;
-    foreach ($sourceRoots as $s) {
-        // 必须是整棵 `src` 进 sources；dev 壳只挑了 src/Platform/... 单个文件。
-        if ($s === 'src') {
-            $compilesFramework = true;
-            break;
-        }
-    }
-    if (!$compilesFramework) {
-        return [];
-    }
-
     $excluded = [];
     foreach ($ignore as $i) {
         $excluded[] = normalise($appDir, $root, $i);
     }
 
-    $errors = [];
+    $errors = auditSources($roots);
+    foreach (auditIgnore($excluded) as $e) {
+        $errors[] = "[{$appName}] {$e}";
+    }
 
-    // ignore 里指向 src/ 的条目必须命中真实文件/目录：拼错路径不能静默通过。
+    // ignore 条目拼错不能静默：tpc 对不存在的条目直接 continue。
     foreach ($ignore as $i) {
         $n = normalise($appDir, $root, $i);
-        if (str_starts_with($n, 'src/') && !file_exists($root . '/' . $n)) {
-            $errors[] = "ignore 条目 {$i} 不存在（路径拼错？）";
+        if (($n === 'src' || str_starts_with($n, 'src/')) && !file_exists($root . '/' . $n)) {
+            $errors[] = "[{$appName}] ignore 条目 {$i} 不存在（路径拼错？）";
         }
     }
 
-    $compiled = [];
-    foreach (debugFiles($root) as $file) {
-        $underSource = false;
-        foreach ($sourceRoots as $s) {
-            if ($s !== '' && ($file === $s || str_starts_with($file, $s . '/'))) {
-                $underSource = true;
-                break;
-            }
-        }
-        if (!$underSource) {
-            continue;
-        }
-        foreach ($excluded as $e) {
-            if ($e !== '' && ($file === $e || str_starts_with($file, $e . '/'))) {
-                continue 2;
-            }
-        }
-        $compiled[] = $file;
-    }
-    sort($compiled);
-
-    $allowed = writeFace();
-    foreach (array_diff($compiled, $allowed) as $leak) {
-        $errors[] = "审查面泄漏进 AOT：{$leak}（该加进 project.yml 的 ignore）";
-    }
-    foreach (array_diff($allowed, $compiled) as $missing) {
-        $errors[] = "写面被排掉：{$missing}（热路径 tap 会炸）";
-    }
     return $errors;
 }
 
-/** 合成用例自证：改一个 ignore、加一个文件，判据都必须咬红。 */
+/** 合成用例自证：每加一条错，判据都必须咬红。 */
 function selftest(string $root): int
 {
     $failures = 0;
@@ -220,56 +282,51 @@ function selftest(string $root): int
         }
     };
 
-    $actual = checkApp($root, 'showcase');
-    $check('当前 showcase 绿（写面 ' . \count(writeFace()) . ' 项）', $actual === []);
+    $allowed = writeFace();
 
-    // 应用侧刻意**显式重写** ignore：这样既能验「继承 base」的常规路径，
-    // 也能在合成用例里改单条并重跑（改 base 会污染真实工程）。
-    $appYml = (string) file_get_contents($root . '/apps/showcase/project.yml');
-    $shared = listSection((string) file_get_contents($root . '/build/base.yml'), 'ignore') ?? [];
-    $base = $appYml . "\nignore:\n";
-    foreach ($shared as $entry) {
-        $base .= '  - ' . $entry . "\n";
-    }
-    $tmp = $root . '/apps/zz-scope-probe';
-    if (!mkdir($tmp, 0777, true)) {
-        fwrite(STDERR, "建不出临时应用目录 {$tmp}\n");
-        return 1;
-    }
-    try {
-        // ① 漏一条 ignore ⇒ 必须报泄漏；② 漏的是父接口那类 ⇒ 也要报。
-        file_put_contents($tmp . '/project.yml', str_replace(
-            '  - ../../src/Debug/Session/Session.php',
-            '',
-            $base
-        ));
-        $got = checkApp($root, 'zz-scope-probe');
-        $check('删掉 Session.php 的 ignore ⇒ 咬红悬空继承',
-            in_array('审查面泄漏进 AOT：src/Debug/Session/Session.php（该加进 project.yml 的 ignore）', $got, true));
+    // ① 目录断言：多一个 / 少一个都要红。
+    $extra = array_merge($allowed, ['src/Debug/Session/Query.php']);
+    $got = auditDebugDir($extra, $allowed);
+    $check('审查面搬回 src ⇒ 咬红', in_array(
+        'src 出现审查面：src/Debug/Session/Query.php（A72 后审查面住 devtools/，留在 src 会进 AOT 产物）',
+        $got,
+        true
+    ));
+    $got = auditDebugDir(array_slice($allowed, 1), $allowed);
+    $check('写面文件缺失 ⇒ 咬红', in_array(
+        '写面文件缺失：src/Debug/Session/AsyncRecord.php（热路径 tap 会炸；或者清单过期了）',
+        $got,
+        true
+    ));
+    $check('写面清单本身自洽（无重复/无缺失）', auditDebugDir($allowed, $allowed) === []);
 
-        // ③ ignore 路径拼错 ⇒ 必须报不存在。
-        file_put_contents($tmp . '/project.yml', str_replace(
-            '  - ../../src/Debug/Session/Query.php',
-            '  - ../../src/Debug/Session/Querry.php',
-            $base
-        ));
-        $got = checkApp($root, 'zz-scope-probe');
-        $check('ignore 路径拼错 ⇒ 咬红',
-            in_array('ignore 条目 ../../src/Debug/Session/Querry.php 不存在（路径拼错？）', $got, true));
+    // ② 代码引用断言：代码里引用要红，注释里提到不红。
+    $got = auditStrayRefs(['src/Widget/Element.php' => 'new \Drift\DevTools\Session\Query();']);
+    $check('src 引用 Drift\DevTools ⇒ 咬红', count($got) === 1);
+    $got = auditStrayRefs(['src/Widget/Element.php' => codeOnly("<?php\n// 审查面在 Drift\\DevTools\\Session\\Query\n")]);
+    $check('注释里提到不算引用', $got === []);
+    $got = auditStrayRefs([
+        'src/Widget/Element.php' => codeOnly("<?php\n/** @see \\Drift\\DevTools\\Session\\Query */\nnew \\Drift\\Debug\\Session\\Recorder();\n"),
+    ]);
+    $check('token 过滤真的剔掉 docblock', $got === []);
 
-        // ④ 把写面排掉 ⇒ 必须报。
-        file_put_contents($tmp . '/project.yml', str_replace(
-            '  - ../../src/Debug/Json.php',
-            "  - ../../src/Debug/Json.php\n  - ../../src/Debug/Session/Recorder.php",
-            $base
-        ));
-        $got = checkApp($root, 'zz-scope-probe');
-        $check('写面 Recorder 被排掉 ⇒ 咬红',
-            in_array('写面被排掉：src/Debug/Session/Recorder.php（热路径 tap 会炸）', $got, true));
-    } finally {
-        @unlink($tmp . '/project.yml');
-        @rmdir($tmp);
+    // ③ sources 断言：收进 devtools 的三种写法都要红（`../../devtools` 走真实的归一链）。
+    foreach (['', 'devtools', 'devtools/Session', '../../devtools'] as $bad) {
+        $got = auditSources([str_starts_with($bad, '..') ? normalise($root . '/apps/hello', $root, $bad) : $bad]);
+        $check("sources 收进 devtools（" . ($bad === '' ? '仓库根' : $bad) . "）⇒ 咬红", count($got) === 1);
     }
+    $check('正常 sources 不红', auditSources(['src', 'apps/hello', 'cpp-src/core']) === []);
+
+    // ④ ignore 断言：A54 时代的条目残留要红。
+    foreach (['src/Debug/Protocol', 'src/Debug/Session/Query.php', 'src/App/DebugSession.php', 'devtools'] as $bad) {
+        $got = auditIgnore([$bad]);
+        $check("ignore 残留调试条目（{$bad}）⇒ 咬红", count($got) === 1);
+    }
+    $check('正常 ignore 不红', auditIgnore(['build', 'tests', 'mock-server.php']) === []);
+
+    // ⑤ 真实仓库必须全绿。
+    $actual = debugFiles($root);
+    $check('真实仓库 src/Debug 恰好是写面 ' . count($allowed) . ' 项', auditDebugDir($actual, $allowed) === []);
 
     echo $failures === 0
         ? "[check-debug-scope --selftest] ✓ 全过\n"
@@ -282,27 +339,47 @@ if (in_array('--selftest', $argv, true)) {
     exit(selftest($root));
 }
 
+echo "[check-debug-scope] 结构断言：src/Debug = 写面白名单（" . count(writeFace()) . " 项），审查面住 devtools/\n";
+$failed = 0;
+
+// 全仓断言：src/Debug 目录、src 的代码引用。
+$errors = auditDebugDir(debugFiles($root), writeFace());
+$codeByFile = [];
+$it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root . '/src', FilesystemIterator::SKIP_DOTS));
+foreach ($it as $f) {
+    if (!$f->isFile() || $f->getExtension() !== 'php') {
+        continue;
+    }
+    $path = str_replace('\\', '/', $f->getPathname());
+    $codeByFile[substr($path, strlen(str_replace('\\', '/', $root)) + 1)] = codeOnly((string) file_get_contents($path));
+}
+$errors = array_merge($errors, auditStrayRefs($codeByFile));
+if ($errors === []) {
+    echo "  ✓ src/Debug 只含写面，src 不引用 Drift\\DevTools\n";
+} else {
+    $failed++;
+    foreach ($errors as $e) {
+        echo "  ✗ {$e}\n";
+    }
+}
+
 $apps = [];
 foreach (glob($root . '/apps/*/project.yml') ?: [] as $project) {
     $apps[] = basename(dirname($project));
 }
 sort($apps);
 
-echo "[check-debug-scope] AOT 调试面 = 写面白名单（" . count(writeFace()) . " 项）\n";
-$failed = 0;
 foreach ($apps as $app) {
-    $errors = checkApp($root, $app);
-    if ($errors === []) {
+    $appErrors = checkApp($root, $app);
+    if ($appErrors === []) {
         echo "  ✓ {$app}\n";
         continue;
     }
     $failed++;
-    echo "  ✗ {$app}\n";
-    foreach ($errors as $e) {
-        fwrite(STDERR, "      - {$e}\n");
+    foreach ($appErrors as $e) {
+        echo "  ✗ {$e}\n";
     }
 }
-echo $failed === 0
-    ? "[check-debug-scope] ✓ " . count($apps) . " 个应用全绿\n"
-    : "[check-debug-scope] ✗ {$failed} 个应用红\n";
+
+echo $failed === 0 ? "[check-debug-scope] ✓ 全过\n" : "[check-debug-scope] ✗ {$failed} 项红\n";
 exit($failed === 0 ? 0 : 1);

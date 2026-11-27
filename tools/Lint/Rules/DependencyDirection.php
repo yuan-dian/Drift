@@ -34,6 +34,12 @@ final class DependencyDirection implements Rule
      */
     private const UNLAYERED = [
         'Dev',                 // 工具链 / smoke / 探针 / 测试：跑在 php.exe，永不参与 AOT
+        // 审查面（A72）：协议 / 查询 / 会话审查 / 调试壳，物理在 `devtools/`，不进任何
+        // 应用的 sources ⇒ 与 `Dev` 同侧。它是**消费者**：允许依赖任意框架层，而框架层
+        // 不得反向依赖它（`DebugTicker` 那类扩展点是框架定义接口、由工具实现）。
+        // 不写进 ALLOWED 的理由：那要列 18 个目标层，其中 15 条是零流量/以后可能 ——
+        // 正是本表注释要避免的"没人审的宽表"。层内方向改由目录表达：Protocol ← Session ← App。
+        'DevTools',
         'Bench',               // apps/bench 与 tools/Bench 的基准夹具
         'ConformanceSelfTest', // M2 conformance 自检夹具
     ];

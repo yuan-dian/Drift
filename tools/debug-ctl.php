@@ -40,7 +40,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/autoload.php';
 
-use Drift\Debug\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\ProtocolError;
 use Drift\Dev\Debug\Source;
 use Drift\Dev\Debug\View\Ctl;
 
@@ -126,7 +126,7 @@ try {
  *
  * @return array<array-key, mixed>
  */
-function awaitStop(\Drift\Debug\Protocol\RemoteSession $remote, array $state, float $seconds = 10.0): array
+function awaitStop(\Drift\DevTools\Protocol\RemoteSession $remote, array $state, float $seconds = 10.0): array
 {
     $deadline = \microtime(true) + $seconds;
     while (($state['state'] ?? null) === 'running' && \microtime(true) < $deadline) {

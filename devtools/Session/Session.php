@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
 /**
  * 一个会话的两面：**读**（{@see SessionQueries}）与**驱动**（{@see SessionDriver}）。
@@ -15,8 +15,8 @@ namespace Drift\Debug\Session;
  * 驱动"在类型上完全合法：查询读的是 A 会话的记录，推帧推的是 B 会话的应用。两份
  * 结果都正常，凑在一起是假的。合成接口把"同一个会话"这件事写进类型里。
  *
- * 实现方只有两个：{@see \Drift\App\DebugSession}（记录在手边）与
- * {@see \Drift\Debug\Protocol\RemoteSession}（记录在另一个进程里）。消费者不需要
+ * 实现方只有两个：{@see \Drift\DevTools\App\DebugSession}（记录在手边）与
+ * {@see \Drift\DevTools\Protocol\RemoteSession}（记录在另一个进程里）。消费者不需要
  * 知道是哪一个——这正是 D3 判据"跨进程读到的值与同进程逐值相同"的前提。
  *
  * ## 为什么 `close()` 也进接口

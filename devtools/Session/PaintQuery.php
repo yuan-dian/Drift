@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
 /**
  * 绘制域查询：这一帧画了谁、省了谁、哪些边界反复重录。

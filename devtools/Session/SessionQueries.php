@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
 
 /**
  * 会话的**读**面：按名字分派一次查询，拿回一份纯数组。

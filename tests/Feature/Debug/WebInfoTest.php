@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
 use Drift\Dev\Debug\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;

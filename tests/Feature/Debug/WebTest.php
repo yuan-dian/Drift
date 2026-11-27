@@ -386,7 +386,7 @@ final class WebTest extends SmokeTestCase
         return $out;
     }
 
-    private function queriesFor(): \Drift\Debug\Session\SessionQueries
+    private function queriesFor(): \Drift\DevTools\Session\SessionQueries
     {
         $script = \Drift\Dev\Debug\Plan::build('table', 800.0, 600.0, ['page' => 1], 2, 1, []);
         $open = \Drift\Dev\Debug\Runner::open(

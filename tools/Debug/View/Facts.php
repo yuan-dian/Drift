@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Debug\View;
 
-use Drift\Debug\Session\SessionQueries;
+use Drift\DevTools\Session\SessionQueries;
 
 /**
  * 投影的输入：一份把查询结果摊平的事实袋。

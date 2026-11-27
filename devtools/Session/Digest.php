@@ -1,7 +1,10 @@
 <?php
 declare(strict_types=1);
 
-namespace Drift\Debug\Session;
+namespace Drift\DevTools\Session;
+
+use Drift\Debug\Session\FrameRecord;
+use Drift\Debug\Session\Recorder;
 
 /**
  * 记录的**指纹**：两份运行是不是同一份因果。
