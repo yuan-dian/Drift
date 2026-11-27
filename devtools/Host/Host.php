@@ -246,132 +246,182 @@ final class Host
             return;
         }
 
-        if ($method === Methods::CAPABILITIES) {
-            // 发现必须先于 open：要求先开会话等于让客户端靠"发一个不支持的方法
-            // 看它报什么"来认识这个宿主，而那正是能力发现要消灭的试探。
-            $this->ok($channel, $id, $this->capabilities($version));
-
-            return;
-        }
-
-        if ($method === Methods::CLOSE) {
-            // 只关会话，不退进程：另一个观察者可能还在看，而新客户端也该能重新 open。
-            // 客户端通常紧跟着断开，那时 `read()` 得到 null、通道被移除、循环自己结束。
-            $this->session?->close();
-            $this->session = null;
-            $this->ok($channel, $id, null);
-
-            return;
-        }
-
-        if ($method === Methods::OPEN) {
-            // 带令牌的 open 是**接现有会话**，不是新建：应用已经在跑，重建一遍会把
-            // 观察者看到的"那一次运行"换成另一次，而两次的帧号、节点号本来就不保证相同。
-            $token = $params['token'] ?? null;
-            if (\is_string($token) && $token !== '') {
-                $this->attach($channel, $id, $this->session, $token);
-
-                return;
-            }
-
-            if ($this->session !== null) {
-                $this->fail($channel, $id, ProtocolError::ALREADY_OPEN, '这个宿主已经打开过会话：先 close 或新开一个宿主进程');
-
-                return;
-            }
-            try {
-                $result = $this->open($params);
-                $this->session = $result['session'];
-                $this->ok($channel, $id, $result['reply']);
-            } catch (\Throwable $e) {
-                $this->failFor($channel, $id, $e);
-            }
-
-            return;
-        }
-
-        if ($this->session === null) {
-            $this->fail($channel, $id, ProtocolError::NOT_OPEN, "还没 open 就调用 {$method}");
-
-            return;
-        }
-
-        if ($method === Methods::FINISH) {
-            $why = $this->unavailable(Methods::FINISH);
-            if ($why !== null) {
-                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
-
-                return;
-            }
-            $at = $params['at'] ?? null;
-            if ($at !== null && (!\is_int($at) || $at < 1)) {
-                $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'finish 的 at 是正整数');
-
-                return;
-            }
-            $this->ok($channel, $id, $this->session->finish($at));
-
-            return;
-        }
-
-        if ($method === Methods::PAUSE || $method === Methods::RESUME) {
-            $this->control($channel, $id, $this->session, $method, $params);
-
-            return;
-        }
-
-        if ($method === Methods::EVAL) {
-            // 默认关，在分派的最前面判：不开时连参数都不解析。任意代码执行
-            // 是安全面，"参数写错了"和"这个宿主根本不允许求值"不是一回事。
-            // ★ 拒绝理由与 capabilities() 里那一行同源，不能各写一句。
-            $why = $this->unavailable(Methods::EVAL);
-            if ($why !== null) {
-                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
-
-                return;
-            }
-            // 与下面 match 那条路径同样要兜：eval 里的语法错 / 运行时异常都是
-            // **结果**，不是让进程退出的故障。少了这层 try，一条 `1 +` 就把
-            // 宿主打崩，客户端只看到管道断了，真正的错留在 stderr。
-            try {
-                $this->ok($channel, $id, $this->eval($this->session, $params));
-            } catch (\Throwable $e) {
-                $this->failFor($channel, $id, $e);
-            }
-
-            return;
-        }
-
-        if ($method === Methods::FRAME) {
-            // 两条时间轴：脚本里的 `t` 与客户端编的 `t` 混进同一条记录，而 `digest`
-            // 不含时间（比不出这件事）、`t` 序列只有细看才发现断裂。单步走
-            // `resume` 的 `frames`，那里推进的是脚本自己的下一帧。
-            $why = $this->unavailable(Methods::FRAME);
-            if ($why !== null) {
-                $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
-
-                return;
-            }
-        }
-
+        // ── 分派：一张表决定"谁处理、要不要已有会话" ────────────────────────
+        // 原先这里是七个前置 if 块 + 一个 match，于是"某个动词在哪被处理"这个
+        // 问题在 `Methods::ALL` 里找不到答案。现在答案只有一处：`HANDLERS`。
         try {
-            $this->ok($channel, $id, match ($method) {
-                Methods::FRAME => $this->frame($this->session, $params),
-                Methods::INPUT => $this->input($this->session, $params),
-                Methods::EFFECT => $this->effect($this->session, $params),
-                Methods::HIGHLIGHT => $this->highlight($this->session, $params),
-                Methods::PICK => $this->pick($params),
-                Methods::QUERY => $this->query($this->session, $params),
-                // Methods::ALL 已在上面挡过，这里不可达；写成显式异常，
-                // 让"加了方法名却忘了实现"在第一次调用时就撞红。
-                default => throw new ProtocolError(
+            $entry = self::HANDLERS[$method] ?? null;
+            if ($entry === null) {
+                // `Methods::ALL` 里有、表里没有：加了动词却忘了接线。错误码与原先
+                // match 的 default 相同 —— 客户端看到的是"没实现"，而第一次调用
+                // 就会撞到，不会等到某个特定参数组合才现形。
+                throw new ProtocolError(
                     ProtocolError::UNKNOWN_METHOD,
                     "方法 {$method} 登记了但没有实现",
-                ),
-            });
+                );
+            }
+            [$handler, $needsSession] = $entry;
+
+            // 可用性检查对**每个**动词都做一次，不在各个处理函数里各写一遍。
+            // 目录（`capabilities()` 那栏）与分派共用 `unavailable()`，两处因此
+            // 不会漂成"目录说能用、一调就 not_applicable"。
+            $why = $this->unavailable($method);
+            if ($why !== null) {
+                throw new ProtocolError(ProtocolError::NOT_APPLICABLE, $why);
+            }
+            if ($needsSession && $this->session === null) {
+                throw new ProtocolError(ProtocolError::NOT_OPEN, "还没 open 就调用 {$method}");
+            }
+
+            $this->ok($channel, $id, $this->{$handler}($method, $params, $version));
         } catch (\Throwable $e) {
             $this->failFor($channel, $id, $e);
         }
+    }
+
+    /**
+     * 动词 => [处理函数, 要不要已有会话]。
+     *
+     * 这张表回答"某个动词在哪被处理"，{@see Methods::ALL} 回答"有哪些动词"，
+     * 两者必须双向闭合：少一条是加了动词忘了接线（这里抛），多一条是退役了动词
+     * 没删接线（{@see Capabilities} 那边抛）。
+     *
+     * `capabilities` / `open` / `close` 不需要已有会话——发现要在 open 之前可用，
+     * 而 `open` 本身就是"把会话建起来"，`close` 要能在没有会话时也答一声。
+     *
+     * 处理函数签名统一 `(method, params, version): mixed`，失败一律抛
+     * {@see ProtocolError}，**不直接写通道**——"回什么"只有 `dispatch` 一处，
+     * 它才能保证每条消息都有且只有一个回执。
+     *
+     * @var array<string, array{0: string, 1: bool}>
+     */
+    private const array HANDLERS = [
+        Methods::CAPABILITIES => ['answerCapabilities', false],
+        Methods::OPEN => ['answerOpen', false],
+        Methods::CLOSE => ['answerClose', false],
+        Methods::FRAME => ['answerFrame', true],
+        Methods::INPUT => ['answerInput', true],
+        Methods::EFFECT => ['answerEffect', true],
+        Methods::QUERY => ['answerQuery', true],
+        Methods::EVAL => ['answerEval', true],
+        Methods::PAUSE => ['answerControl', true],
+        Methods::RESUME => ['answerControl', true],
+        Methods::HIGHLIGHT => ['answerHighlight', true],
+        Methods::PICK => ['answerPick', true],
+        Methods::FINISH => ['answerFinish', true],
+    ];
+
+    // ------------------------------------------------------------------ 处理函数
+    //
+    // 这十三个函数把统一签名接到已有实现上。存在的理由只有一个：让 `HANDLERS`
+    // 能按名字找到"这个动词由谁处理"，同时把失败统一成抛 `ProtocolError`。
+    // 纯转发的那些不写段落式 docblock —— 它们没有第二个事实要交代。
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerCapabilities(string $method, array $params, ?int $version): array
+    {
+        return $this->capabilities($version);
+    }
+
+    /**
+     * `open` 有两种意思：带令牌是**接现有会话**，不带是新建。
+     *
+     * 合成一个动词是刻意的（客户端先说要 open，再说带不带令牌），但两条路径的
+     * 前置条件相反：新建要求宿主上还没有会话，接现有要求已经有。所以这条判据
+     * 留在分支里，不进 `HANDLERS`。
+     *
+     * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
+     */
+    private function answerOpen(string $method, array $params, ?int $version): array
+    {
+        $token = $params['token'] ?? null;
+        if (\is_string($token) && $token !== '') {
+            return $this->attach($token);
+        }
+
+        if ($this->session !== null) {
+            throw new ProtocolError(
+                ProtocolError::ALREADY_OPEN,
+                '这个宿主已经打开过会话：先 close 或新开一个宿主进程',
+            );
+        }
+
+        $opened = $this->open($params);
+        $this->session = $opened['session'];
+
+        return $opened['reply'];
+    }
+
+    /** @param array<array-key, mixed> $params */
+    private function answerClose(string $method, array $params, ?int $version): null
+    {
+        // 只关会话，不退进程：另一个观察者可能还在看，而新客户端也该能重新 open。
+        // 客户端通常紧跟着断开，那时 `read()` 得到 null、通道被移除、循环自己结束。
+        $this->session?->close();
+        $this->session = null;
+
+        return null;
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerFinish(string $method, array $params, ?int $version): array
+    {
+        $at = $params['at'] ?? null;
+        if ($at !== null && (!\is_int($at) || $at < 1)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'finish 的 at 是正整数');
+        }
+
+        return $this->session->finish($at);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerControl(string $method, array $params, ?int $version): array
+    {
+        return $this->control($method, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array{id: int, wall: float} */
+    private function answerFrame(string $method, array $params, ?int $version): array
+    {
+        return $this->frame($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params */
+    private function answerInput(string $method, array $params, ?int $version): null
+    {
+        return $this->input($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array{value: mixed} */
+    private function answerEffect(string $method, array $params, ?int $version): array
+    {
+        return $this->effect($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerQuery(string $method, array $params, ?int $version): array
+    {
+        return $this->query($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerEval(string $method, array $params, ?int $version): array
+    {
+        return $this->eval($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerHighlight(string $method, array $params, ?int $version): array
+    {
+        return $this->highlight($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerPick(string $method, array $params, ?int $version): array
+    {
+        return $this->pick($params);
     }
 
     /**
@@ -414,6 +464,11 @@ final class Host
      */
     private function capabilities(?int $version): array
     {
+        // 先验分派表：目录能列出的动词必须都能被分派到。放在这里而不是构造时，
+        // 是因为 `Host` 在 live 宿主上是被 `adopt()` 进来的、不走 `serve()`，
+        // 而"问能力"是每个客户端都会做的第一件事。
+        self::assertHandlerCoverage();
+
         $reply = Capabilities::describe($version);
         $reply['host'] = [
             'sessionOpen' => $this->session !== null,
@@ -434,6 +489,31 @@ final class Host
         return $reply;
     }
 
+    /**
+     * `HANDLERS` 与 {@see Methods::ALL} 双向闭合。
+     *
+     * 少一条 = 加了动词忘了接线；多一条 = 退役了动词没删接线。两种都不该等到
+     * "某个客户端恰好调用了那个动词"才现形 —— 那时看到的是 `unknown_method`，
+     * 会把人引向"版本不对"而不是"代码漏了一行"。
+     *
+     * @throws \LogicException 两张表对不上
+     */
+    private static function assertHandlerCoverage(): void
+    {
+        foreach (self::HANDLERS as $method => $_entry) {
+            if (!\in_array($method, Methods::ALL, true)) {
+                throw new \LogicException(
+                    "分派表里有未登记的动词 {$method}：Methods::ALL 里没有它",
+                );
+            }
+        }
+        foreach (Methods::ALL as $method) {
+            if (!\array_key_exists($method, self::HANDLERS)) {
+                throw new \LogicException("动词 {$method} 没有处理函数：HANDLERS 里缺一条");
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ 方法
 
     /**
@@ -441,44 +521,35 @@ final class Host
      *
      * 回执刻意不给 `mountMs`：这次没有挂载，填 0 会被读成"挂载花了 0 毫秒"。
      * 用 `reused` 明说是复用，调用方就不必靠字段有没有来猜。
+     *
+     * @return array<array-key, mixed>
      */
-    private function attach(Channel $channel, int $id, ?DebugSession $session, string $token): void
+    private function attach(string $token): array
     {
         if ($this->accessToken === null) {
-            $this->fail(
-                $channel,
-                $id,
+            throw new ProtocolError(
                 ProtocolError::UNAUTHORIZED,
                 '这个宿主没开访问令牌（stdio 通道本来只有父进程能说上话），接不了',
             );
-
-            return;
         }
 
         // 定长比较，别让令牌在第一次不同字节处停下。
         if (!\hash_equals($this->accessToken, $token)) {
-            $this->fail(
-                $channel,
-                $id,
+            throw new ProtocolError(
                 ProtocolError::UNAUTHORIZED,
                 'token 对不上：去 .drift/session.json 拿当前那个（宿主重启后令牌会换）',
             );
-
-            return;
         }
 
+        $session = $this->session;
         if ($session === null) {
-            $this->fail(
-                $channel,
-                $id,
+            throw new ProtocolError(
                 ProtocolError::NOT_OPEN,
                 '这个宿主上没有会话可接：它可能已经 close 过，或者刚被重启过',
             );
-
-            return;
         }
 
-        $this->ok($channel, $id, [
+        return [
             'reused' => true,
             'session' => $session->sessionToken(),
             // 末帧一起给：观察者的游标要有个起点，否则它得先问一次 state 才知道从哪读。
@@ -491,7 +562,7 @@ final class Host
             //   这一个字段 —— 只看 `driven` 会以为它跟脚本自走宿主一样可复算。
             'live' => $this->drive?->live() ?? false,
             'replayable' => !($this->drive?->live() ?? false),
-        ]);
+        ];
     }
 
     /**
@@ -500,51 +571,37 @@ final class Host
      * 回执**就是**一次 `state` 查询：控制面的输出形状与观察面完全一样，调用方
      * 不需要学两套。这也是唯一能让"动作生效了没有"被直接读出来的形状。
      *
+     * 可用性检查（"这个宿主能不能被暂停"）在 `dispatch` 里统一做过，与能力目录
+     * 同源；这里只管参数与状态。
+     *
      * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
      */
-    private function control(
-        Channel $channel,
-        int $id,
-        DebugSession $session,
-        string $method,
-        array $params,
-    ): void {
-        // 与 capabilities() 的 available 一栏同源：目录说不能暂停而调用却成功，
-        // 或目录说能暂停而调用被拒，都是两份真相打架。
-        $why = $this->unavailable($method);
-        if ($why !== null) {
-            $this->fail($channel, $id, ProtocolError::NOT_APPLICABLE, $why);
-
-            return;
-        }
-
+    private function control(string $method, array $params): array
+    {
         if ($method === Methods::RESUME) {
             $frames = $params['frames'] ?? null;
             if ($frames !== null && (!\is_int($frames) || $frames < 1)) {
-                $this->fail($channel, $id, ProtocolError::BAD_REQUEST, 'resume 的 frames 是正整数');
-                return;
+                throw new ProtocolError(ProtocolError::BAD_REQUEST, 'resume 的 frames 是正整数');
             }
 
-            $name = $session->stateName();
+            $name = $this->session->stateName();
             if ($name === 'finished' || $name === 'crashed') {
                 // 让它回 running 会撒一秒的谎：下一轮立刻又 finished，而观察者已经
                 // 读到"在跑"了。
-                $this->fail(
-                    $channel,
-                    $id,
+                throw new ProtocolError(
                     ProtocolError::NOT_APPLICABLE,
                     "会话已经 {$name}，恢复不了",
                 );
-
-                return;
             }
 
-            $this->drive->resume($session, $frames);
+            $this->drive->resume($this->session, $frames);
         } else {
-            $this->drive->pause($session);
+            $this->drive->pause($this->session);
         }
 
-        $this->ok($channel, $id, $session->query('state'));
+        return $this->session->query('state');
     }
 
     /**
@@ -694,10 +751,7 @@ final class Host
         if (!\is_bool($enabled)) {
             throw new ProtocolError(ProtocolError::BAD_REQUEST, 'pick 需要布尔 enabled');
         }
-        $why = $this->unavailable(Methods::PICK);
-        if ($why !== null) {
-            throw new ProtocolError(ProtocolError::NOT_APPLICABLE, $why);
-        }
+        // 布防能力（这个宿主有没有活窗口）在 `dispatch` 里统一判过，与能力目录同源。
 
         return ($this->armPick)($enabled);
     }
