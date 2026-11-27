@@ -43,6 +43,15 @@ final class BlackBox
     /** 发现文件格式；与协议版本无关，遇到未知版本显式报错而不是降级 */
     public const int PROTOCOL = 3;
 
+    /**
+     * 同目录最多留多少份 blackbox sidecar（A79）。
+     *
+     * 名字带管线对象号，每建一条管线换一份；无上限时本机积到 1570 份 / 11 MB，
+     * 而崩溃过滤器会把每一份原文都附进日志——淹没的是最后那份真现场。
+     * 与 `Shot::KEEP` 同理：够覆盖同时活着的窗口，多了就是过期便签。
+     */
+    public const int MAX_SIDECARS = 12;
+
     /** @var list<array{frame: int, cost: float, settle: int, layout: int, paint: int, skipped: bool}|null> */
     private array $frames;
 
@@ -196,6 +205,40 @@ final class BlackBox
             return;
         }
         $this->lastFlushFrame = $frame;
+        $this->pruneSidecars($dir);
+    }
+
+    /**
+     * 把同目录的 sidecar 数收在上限内（A79）。
+     *
+     * ★ 只在本份**写成功之后**跑：清理失败是次要问题，不能让它盖掉刚落下的现场。
+     * ★ 存量也在这里消化：新代码第一次 flush 就会把旧版本留下的无界文件
+     *   一次删到上限，不需要单独的迁移入口。
+     * ★ 按 mtime 从老到新丢，不用对象号或名字排序：`noteFailure()` 会立即
+     *   `flushAt()`，把失败那份的 mtime 刷到最新，于是它永远是最后被丢的。
+     * ★ 只认 `blackbox-*.json`，与原生过滤器的通配符同口径；临时名
+     *   `blackbox-*.json.tmp-*` 不匹配，不会被扫进来删掉正在写的那份。
+     * ★ 全程静默：清理是卫生，不是崩溃现场的一部分，任何失败都不改应用行为。
+     */
+    private function pruneSidecars(string $dir): void
+    {
+        $files = \glob($dir . '/blackbox-*.json');
+        if ($files === false || \count($files) <= self::MAX_SIDECARS) {
+            return;
+        }
+
+        // 用 stat()['mtime'] 而不是 filemtime()：后者不在 tpc 的扩展映射表里
+        // （NanoExtensionSelector 只列 stat / lstat），极小 AOT 构建未必带它。
+        \usort($files, static function (string $a, string $b): int {
+            $ta = \stat($a);
+            $tb = \stat($b);
+
+            return (($ta === false ? 0 : $ta['mtime']) <=> ($tb === false ? 0 : $tb['mtime']));
+        });
+        $drop = \array_slice($files, 0, \count($files) - self::MAX_SIDECARS);
+        foreach ($drop as $file) {
+            @\unlink($file);
+        }
     }
 
     public function path(): string

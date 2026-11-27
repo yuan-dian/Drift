@@ -143,6 +143,71 @@ final class BlackBoxTest extends TestCase
         self::assertSame([], glob($file . '.tmp-*') ?: []);
     }
 
+    public function testSidecarsAreCappedAndNewestSurvives(): void
+    {
+        // 造上限+3 份旧 sidecar，mtime 依次递增；最新的那份带可辨认的内容。
+        $total = BlackBox::MAX_SIDECARS + 3;
+        for ($i = 0; $i < $total; ++$i) {
+            $file = $this->dir . '/blackbox-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, 1000 + $i);
+        }
+        $newest = $this->dir . '/blackbox-' . ($total - 1) . '.json';
+
+        $box = new BlackBox(8, $newest);
+        $box->flush();
+
+        $left = \glob($this->dir . '/blackbox-*.json') ?: [];
+        self::assertCount(BlackBox::MAX_SIDECARS, $left);
+        self::assertFileExists($newest);
+        // 最老三份必须真的被删，不能只是"数看起来对"。
+        for ($i = 0; $i < 3; ++$i) {
+            self::assertFileDoesNotExist($this->dir . '/blackbox-' . $i . '.json');
+        }
+    }
+
+    public function testFailureSiteIsNeverPrunedEvenWhenItWasOld(): void
+    {
+        $total = BlackBox::MAX_SIDECARS + 2;
+        for ($i = 0; $i < $total; ++$i) {
+            $file = $this->dir . '/blackbox-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, 1000 + $i);
+        }
+        // 让"最老那份"成为失败现场：noteFailure 会立即 flushAt 把它 mtime 刷到最新。
+        $site = $this->dir . '/blackbox-0.json';
+        $box = new BlackBox(8, $site);
+        $box->noteFailure('settle', '不能丢的根因');
+
+        self::assertFileExists($site);
+        $raw = \file_get_contents($site);
+        self::assertIsString($raw);
+        self::assertSame('不能丢的根因', \json_decode($raw, true)['failure']['message']);
+        self::assertCount(BlackBox::MAX_SIDECARS, \glob($this->dir . '/blackbox-*.json') ?: []);
+        // 现场保住了，代价落在别的旧文件上。
+        self::assertFileDoesNotExist($this->dir . '/blackbox-1.json');
+    }
+
+    public function testPruneIgnoresTempFilesAndLeavesUnrelatedFiles(): void
+    {
+        $temporary = $this->dir . '/blackbox-9.json.tmp-4242-30';
+        \file_put_contents($temporary, '半截');
+        \touch($temporary, 1);
+        \file_put_contents($this->dir . '/notes.txt', '留着');
+
+        for ($i = 0; $i < BlackBox::MAX_SIDECARS + 1; ++$i) {
+            $file = $this->dir . '/blackbox-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, 1000 + $i);
+        }
+        $box = new BlackBox(8, $this->dir . '/blackbox-' . BlackBox::MAX_SIDECARS . '.json');
+        $box->flush();
+
+        self::assertFileExists($temporary);
+        self::assertFileExists($this->dir . '/notes.txt');
+        self::assertCount(BlackBox::MAX_SIDECARS, \glob($this->dir . '/blackbox-*.json') ?: []);
+    }
+
     public function testFailedFlushDoesNotLieAboutLastFlushFrame(): void
     {
         $target = $this->dir . '/blackbox.json';
