@@ -213,7 +213,7 @@ final class LivePickTest extends SmokeTestCase
         $ticker->bind([1 => $app]);
         $ticker->poll();   // Host::pollOnce(0) 就地消化这一条
 
-        $replies = $transport->decoded();
+        $replies = $transport->replies();
         check('PICK 动词真的到了桥', ($replies[0]['result']['armed'] ?? false) === true, self::show($replies));
         check('桥已布防，输入会被吞', $ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
         $ticker->close();

@@ -23,6 +23,29 @@ interface Transport
      */
     public function read(): ?string;
 
+    /**
+     * 等一会儿，看有没有数据可读。
+     *
+     * ## 为什么不给 `read()` 加超时参数
+     *
+     * 那会逼出一个三态返回值（读到 / 超时 / 对端关闭），而"超时"只能用 `false`
+     * 或空串表达——空串不是合法消息（`Wire::decode()` 会把它报成格式错误），
+     * `false` 又会和 `null` 抢语义。`Server::wait()` 已经因为同一个理由选了
+     * "探测与读分开"，这里沿用。
+     *
+     * ## 管道上回 `false`，不抛
+     *
+     * Windows 的匿名管道连 `stream_select` 都不支持（见 {@see \Drift\DevTools\Host\SingleServer}），
+     * 所以 `ProcessTransport` / `StdioTransport` 一律回 `false`。调用方据此退化成
+     * 轮询或干脆不主动等——**不是**"这个通道坏了"。
+     *
+     * @param int $timeoutMs `0` 立即返回；`>0` 最多等这么久；`-1` 一直等（与
+     *                       {@see Server::wait()} 同一个口径，别在这里发明第二种）
+     *
+     * @return bool `true` = 接下来 `read()` 不会阻塞
+     */
+    public function readable(int $timeoutMs): bool;
+
     /** 写一条消息（实现负责补行尾并立即 flush —— 缓冲区里的指令等于没发）。 */
     public function write(string $line): void;
 

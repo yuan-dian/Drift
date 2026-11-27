@@ -83,7 +83,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::FRAME, ['t' => 0.0]),
             self::call(3, Methods::QUERY, ['name' => 'stats']),
             self::call(4, Methods::CLOSE),
-        ])->decoded();
+        ])->replies();
 
         check('四条命令得到四条响应', \count($replies) === 4, '实际 ' . \count($replies));
         if (\count($replies) !== 4) {
@@ -113,7 +113,7 @@ final class HostTest extends SmokeTestCase
             self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
             self::call(2, 'reboot'),
             self::call(3, Methods::QUERY, ['name' => 'stats']),
-        ])->decoded();
+        ])->replies();
 
         check('三条命令都回了', \count($replies) === 3, '实际 ' . \count($replies));
         if (\count($replies) !== 3) {
@@ -131,7 +131,7 @@ final class HostTest extends SmokeTestCase
 
     public function testQueryBeforeOpenIsRejected(): void
     {
-        $replies = $this->serve([self::call(1, Methods::QUERY, ['name' => 'stats'])])->decoded();
+        $replies = $this->serve([self::call(1, Methods::QUERY, ['name' => 'stats'])])->replies();
 
         check('回了一条', \count($replies) === 1);
         check(
@@ -148,7 +148,7 @@ final class HostTest extends SmokeTestCase
         $replies = $this->serve([
             self::call(1, Methods::OPEN, ['script' => $script]),
             self::call(2, Methods::OPEN, ['script' => $script]),
-        ])->decoded();
+        ])->replies();
 
         check('回了两次', \count($replies) === 2);
         check('第一次打开成功', $replies[0]['ok'] === true);
@@ -173,7 +173,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::OPEN, ['token' => \str_repeat('0', 32)]),
             // 被拒之后循环还活着：会话仍然可以查
             self::call(3, Methods::QUERY, ['name' => 'state']),
-        ], token: 'secret')->decoded();
+        ], token: 'secret')->replies();
 
         check('回了三次', \count($replies) === 3, self::show(\count($replies)));
         check(
@@ -195,7 +195,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::FRAME, ['t' => 0.0]),
             self::call(3, Methods::OPEN, ['token' => 'secret']),
             self::call(4, Methods::QUERY, ['name' => 'frames']),
-        ], token: 'secret')->decoded();
+        ], token: 'secret')->replies();
 
         $first = $replies[0]['result'] ?? [];
         $attach = $replies[2]['result'] ?? [];
@@ -219,7 +219,7 @@ final class HostTest extends SmokeTestCase
     {
         $replies = $this->serve([
             self::call(1, Methods::OPEN, ['token' => 'secret']),
-        ], token: 'secret')->decoded();
+        ], token: 'secret')->replies();
 
         check(
             '没有会话可接时明确报错',
@@ -242,7 +242,7 @@ final class HostTest extends SmokeTestCase
             // 不认识的查询名
             self::call(3, Methods::QUERY, ['name' => 'nope']),
             self::call(4, Methods::QUERY, ['name' => 'digest']),
-        ])->decoded();
+        ])->replies();
 
         check('四条命令都回了', \count($replies) === 4, '实际 ' . \count($replies));
         if (\count($replies) !== 4) {
@@ -275,7 +275,7 @@ final class HostTest extends SmokeTestCase
             $s,
         ));
 
-        $replies = $transport->decoded();
+        $replies = $transport->replies();
         check('坏消息也回了一条（不能让客户端干等）', \count($replies) === 1);
         if ($replies === []) {
             return;
@@ -301,7 +301,7 @@ final class HostTest extends SmokeTestCase
         $replies = $this->serve([
             self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
             self::call(2, Methods::EFFECT, ['name' => 'double', 'args' => ['n' => 21]]),
-        ], $open)->decoded();
+        ], $open)->replies();
 
         check('回了两次', \count($replies) === 2);
         check('副作用成功', ($replies[1]['ok'] ?? false) === true, self::show($replies[1] ?? null));
@@ -331,7 +331,7 @@ final class HostTest extends SmokeTestCase
             self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
             self::call(2, Methods::EFFECT, ['name' => 'object']),
             self::call(3, Methods::QUERY, ['name' => 'stats']),
-        ], $open)->decoded();
+        ], $open)->replies();
 
         check('三条命令都回了', \count($replies) === 3, '实际 ' . \count($replies));
         if (\count($replies) !== 3) {
@@ -369,7 +369,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::PAUSE),
             self::call(3, Methods::RESUME),
             self::call(4, Methods::QUERY, ['name' => 'state']),
-        ])->decoded();
+        ])->replies();
 
         check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
         if (\count($replies) !== 4) {
@@ -399,7 +399,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::FRAME, ['t' => 16.7]),
             self::call(3, Methods::FINISH, ['at' => 2]),
             self::call(4, Methods::QUERY, ['name' => 'state']),
-        ])->decoded();
+        ])->replies();
 
         check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
         if (\count($replies) !== 4) {
@@ -421,7 +421,7 @@ final class HostTest extends SmokeTestCase
             self::call(2, Methods::FINISH, ['at' => 0]),
             self::call(3, Methods::FINISH, ['at' => '2']),
             self::call(4, Methods::QUERY, ['name' => 'state']),
-        ])->decoded();
+        ])->replies();
 
         check('回了四次', \count($replies) === 4, '实际 ' . \count($replies));
         if (\count($replies) !== 4) {
@@ -438,7 +438,7 @@ final class HostTest extends SmokeTestCase
     {
         $replies = $this->serve([
             self::call(1, Methods::OPEN, ['script' => $this->script()->toArray()]),
-        ])->decoded();
+        ])->replies();
 
         check(
             'open 回执带 driven=false',

@@ -63,6 +63,18 @@ final class StdioTransport implements Channel
         }
     }
 
+    /**
+     * 标准输入是管道，答不了"现在可读吗"，一律 `false`。
+     *
+     * 理由与 {@see ProcessTransport::readable()} 同：Windows 匿名管道不支持
+     * `stream_select`。宿主侧本来就不需要主动等（它只应答），所以这条退化成
+     * 轮询没有任何代价。
+     */
+    public function readable(int $timeoutMs): bool
+    {
+        return false;
+    }
+
     public function write(string $line): void
     {
         if ($this->closed) {

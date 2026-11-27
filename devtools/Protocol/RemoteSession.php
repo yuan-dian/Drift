@@ -32,10 +32,30 @@ use Drift\Input\InputEvent;
  * {@see ProtocolError}，调用方要么重开宿主，要么放弃 —— 静默重发会让"发了两遍"
  * 变成一条**推了两帧**的会话，而报告看不出来。
  *
+ * ## 事件是同一条管道上的第二种消息形状（A80）
+ *
+ * 判别只看顶层：有 `id`（整数）是**响应**，有 `event`（字符串）是**事件**，
+ * 两个都没有就是 `bad_response` —— 顺序错乱是硬故障，不能猜。
+ *
+ * 难点在"发一条等一条"这个同步形状：`call()` 等的是某条响应，而事件可以在任意
+ * 时刻插进来。所以 `call()` 读到的若不是自己的响应，就先收进缓冲再继续读；缓冲
+ * **有界**（{@see self::MAX_PENDING_EVENTS}），满了丢最旧的并计数 —— 事件是旁路，
+ * 旁路不能把主路撑爆（A79 同一条教训）。丢了多少由 {@see self::droppedEvents()}
+ * 报出来，不静默。
+ *
  * @api
  */
 final class RemoteSession implements Session
 {
+    /**
+     * 缓冲上限。
+     *
+     * 事件是旁路：客户端不取它，主路（`call()`）也必须照常工作。所以缓冲有界，
+     * 满了丢最旧的。256 的依据是一帧几十字节 ⇒ 上限约 16KB，而一次查询往返
+     * 期间最多攒下几十条 —— 撞到上限只可能是"根本没人取"，那时丢旧的正合适。
+     */
+    private const int MAX_PENDING_EVENTS = 256;
+
     private int $seq = 0;
 
     private int $lastFrameId = 0;
@@ -58,6 +78,16 @@ final class RemoteSession implements Session
 
     /** 宿主在能力发现里报的版本；`null` = 没问过，不猜。 */
     private ?int $peerProtocol = null;
+
+    /**
+     * 收到但还没被取走的事件，按到达顺序。
+     *
+     * @var list<array{event: string, seq: int, data: array<array-key, mixed>}>
+     */
+    private array $pendingEvents = [];
+
+    /** 因为缓冲满了被丢掉的条数。只增，不清零 —— 它是"你漏看了东西"的证据。 */
+    private int $droppedEvents = 0;
 
     public function __construct(private readonly Transport $transport)
     {
@@ -372,6 +402,110 @@ final class RemoteSession implements Session
         $this->transport->close();
     }
 
+    // ------------------------------------------------------------------ 事件
+
+    /**
+     * 取走已经收到的事件；**不做 I/O**，没有就回空数组。
+     *
+     * 与 {@see self::waitEvents()} 分开，是因为这两件事的调用场合相反：轮询式
+     * 消费者（每帧调一次）要的是"现在有什么"，等一秒会把帧率变成宿主的帧率；
+     * 而"等下一条"的消费者等得起。合成一个方法就得给 `timeout=0` 赋予
+     * "不读"这个额外含义，那是拿参数值编码模式。
+     *
+     * @return list<array{event: string, seq: int, data: array<array-key, mixed>}>
+     */
+    public function events(): array
+    {
+        $out = $this->pendingEvents;
+        $this->pendingEvents = [];
+
+        return $out;
+    }
+
+    /**
+     * 等最多 `$timeoutMs` 毫秒，回一条事件（若在这期间到了）。
+     *
+     * ## 管道上不等，直接回空
+     *
+     * `ProcessTransport` / `StdioTransport` 的 `readable()` 恒 `false`（Windows
+     * 匿名管道不支持 `stream_select`），于是这里退化成"只取缓冲"。这是**正常
+     * 路径**，不是降级警告：管道上的消费者本来就不该指望主动等（A80）。
+     *
+     * ## 读到响应就是故障
+     *
+     * 走到这里说明客户端手上没有在途请求（`call()` 是同步的），所以此刻到达的
+     * 任何带 `id` 的消息都是别人请求的响应 —— 通道顺序已经不可信，继续读只会串味。
+     *
+     * @return list<array{event: string, seq: int, data: array<array-key, mixed>}>
+     */
+    public function waitEvents(int $timeoutMs): array
+    {
+        if ($this->pendingEvents !== []) {
+            return $this->events();
+        }
+        if ($this->closed || !$this->transport->readable($timeoutMs)) {
+            return [];
+        }
+
+        $line = $this->transport->read();
+        if ($line === null) {
+            // 对端关了。不当故障抛：下一条 `call()` 会给出 CLOSED，而那里才知道
+            // 是"哪个动词等不到回执"，报错信息才具体。
+            return [];
+        }
+
+        $message = Wire::decode($line);
+        if (!isset($message['event'])) {
+            throw new ProtocolError(
+                ProtocolError::BAD_RESPONSE,
+                '等事件却收到了响应（手上没有在途请求）：' . Wire::encode($message),
+            );
+        }
+        $this->enqueueEvent($message);
+
+        return $this->events();
+    }
+
+    /** 因为缓冲满而被丢掉的条数；非零意味着"有事件你没看"。 */
+    public function droppedEvents(): int
+    {
+        return $this->droppedEvents;
+    }
+
+    /**
+     * 校验事件信封并进缓冲；满了丢最旧的一条。
+     *
+     * 形状不对**抛**而不是忽略：通道上出现协议里没有的东西，说明两端版本已经
+     * 分岔了，那时忽略只会让症状推迟到"某个数字不对"。
+     *
+     * @param array<array-key, mixed> $message
+     */
+    private function enqueueEvent(array $message): void
+    {
+        $name = $message['event'] ?? null;
+        $seq = $message['seq'] ?? null;
+        $data = $message['data'] ?? null;
+        if (!\is_string($name) || !\is_int($seq) || !\is_array($data)) {
+            throw new ProtocolError(
+                ProtocolError::BAD_RESPONSE,
+                '事件信封缺 event / seq / data：' . Wire::encode($message),
+            );
+        }
+        if (!\in_array($name, Events::ALL, true)) {
+            throw new ProtocolError(
+                ProtocolError::BAD_RESPONSE,
+                "事件 {$name} 不在协议目录里（" . \implode(' / ', Events::ALL) . '）',
+            );
+        }
+
+        if (\count($this->pendingEvents) >= self::MAX_PENDING_EVENTS) {
+            \array_shift($this->pendingEvents);
+            ++$this->droppedEvents;
+        }
+
+        $this->pendingEvents[] = ['event' => $name, 'seq' => $seq, 'data' => $data];
+    }
+
     // ------------------------------------------------------------------ 收发
 
     /**
@@ -401,6 +535,18 @@ final class RemoteSession implements Session
         }
 
         $message = Wire::decode($line);
+        // 事件可以插在响应的前后任意位置（宿主推帧不受"谁在等什么"约束），
+        // 所以这里只认"不是事件"的那条，其余按顺序进缓冲。
+        while (isset($message['event'])) {
+            $this->enqueueEvent($message);
+
+            $line = $this->transport->read();
+            if ($line === null) {
+                throw new ProtocolError(ProtocolError::CLOSED, "等 {$method} 的响应时对端关掉了管道");
+            }
+            $message = Wire::decode($line);
+        }
+
         if (($message['id'] ?? null) !== $id) {
             // 一条响应配错请求就说明通道上的顺序已经不可信，继续读下去只会串味。
             throw new ProtocolError(

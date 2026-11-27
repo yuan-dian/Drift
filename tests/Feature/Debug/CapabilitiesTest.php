@@ -170,7 +170,7 @@ final class CapabilitiesTest extends SmokeTestCase
         $replies = $this->serve([
             ['id' => 1, 'method' => Methods::CAPABILITIES, 'params' => [], 'protocol' => Capabilities::VERSION],
             self::call(2, Methods::QUERY, ['name' => 'stats']),
-        ])->decoded();
+        ])->replies();
 
         check('open 之前得到两条响应', \count($replies) === 2, self::show($replies));
         check('能力发现成功', ($replies[0]['ok'] ?? null) === true, self::show($replies[0] ?? null));
@@ -185,7 +185,7 @@ final class CapabilitiesTest extends SmokeTestCase
             self::call(1, Methods::CAPABILITIES),
             self::call(2, Methods::OPEN, ['script' => $this->script()->toArray()]),
             self::call(3, Methods::EVAL, ['expression' => '1 + 1']),
-        ])->decoded();
+        ])->replies();
         $methods = [];
         foreach ($replies[0]['result']['methods'] ?? [] as $row) {
             $methods[$row['name']] = $row;
@@ -217,7 +217,7 @@ final class CapabilitiesTest extends SmokeTestCase
             ['id' => 1, 'method' => Methods::CAPABILITIES, 'params' => [], 'protocol' => Capabilities::VERSION + 1],
             ['id' => 2, 'method' => Methods::CAPABILITIES, 'params' => [], 'protocol' => '1'],
             ['id' => 3, 'method' => Methods::CAPABILITIES, 'params' => []],
-        ])->decoded();
+        ])->replies();
 
         check('未来版本报 unsupported_version', ($replies[0]['error']['code'] ?? '') === ProtocolError::UNSUPPORTED_VERSION);
         check('非整数版本报 bad_request', ($replies[1]['error']['code'] ?? '') === ProtocolError::BAD_REQUEST);

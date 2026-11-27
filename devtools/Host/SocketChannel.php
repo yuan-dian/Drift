@@ -111,6 +111,35 @@ final class SocketChannel implements Channel
         }
     }
 
+    /**
+     * socket 上 `stream_select` 是可靠的，所以这条通道真能"等一会儿"。
+     *
+     * 关掉之后回 `true`：让紧接着的 `read()` 立刻返回 `null`，而不是在这里
+     * 空等到超时再报一个本来就知道的结果。
+     */
+    public function readable(int $timeoutMs): bool
+    {
+        if ($this->closed) {
+            return true;
+        }
+
+        $read = [$this->stream];
+        // `stream_select` 的后两个参数是引用参数，不能直接传 `null` 字面量。
+        $write = null;
+        $except = null;
+        // `-1` = 一直等，对应 `stream_select` 的"秒数给 null"；`0` 必须给 0/0
+        // 而不是 null，否则"扫一眼"会变成"卡住"。
+        $seconds = $timeoutMs < 0 ? null : \intdiv($timeoutMs, 1000);
+        $micros = $timeoutMs < 0 ? null : ($timeoutMs % 1000) * 1000;
+
+        $ready = @\stream_select($read, $write, $except, $seconds, $micros);
+        if ($ready === false) {
+            throw new \RuntimeException('等不到可读状态：' . $this->peer);
+        }
+
+        return $ready > 0;
+    }
+
     public function write(string $line): void
     {
         if ($this->closed) {

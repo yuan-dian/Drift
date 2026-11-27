@@ -81,7 +81,7 @@ final class PickProtocolTest extends SmokeTestCase
             $seen[] = $enabled;
 
             return ['armed' => $enabled, 'reason' => $enabled ? '' : 'cancelled'];
-        })->decoded();
+        })->replies();
 
         check('open + 两条命令三条答复', \count($replies) === 3, self::show($replies));
         check('布防答复来自桥', ($replies[1]['result']['armed'] ?? null) === true, self::show($replies[1]));
@@ -91,7 +91,7 @@ final class PickProtocolTest extends SmokeTestCase
 
     public function testWithoutWindowIsNotApplicable(): void
     {
-        $replies = $this->serve([self::call(1, ['enabled' => true])], null)->decoded();
+        $replies = $this->serve([self::call(1, ['enabled' => true])], null)->replies();
         check('open + 一条命令两条答复', \count($replies) === 2, self::show($replies));
         check('是错误信封', $replies[1]['ok'] === false, self::show($replies[1]));
         check(
@@ -106,7 +106,7 @@ final class PickProtocolTest extends SmokeTestCase
         $replies = $this->serve([
             self::call(1, ['enabled' => 'yes']),
             self::call(2, ['enabled' => true]),
-        ], static fn(bool $enabled): array => ['armed' => $enabled])->decoded();
+        ], static fn(bool $enabled): array => ['armed' => $enabled])->replies();
 
         check(
             '参数错报 bad_request',

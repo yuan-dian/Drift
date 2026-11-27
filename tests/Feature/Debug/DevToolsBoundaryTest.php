@@ -5,6 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\DevTools\Cli\Registry;
+use Drift\DevTools\Protocol\Capabilities;
 
 /**
  * DevTools 物理边界（A73）。
@@ -128,7 +129,14 @@ final class DevToolsBoundaryTest extends SmokeTestCase
         check('capabilities 出口退出码 0', $code === 0, $out);
         $json = \json_decode($out, true);
         check('capabilities 输出是合法 JSON', \is_array($json), \substr($out, 0, 120));
-        check('capabilities 仍报协议版本', ($json['protocol'] ?? null) === 1);
+        check(
+            'capabilities 仍报协议版本',
+            // 与常量比而不是写死数字：这条判据要钉的是"子进程跑的是这份代码"，
+            // 不是"版本号是几"。写死数字的话，每次升版都红一次，而那次红跟
+            // 本文件要守的边界毫无关系 —— 红灯指错地方比不亮更贵。
+            ($json['protocol'] ?? null) === Capabilities::VERSION,
+            '实际 ' . \json_encode($json['protocol'] ?? null) . '，期望 ' . Capabilities::VERSION,
+        );
 
         [$helpCode, $help] = $this->runCli('debug-brief.php', '--help');
         check('brief --help 退出码 0', $helpCode === 0, $help);

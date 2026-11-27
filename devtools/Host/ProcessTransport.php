@@ -87,6 +87,18 @@ final class ProcessTransport implements Transport
         }
     }
 
+    /**
+     * 管道上答不了这个问题，一律 `false`。
+     *
+     * Windows 的匿名管道连 `stream_select` 都不支持（{@see SingleServer} 里记着这条，
+     * 它的 `canPoll()` 正因此返回 false）。回 `false` 而不是抛：调用方据此退化成
+     * 轮询，而不是把"这条通道不支持主动等待"当成故障。
+     */
+    public function readable(int $timeoutMs): bool
+    {
+        return false;
+    }
+
     public function write(string $line): void
     {
         if ($this->closed) {

@@ -41,11 +41,22 @@ final class Capabilities
      * ★ 加方法 / 加查询 / 加可选字段**不加版本**：能力目录本身就是用来声明这些的，
      *   把它塞进版本号等于让每个新查询都逼所有客户端升一次主版本。
      * 只有**同名字段语义变了**或旧客户端会误解新响应时才加一。
+     *
+     * 2：多了事件——一种**没有 `id` 的消息**。按版本 1 实现的客户端读到它会把
+     * "id 对不上"判成通道错乱并抛 `BAD_RESPONSE`，所以这是必须加一的那种。
      */
-    public const int VERSION = 1;
+    public const int VERSION = 2;
 
-    /** 比它更老的客户端不被这份声明接受；`null`（没报版本）按当前版本处理。 */
-    public const int MIN_VERSION = 1;
+    /**
+     * 比它更老的客户端不被这份声明接受；`null`（没报版本）按当前版本处理。
+     *
+     * 直接等于 {@see self::VERSION}：**不保留向下区间**。区间是给"要同时伺候两代
+     * 客户端"留的位置，而这里没有那种需求（仓库里没有版本 1 的客户端）。
+     * 留 `1` 反而有害：仓根那个 AOT 产物可能是上一版生成的，它发 `protocol: 1`
+     * 时该收到明确的 `unsupported_version`（去重新构建），而不是一个看不出原因的
+     * `bad_response`（以为通道乱了）。
+     */
+    public const int MIN_VERSION = 2;
 
     /**
      * 方法的角色与参数。`Methods::ALL` 是能力面的唯一成员来源，这张表只补元数据；
@@ -97,6 +108,9 @@ final class Capabilities
             'clientProtocol' => $clientVersion,
             'methods' => self::methods(),
             'queries' => self::queries(),
+            // 事件是第三种方向（宿主自己开口），所以单独一栏而不是塞进 methods：
+            // 客户端按它决定"要不要等某个事件"，与动词的"能不能调"是两个问题。
+            'events' => Events::describe(),
             'errors' => ProtocolError::ALL,
         ];
     }

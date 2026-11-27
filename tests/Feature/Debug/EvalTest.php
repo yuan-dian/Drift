@@ -57,7 +57,7 @@ final class EvalTest extends SmokeTestCase
             $s,
         ));
 
-        return $transport->decoded();
+        return $transport->replies();
     }
 
     /** @param array<array-key, mixed> $params */
@@ -99,7 +99,7 @@ final class EvalTest extends SmokeTestCase
         (new Host(new SingleServer($t)))->serve(static fn(Script $s): array => Runner::open(
             $s->target, $s->width, $s->height, $s->meta(), $s,
         ));
-        $replies = $t->decoded();
+        $replies = $t->replies();
         check('Host 不传参数时 eval 默认关', ($replies[1]['error']['code'] ?? null) === ProtocolError::NOT_APPLICABLE, self::show($replies[1] ?? null));
 
         // 协议型出口不进 driver 的 help 判据，单独钉直跑与路由两级同源。
