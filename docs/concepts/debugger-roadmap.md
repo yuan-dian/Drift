@@ -10,7 +10,7 @@
 
 1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
 2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），并已能**按帧回放**（A67：出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照 —— 它只在"当时的类型 / 父与现在不同"时才值得立预算。
-3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移；DevTools 的宿主 / 视图 / CLI 与出口脚本已整体收进 `devtools/`（A73），整目录可独立拆仓；八个取证据出口的十步生命周期收敛到 `SessionScope`，report 的编排搬进 `ReportRunner`（A74），加出口不再复制一遍来源解析与收口；收敛前的三个平级旧名退役（A75），`drift debug <动词>` 是唯一入口；出口的失败面（顺序 / 资源 / `finally` / 退出码）按同一套表收口（A76）。
+3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探）；文档已收口成三类页面（任务型 / 参考型生成块 / 机制型）且出口数只有一个真相源（A78：架构图不再抄数字、黄金路径按症状组织）；DevTools 的宿主 / 视图 / CLI 与出口脚本已整体收进 `devtools/`（A73），整目录可独立拆仓；八个取证据出口的十步生命周期收敛到 `SessionScope`，report 的编排搬进 `ReportRunner`（A74），加出口不再复制一遍来源解析与收口；收敛前的三个平级旧名退役（A75），`drift debug <动词>` 是唯一入口；出口的失败面（顺序 / 资源 / `finally` / 退出码）按同一套表收口（A76）。
 
 这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。A72 把这条线从“人工清单”改成了“目录”：审查面物理住 `devtools/`，`sources` 只含 `src` ⇒ 它不在编译范围里，`ignore` 表因此从 24 条回到 3 条（且与调试无关）。
 
@@ -52,7 +52,7 @@
 ## 目标架构
 
 ```text
-L3 消费者     CLI 22 出口        Web 视图         AI / CI          IDE（未来）
+L3 消费者     CLI 出口（清单见命令速查）  Web 视图        AI / CI          IDE（未来）
                     \              |               |               /
 L2 投影        Brief / Findings  Inspector     Timeline     Network     Async     Tree     Loop     Paint     Memory
                     \              |               |               /
@@ -239,7 +239,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 内存域 | 已由 P8 的 dev 内省交付（`debug probe --what=memory`）：进程标量 + 活树对象存活跨度。**不升成 L1 证据域** —— 字节数 PHP 拿不到、跨帧趋势离了当下复算不了（A55）。若将来真要进 CI 的泄漏趋势，另立可复算格式 | P4 | L |
 | **P6** | 异步域 | Future / worker job 时间线；队列深度；结算延迟；取消 | P4 | L |
 | **P6** | 无障碍域 | 已落地（A77）：`SemanticsQuery` 读生产 `SemanticsBuilder` 现建的树，三查询 `semantics` / `semanticsNode` / `semanticsHit` + `debug a11y` 出口；L2 内省，不进包不进指纹，三态字段独立、命中取最深；语义下标 ≠ 结构节点号，不做跨界跳转 | P4 | M |
-| **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
+| **P7** | 产品化文档 | 已落地（A78）：`debug-walkthrough` 任务型 5 分钟黄金路径（按症状组织、动词 ⊆ Registry、参数指向生成块）；架构图不再写死出口数，清单只在命令速查生成块；`WalkthroughDocTest` 4 条 + 真文件变异咬红（错误动词 / 写死出口数 / 反假绿） | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 已落地（A71）：`Methods::CAPABILITIES` 在 open 前可问；`Capabilities` 从动词表 / 查询面 / 错误表单向派生并双向闭合；宿主的 `available` 与分派拒绝同源；信封版本非法回 `unsupported_version`，老宿主缺动词回 `unknown_method` 表示太老；`debug capabilities` 与 Web 页眉共用查询，离线包同形 | P3 | M |
 | **P8** | DevTools 物理边界 | 已落地（A73）：`tools/Debug` 的 72 个类（Host 20 / Cli 7 / View 32 / Rules 13）与 22 个出口脚本全部进 `devtools/`，命名空间统一到 `Drift\DevTools\Host|Cli|View`，`Drift\Dev\Debug` 在 PHP 源码里零剩余；出口在 `devtools/bin/`，由 `devtools/autoload.php` 一处 bootstrap，`Entry::path()` 与宿主路径相对 `devtools/` 推导、不依赖仓库根。`DevToolsBoundaryTest` 5 条 / 33 断言 + 7 组变异全咬红（含共享启动器分流）；AOT 产物字节数不变 | A72 | S |
 | **P8** | 编译归属守门 | 已落地并升级（A54 → A72）：`ignore` 不再承担调试边界（24 条调试条目已删），审查面物理住 `devtools/`、`sources` 只含 `../../src`；`tools/check-debug-scope.php` 改判四条**结构断言**——`src/Debug` 恰好是 17 项写面、`src` 的代码不引用 `Drift\DevTools\`（注释不算）、没有任何应用的 sources 把 `devtools/` 收进编译范围、`ignore` 不得再有 A54 时代条目；`--selftest` 16 条合成用例全咬红，8 个应用全绿，已接 `verify` 工作流。A54 时代实测 showcase −7,931 行 / −39% 的收益保留（现在由位置保证，不再由清单） | A54 | S |
@@ -267,7 +267,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 |---|---|---|
 | **生产可用** | AOT 常驻默认开销 < 2%；崩溃文件可检出截断；多窗口隔离；慢帧可回看；**产物不含审查面**（目录 + sources 划界，A72） | P1、P3、P4、P8 |
 | **调试体验** | 真窗口 attach；点选 + 高亮；因果树 / 时间线 / 绘制页可在同一会话里联动 | P2、P3 |
-| **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议版本与能力发现已落地（A71）；使用指南可独立走通 | P5、P7 |
+| **生态** | 规则可注册 / 可关 / 有严重度；基线回归进 CI；协议版本与能力发现已落地（A71）；任务型使用指南可独立走通（A78：从简报到定位的 5 分钟路径，动词全部解析到 Registry） | P5、P7 |
 
 三扇门都过，才谈“成熟 DevTools”。只过第一扇，是“可用的生产诊断器”；只过第二扇，是“好用的开发检查器”；三扇都过，才是别人愿意长期依赖的工具。
 

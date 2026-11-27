@@ -27,6 +27,7 @@
 | 扩展控件：组合还是自绘、怎么接线 | [自定义控件](guides/custom-widgets.md) |
 | 建语义树、接 Windows UIA 无障碍 | [语义与无障碍](guides/semantics.md) |
 | 用平台端口、处理多窗口、DPI、IME 与 ABI | [平台与窗口](guides/platform-ports.md) |
+| 第一次用调试器，5 分钟从简报定位到节点 | [调试器上手](guides/debug-walkthrough.md) |
 | 诊断静默失败、看懂错误码与退化日志 | [调试](guides/debugging.md) |
 | 跑 T0/T1/T2、理解 CI 与什么时候必须上真机 | [测试与验证](guides/testing.md) |
 | 获取 Skia/字体包、管版本、发版 | [依赖与发布](guides/dependencies-and-release.md) |
