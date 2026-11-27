@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\DevTools\View;
 
+use Drift\DevTools\Json;
 use Drift\DevTools\Protocol\ProtocolError;
+use Drift\DevTools\Protocol\RemoteSession;
 use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
 use Drift\DevTools\View\Rules\RuleSelection;
@@ -39,6 +41,10 @@ final class Web
      * @param null|\Closure(string, array<string, mixed>): array<string, mixed> $control
      *   `pause` / `resume` / `highlight` / `pick` 的落地：`(动作, 参数)` 进，回执数组出。
      *   `null` = 这个会话没有干预面（离线读包 / 从属宿主），`/api/ctl` 一律 501。
+     * @param ?RemoteSession $events
+     *   `/api/events` 的事件源。`null` = 这个会话没有事件源（离线读包 / 自己跑的会话），
+     *   那时流里只推 `tick`。**不能靠"试一下有没有事件"来判**：EventSource 拿到 501
+     *   会当成网络错误反复重连，而"没有事件源"是正常状态不是故障。
      */
     public function __construct(
         private readonly SessionQueries $queries,
@@ -49,6 +55,7 @@ final class Web
         ?RuleSelection $selection = null,
         private readonly ?string $evidenceDir = null,
         private readonly ?string $sessionId = null,
+        private readonly ?RemoteSession $events = null,
     ) {
         $this->selection = $selection ?? RuleSelection::all();
     }
@@ -87,7 +94,9 @@ final class Web
     /**
      * @param array<string, mixed> $query 已解析的查询串
      * @param array<string, mixed> $body  POST 的 JSON 体（只 `/api/ctl` 用）
-     * @return array{status: int, type: string, body: string}
+     *
+     * @return array{status: int, type: string, body?: string, stream?: \Closure(): ?string}
+     *   `body` 是一次性响应；`stream` 是流式（只有 `/api/events` 走这条）。
      */
     public function route(string $method, string $path, array $query = [], array $body = []): array
     {
@@ -163,6 +172,9 @@ final class Web
             // 前端靠它决定要不要换图 —— 拿不到新图就不换，而不是换成空。
             '/api/shot' => $this->shot($query),
             '/api/shot/ping' => $this->shotPing(),
+            // 事件流（A80）。这是唯一一个**不结束**的响应：头写完就一直挂着，
+            // 由 `HttpServer` 的 tick 反复问"现在有什么"。
+            '/api/events' => $this->events(),
             // 搜索与节点卡是同一个循环的两半：先按文本拿到地址，再按地址取事实。
             // 页面不自己过滤 `/api/boxes` 的结果 —— 那会在前端重写一遍匹配规则，
             // 而"同一次搜索三种实现"正是这一层要避免的。
@@ -446,6 +458,65 @@ final class Web
         }
 
         return ['status' => 200, 'type' => 'image/png', 'body' => $body];
+    }
+
+    /**
+     * `/api/events`：SSE 流。**唯一一个不结束的响应。**
+     *
+     * ## 两种事件，一个驱动方式
+     *
+     * - `frame`：宿主真的推进了一帧（来自 `RemoteSession::waitEvents()`）。这是
+     *   真推送 —— 页面第一次不用猜"什么时候该看一眼"。
+     * - `tick`：**服务端**按节奏推的"该看一眼了"。没有事件源时（离线读包 / 自己跑
+     *   的会话）它就是唯一的信号，节奏与原来 `setInterval(poll, 500)` 一致；有事件源
+     *   时它退成 2 秒一次的兜底 —— 状态可能变了却没有帧（暂停、跑完），而"暂停了"
+     *   这件事不该等到下一帧才知道。
+     *
+     * 把轮询从浏览器搬到服务端，买的是**页面只有一种驱动方式**：前端不用写
+     * "有事件源走这条路、没有走那条"的分支，也就不存在两条路各自漂。
+     *
+     * ## `tick` 不是协议事件
+     *
+     * 它不进 `Events::ALL`（那是宿主 ↔ 客户端的协议目录），只是 Web 这一层给页面
+     * 的保活信号。混进协议目录会让"宿主能发什么"和"这个页面多久醒一次"变成同一份
+     * 名单，而它们的变更理由完全不同。
+     *
+     * @return array{status: int, type: string, stream: \Closure(): ?string}
+     */
+    private function events(): array
+    {
+        $live = $this->events;
+        $last = 0.0;
+        // 有事件源时 2 秒兜底一次（状态变化不一定伴随帧）；没有就按原来的 500ms。
+        $gap = $live === null ? 0.5 : 2.0;
+
+        return [
+            'status' => 200,
+            'type' => 'text/event-stream; charset=utf-8',
+            'stream' => static function () use ($live, $gap, &$last): ?string {
+                if ($live !== null) {
+                    $events = $live->waitEvents(0);
+                    if ($events !== []) {
+                        $out = '';
+                        foreach ($events as $one) {
+                            $out .= 'event: ' . $one['event'] . "\n"
+                                . 'id: ' . $one['seq'] . "\n"
+                                . 'data: ' . Json::encode($one['data']) . "\n\n";
+                        }
+
+                        return $out;
+                    }
+                }
+
+                $now = \microtime(true);
+                if ($now - $last < $gap) {
+                    return null;
+                }
+                $last = $now;
+
+                return "event: tick\ndata: {}\n\n";
+            },
+        ];
     }
 
     /**

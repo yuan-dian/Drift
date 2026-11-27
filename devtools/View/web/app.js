@@ -229,10 +229,51 @@ async function boot() {
 
   resetView();   // 显式归一：不依赖之前任何一次 draw 留下的 zoom / offset
   setFollow(state.follow);   // 同步按钮的按下态（地址带了 frame= 时是停住的）
-  // 500ms：宿主拍帧上限是 4 fps，再快也拿不到新图；而 1s 会让"跟着应用动"
-  // 明显滞后 —— 用户点一下按钮，画面要等一秒才换，就像没接上。
-  setInterval(poll, 500);
+  // 不再定时轮询：改由服务端 `/api/events` 说"该看一眼了"。
+  // 原来这里每 500ms 盲问一次，依据是"宿主拍帧上限 4 fps" —— 也就是说绝大多数
+  // 轮次问到的都是同一张图。
+  startEvents();
   pollShot();
+}
+
+/**
+ * 事件驱动：服务端说"该看一眼了"才查。
+ *
+ * ★ `frame` = 宿主真推进了一帧；`tick` = 服务端的兜底节拍（离线包 / 静止的应用，
+ *   以及"状态变了但没有帧"这种情况）。两种都只是"该看一眼了"，页面不必区分 ——
+ *   这正是把轮询搬到服务端买到的东西：前端只有一条驱动路径。
+ *
+ * ★ 200ms 合并窗口**不是"又变成轮询"**：轮询是"没有信号也按点问"，这里是
+ *   "有信号才问，且把同一波信号合成一次"。一帧一条事件能到 60 次/秒，而宿主
+ *   拍帧上限只有 4 fps，不合并就是拿 60 次请求换 4 张图。静止的应用则一条都不发。
+ */
+function startEvents() {
+  // 没有 EventSource 的浏览器不自动刷新，但也不退化成定时器 —— 一条不查比
+  // "查得慢"更难发现，所以这里先查一屏，剩下的交给用户手动刷新。
+  if (!window.EventSource) {
+    poll();
+    return;
+  }
+
+  const es = new EventSource('/api/events');
+  let pending = null;
+  let opened = false;
+
+  const wake = () => {
+    if (pending) return;
+    pending = setTimeout(() => {
+      pending = null;
+      poll();
+    }, 200);
+  };
+
+  es.addEventListener('frame', wake);
+  es.addEventListener('tick', wake);
+  // EventSource 会自己重连；重连成功说明断过一段，那期间可能错过了帧，补一屏。
+  es.onopen = () => {
+    if (opened) wake();
+    opened = true;
+  };
 }
 
 /**

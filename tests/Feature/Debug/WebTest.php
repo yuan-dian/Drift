@@ -284,6 +284,81 @@ final class WebTest extends SmokeTestCase
         check('没有把 0.0.0.0 当默认', !\preg_match('/\$host\s*=\s*\'0\.0\.0\.0\'/', $src));
     }
 
+    // ------------------------------------------------------------ 事件流（A80）
+
+    /**
+     * SSE 是流式；一条流打开时别的请求照常；断开后服务还在。
+     *
+     * ## 中间那条才是重点
+     *
+     * `HttpServer` 早先是"一次只服务一条连接"。那种实现下，一条 SSE 会把唯一的
+     * 服务位占死，下面这条 `/api/state` 必然超时 —— **它是"事件循环真的存在"的
+     * 唯一可判形式**，改别的地方绕不过去。
+     */
+    public function testEventsStreamIsSseAndDoesNotBlockOtherRequests(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=1']);
+
+        $stream = @\stream_socket_client("tcp://127.0.0.1:{$port}", $errno, $errstr, 5);
+        self::assertIsResource($stream, "连不上 {$port}：{$errstr}");
+        \fwrite($stream, "GET /api/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        \stream_set_blocking($stream, false);
+
+        // 这个会话没有事件源（自己跑的），所以只有 tick；间隔 500ms，2 秒够。
+        $got = '';
+        $deadline = \microtime(true) + 2.0;
+        while (\microtime(true) < $deadline && !\str_contains($got, 'event: tick')) {
+            \usleep(20000);
+            $chunk = @\fread($stream, 4096);
+            if (\is_string($chunk)) {
+                $got .= $chunk;
+            }
+        }
+
+        check('响应是 text/event-stream', \str_contains($got, 'text/event-stream'), \substr($got, 0, 100));
+        check('流里推了 tick', \str_contains($got, 'event: tick'), \substr($got, -100));
+        check('流式响应没有 Content-Length', !\str_contains(\strstr($got, "\r\n\r\n", true) ?: '', 'Content-Length'));
+
+        $t0 = \microtime(true);
+        $state = $this->json($port, '/api/state');
+        $cost = \microtime(true) - $t0;
+        check('流开着时另一个请求照常应答', isset($state['state']), \json_encode($state));
+        check('而且是立刻应答（< 1s）', $cost < 1.0, \sprintf('%.0f ms', $cost * 1000));
+
+        \fclose($stream);
+        $after = $this->json($port, '/api/state');
+        check('断开之后服务还在', isset($after['state']), \json_encode($after));
+    }
+
+    /**
+     * 静态资源根跟着 A73 的搬迁走。
+     *
+     * 曾经它指着 `devtools/bin/Debug/View/web`（不存在），于是 `/`、`/app.js`、
+     * `/style.css` 全 404 —— `/api/*` 全对，页面白屏。这种错只有"真的去要一次
+     * 静态资源"才看得见，所以判据必须真的去要。
+     */
+    public function testStaticAssetsAreServedFromTheRealRoot(): void
+    {
+        $port = $this->startWeb(['--page=table', '--frames=1']);
+
+        $index = $this->raw($port, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        check('首页 200', \str_contains($index, '200 OK'), \substr($index, 0, 60));
+        check(
+            '首页是 HTML',
+            \str_contains($index, '<html') || \str_contains($index, '<!DOCTYPE'),
+            \substr($index, -120),
+        );
+
+        $js = $this->raw($port, "GET /app.js HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+        check('app.js 200', \str_contains($js, '200 OK'), \substr($js, 0, 60));
+
+        // 判据 10：页面不再自己定时轮询。静态检查，不跑浏览器。
+        // 查调用形状 `setInterval(` 而不是裸词：注释里提到它是在解释"为什么不用"。
+        $body = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        check('app.js 里没有 setInterval 调用', !\str_contains($body, 'setInterval('), '还有定时轮询');
+        check('app.js 用 EventSource', \str_contains($body, 'EventSource'), '没连事件流');
+    }
+
     // ------------------------------------------------------------ 辅助
 
     /** @param list<string> $args */

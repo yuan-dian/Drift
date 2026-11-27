@@ -132,7 +132,10 @@ try {
     // 底图与几何必须来自同一个会话：目录按会话号分开，别让另一个宿主覆盖这张图。
     $shotDirFor = $attach ? Web::shotDirFor((string) $evidenceDir, $source->sessionId()) : null;
 
-    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/Debug/View/web', $control, $selection, $evidenceDir, $source->sessionId());
+    // `../View/web`：A73 把审查面整体搬进 `devtools/` 之后，这个路径还指着
+    // `devtools/bin/Debug/View/web`（不存在），于是 `/`、`/app.js`、`/style.css`
+    // 全部 404 —— 只有 `/api/*` 能用，页面白屏。`__DIR__` 是 `devtools/bin`。
+    $web = new Web($source->queries(), $label, $thresholds, __DIR__ . '/../View/web', $control, $selection, $evidenceDir, $source->sessionId(), $live);
     $server = new HttpServer($host, $port);
 
     \fwrite(\STDERR, \sprintf(
