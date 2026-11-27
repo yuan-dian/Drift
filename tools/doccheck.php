@@ -168,7 +168,7 @@ foreach (explode("\n", $decisions) as $line) {
     }
 }
 
-foreach (\Drift\Dev\Debug\Cli\Doc::problems((string) file_get_contents($docs . '/reference/cli.md')) as $problem) {
+foreach (\Drift\DevTools\Cli\Doc::problems((string) file_get_contents($docs . '/reference/cli.md')) as $problem) {
     $errors[] = 'docs/reference/cli.md: ' . $problem;
 }
 

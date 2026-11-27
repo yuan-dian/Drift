@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\Fit;
-use Drift\Dev\Debug\View\Table;
+use Drift\DevTools\View\Fit;
+use Drift\DevTools\View\Table;
 use PHPUnit\Framework\TestCase;
 
 /**

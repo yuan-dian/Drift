@@ -10,7 +10,7 @@
 
 1. **生产可用线**：录制开销已有量具与数字，多窗口隔离已落地（A53），AOT 常驻黑匣子已落地（A60：标量环 + 崩溃即落盘）；可恢复致命错误已作为独立面包屑落盘（A61），native 崩溃日志已附同一份黑匣子 sidecar（A62）。
 2. **调试体验线**：dev 态已能 attach 正在跑的真窗口（A57），select / highlight / 盒叠加、绘制归因（重画集合 + 层缓存命中率）、搜索（`find` 回地址）均已落地；`pick` 已能接活窗口点击（A58）；结构树已作为节点注册表投影接进 CLI 与 Web（A64），并已能**按帧回放**（A67：出生 / 离开帧过滤，已回收节点在它活着的帧里照样画出），与时间轴、网络、异步泳道共用同一选中态。仍缺的是逐帧完整结构快照 —— 它只在"当时的类型 / 父与现在不同"时才值得立预算。
-3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移。
+3. **生态线**：发现规则已注册表化并带严重度、开关与基线回归，但无插件式外部规则；协议现在有版本与能力发现（A71：先问再做，目录从声明派生，不再靠 `unknown_method` 试探），文档仍存在局部漂移；DevTools 的宿主 / 视图 / CLI 与出口脚本已整体收进 `devtools/`（A73），整目录可独立拆仓。
 
 这三条之外还有一条**交付形态线**，它是混合模型独有的：dev 壳零编译（`sources` 不含 `src`），AOT 侧全量编译且无死码消除。所以调试代码不能按“是不是调试”一刀切，得按“能不能进产物”分层归属（A54）；而属性 / 内存 / 报文 / 调用链这类**复算不了**的内省，应该交回 PHP 语言本身，而不是自己再实现一遍（A55）。实测 AOT 产物里 9.3% 是调试代码，其中约四成发布态永不执行。A72 把这条线从“人工清单”改成了“目录”：审查面物理住 `devtools/`，`sources` 只含 `src` ⇒ 它不在编译范围里，`ignore` 表因此从 24 条回到 3 条（且与调试无关）。
 
@@ -36,7 +36,7 @@
 | Web 视图 | 切片：几何画布（无真机图时以线框为主视图）+ 帧 / 网络 / 异步泳道 + 结构树（按帧回放，标出这一帧重建的节点）+ 发现 + 节点卡 + 搜索；请求详情可按需展开脱敏报文；结构树 ↔ 画布双向悬停联动（`state.hover` 单一真相，Chrome Elements 同款），悬停事实写在同一行 hint 里 | Chrome/Flutter 多标签 | 树、节点卡、报文附件、两帧结构对比已接；缺源码面板 |
 | 实时 attach | 切片：dev 壳可 attach 正在跑的真窗口（`DRIFT_DEBUG_LIVE=1`），pause / step / query 走同一协议；`t` 来自墙钟⇒不可重放，AOT 发布态不做（A57）；布防后真窗口点击转 `pick` → `highlight`（A58） | Chrome、Flutter、GammaRay | 多 target 并列视图已由 A59 落地；真正跨窗口归因仍未做 |
 | 多窗口 / 多 target | 已落地：每窗口一份录制器互不串证据（A53）；`Discovery` 数组与多会话点名早已生效；`debug targets` 把所有活会话并列成一份只读视图（A59） | 成熟 DevTools 多 target | S2 前置已清；并列看得见，归因要等采集层给全局节点 id |
-| 编译归属（哪些调试代码进产物） | 已落地并升级（A54 → A72）：审查面物理住 `devtools/`，`sources` 只含 `../../src` ⇒ 不需要任何 ignore 条目（表从 24 条回到 3 条）；`check-debug-scope` 改判**结构**（`src/Debug` 只许写面 / `src` 不得引用 `Drift\DevTools\` / 没有任何 sources 收进 devtools / ignore 无遗留条目），接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
+| 编译归属（哪些调试代码进产物） | 已落地并升级（A54 → A72 → A73）：整个 DevTools（审查面 + 宿主 + 视图 + CLI + 22 个出口）物理住 `devtools/`，`sources` 只含 `../../src` ⇒ 不需要任何 ignore 条目（表从 24 条回到 3 条）；`check-debug-scope` 改判**结构**（`src/Debug` 只许写面 / `src` 不得引用 `Drift\DevTools\` / 没有任何 sources 收进 devtools / ignore 无遗留条目），接进 `verify` | 成熟框架不暴露这层 | 只有混合模型才有这条线（A54） |
 | 交互式提问（任意表达式） | 已落地：`debug eval` 对活宿主求值，默认关（`serve --allow-eval`）、只绑 loopback、不是证据（A55）；离线包拒绝，求值前后比指纹报 `evidenceChanged` | Chrome Console、Flutter Inspector eval | 补上 dev 壳最大的体验缺口；缺多会话上下文切换 |
 | 绘制 / layer / GPU | 切片：重画集合 + 层缓存命中 / 未命中原因 + 60 帧窗口 | Chrome Layers、Flutter Raster、Unity Frame Debugger | 归因已有；缺 layer 树、绘制矩形与 GPU 段 |
 | 内存 / 泄漏 | 已落地：`debug probe --what=memory` 用 `gc_status()` + `memory_get_usage()` 报进程标量，`WeakMap` 台账给每个类型的对象存活跨度（跨查询累积，不阻止 GC）；AOT 侧不采、不进包、不进指纹（A55） | Chrome Memory、Flutter Memory、Tracy | 不做堆转储与字节数（PHP 无此 API），只给能站得住的存活跨度 |
@@ -167,7 +167,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 
 **已落地**（规则注册表 + 严重度 + 开关）：
 
-- 九个规则类住在 `tools/Debug/View/Rules/`，`Brief` 从 852 行降到约 330 行，只剩编排、覆盖度与兜底。`RuleRegistry::verify()` 在**运行时**校验"规则声明的编号 ↔ `Finding::RULE_VERSIONS`"双向闭合 —— 此前靠单元测试守，测试不跑就不守。
+- 九个规则类住在 `devtools/View/Rules/`，`Brief` 从 852 行降到约 330 行，只剩编排、覆盖度与兜底。`RuleRegistry::verify()` 在**运行时**校验"规则声明的编号 ↔ `Finding::RULE_VERSIONS`"双向闭合 —— 此前靠单元测试守，测试不跑就不守。
 - `--rules` 打印目录（编号 / 严重度 / 版本 / 说明），由注册表生成，不另写一份文档。
 - 三处与计划不同的取舍：
   1. **抽象类而非接口**：`ids()` / `version()` / `finding()` 需要默认实现，PHP 接口给不了。`finding()` 让严重度由规则盖章，不靠每条 `new Finding()` 各写一遍 —— 两边不一致时报告看不出来，只有 `--min-severity` 会漏行。
@@ -240,6 +240,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P6** | 无障碍域 | 语义树 + UIA 属性查询；与现有 UIA 实现共用一份树 | P4 | M |
 | **P7** | 产品化文档 | 任务型《调试器使用指南》；从 brief 到定位的 5 分钟路径；架构图与 CLI 手册同源 | P0、P5 | M |
 | **P7** | 协议版本与能力发现 | 已落地（A71）：`Methods::CAPABILITIES` 在 open 前可问；`Capabilities` 从动词表 / 查询面 / 错误表单向派生并双向闭合；宿主的 `available` 与分派拒绝同源；信封版本非法回 `unsupported_version`，老宿主缺动词回 `unknown_method` 表示太老；`debug capabilities` 与 Web 页眉共用查询，离线包同形 | P3 | M |
+| **P8** | DevTools 物理边界 | 已落地（A73）：`tools/Debug` 的 72 个类（Host 20 / Cli 7 / View 32 / Rules 13）与 22 个出口脚本全部进 `devtools/`，命名空间统一到 `Drift\DevTools\Host|Cli|View`，`Drift\Dev\Debug` 在 PHP 源码里零剩余；出口在 `devtools/bin/`，由 `devtools/autoload.php` 一处 bootstrap，`Entry::path()` 与宿主路径相对 `devtools/` 推导、不依赖仓库根。`DevToolsBoundaryTest` 5 条 / 33 断言 + 7 组变异全咬红（含共享启动器分流）；AOT 产物字节数不变 | A72 | S |
 | **P8** | 编译归属守门 | 已落地并升级（A54 → A72）：`ignore` 不再承担调试边界（24 条调试条目已删），审查面物理住 `devtools/`、`sources` 只含 `../../src`；`tools/check-debug-scope.php` 改判四条**结构断言**——`src/Debug` 恰好是 17 项写面、`src` 的代码不引用 `Drift\DevTools\`（注释不算）、没有任何应用的 sources 把 `devtools/` 收进编译范围、`ignore` 不得再有 A54 时代条目；`--selftest` 16 条合成用例全咬红，8 个应用全绿，已接 `verify` 工作流。A54 时代实测 showcase −7,931 行 / −39% 的收益保留（现在由位置保证，不再由清单） | A54 | S |
 | **P8** | `debug eval` 出口 | 已落地：`Methods::EVAL` + `Evaluator` + `debug-eval.php`；对活宿主求值（`$app`/`$session`/`$node`），默认关（`serve --allow-eval`）、只绑 loopback；求值走 PHP 原语规范化（对象用 `__debugInfo`）、深度 4 / 宽度 40 有界；前后比指纹报 `evidenceChanged`；**不是证据、不进包、不进指纹**（A55）；7 条判据 + 7 组变异全咬红，真进程往返已验 | A55 | S |
 | **P8** | 结构树导航 | 已落地（A64）：`tree(root, depth, limit, frame)` 从节点注册表投影扁平先序行；断父 / 孤儿 / 环与深度 / 条数截断都自报；几何从 `boxes(frame)` 一次对齐，CLI `debug tree` 与 Web 侧栏共用查询，选中写宿主 `highlight` 并轮询校正。不新增证据域 / 预算 / 指纹 | A55、A64 |

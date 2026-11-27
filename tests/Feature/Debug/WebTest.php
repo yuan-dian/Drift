@@ -4,10 +4,10 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\View\Brief;
-use Drift\Dev\Debug\View\BriefText;
-use Drift\Dev\Debug\View\Facts;
-use Drift\Dev\Debug\View\Web;
+use Drift\DevTools\View\Brief;
+use Drift\DevTools\View\BriefText;
+use Drift\DevTools\View\Facts;
+use Drift\DevTools\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -77,7 +77,7 @@ final class WebTest extends SmokeTestCase
         }
         check('投影带阈值', isset($projection['thresholds']['slowMs']));
         check('投影带覆盖度', isset($projection['coverage']['complete']));
-        check('投影只回发现的对象', $projection['findings'] === [] || $projection['findings'][0] instanceof \Drift\Dev\Debug\View\Finding);
+        check('投影只回发现的对象', $projection['findings'] === [] || $projection['findings'][0] instanceof \Drift\DevTools\View\Finding);
 
         $tight = BriefText::render($facts, $projection, 8, 100);
         $wide = BriefText::render($facts, $projection, 300, 100);
@@ -273,7 +273,7 @@ final class WebTest extends SmokeTestCase
     /** 判据 8：默认只绑 loopback —— 这个服务没有密码。 */
     public function testDefaultBindIsLoopback(): void
     {
-        $ref = new \ReflectionClass(\Drift\Dev\Debug\HttpServer::class);
+        $ref = new \ReflectionClass(\Drift\DevTools\Host\HttpServer::class);
         $src = (string) \file_get_contents((string) $ref->getFileName());
 
         check(
@@ -290,7 +290,7 @@ final class WebTest extends SmokeTestCase
     private function startWeb(array $args): int
     {
         $root = \dirname(__DIR__, 3);
-        $cmd = \array_merge([\PHP_BINARY, $root . '/tools/debug-web.php', '--port=0'], $args);
+        $cmd = \array_merge([\PHP_BINARY, $root . '/devtools/bin/debug-web.php', '--port=0'], $args);
         $proc = \proc_open($cmd, [
             0 => ['file', 'NUL', 'r'],
             1 => ['pipe', 'r'],
@@ -365,7 +365,7 @@ final class WebTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $proc = \proc_open(
-            \array_merge([\PHP_BINARY, $root . '/tools/' . $script], $args),
+            \array_merge([\PHP_BINARY, $root . '/devtools/bin/' . $script], $args),
             [0 => ['file', 'NUL', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $root,
@@ -388,8 +388,8 @@ final class WebTest extends SmokeTestCase
 
     private function queriesFor(): \Drift\DevTools\Session\SessionQueries
     {
-        $script = \Drift\Dev\Debug\Plan::build('table', 800.0, 600.0, ['page' => 1], 2, 1, []);
-        $open = \Drift\Dev\Debug\Runner::open(
+        $script = \Drift\DevTools\Host\Plan::build('table', 800.0, 600.0, ['page' => 1], 2, 1, []);
+        $open = \Drift\DevTools\Host\Runner::open(
             $script->target,
             $script->width,
             $script->height,

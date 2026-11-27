@@ -5,8 +5,8 @@ declare(strict_types=1);
 require getcwd() . '/tools/autoload.php';
 
 use Drift\App\EventLoop;
-use Drift\Dev\Debug\LiveTicker;
-use Drift\Dev\Debug\SocketServer;
+use Drift\DevTools\Host\LiveTicker;
+use Drift\DevTools\Host\SocketServer;
 
 $app = getenv('DRIFT_DEV_APP');
 if ($app === false || $app === '') {

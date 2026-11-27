@@ -7,9 +7,9 @@ use Drift\DevTools\App\Replay;
 use Drift\DevTools\Protocol\RemoteSession;
 use Drift\Debug\Session\Script;
 use Drift\DevTools\Session\SessionQueries;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\ProcessTransport;
-use Drift\Dev\Debug\Runner;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\ProcessTransport;
+use Drift\DevTools\Host\Runner;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -105,7 +105,7 @@ final class TransportTest extends SmokeTestCase
     {
         $transport = ProcessTransport::spawn([
             \PHP_BINARY,
-            \dirname(__DIR__, 3) . '/tools/debug-host.php',
+            \dirname(__DIR__, 3) . '/devtools/bin/debug-host.php',
         ]);
         $session = new RemoteSession($transport);
 
@@ -230,7 +230,7 @@ final class TransportTest extends SmokeTestCase
         $localSession = $opened['session'];
         $remoteSession = new RemoteSession(ProcessTransport::spawn([
             \PHP_BINARY,
-            \dirname(__DIR__, 3) . '/tools/debug-host.php',
+            \dirname(__DIR__, 3) . '/devtools/bin/debug-host.php',
         ]));
 
         try {

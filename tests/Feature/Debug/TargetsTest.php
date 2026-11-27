@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Dev\Debug\Discovery;
+use Drift\DevTools\Host\Discovery;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -98,7 +98,7 @@ final class TargetsTest extends TestCase
         $root = \dirname(__DIR__, 3);
         $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
         $process = \proc_open(
-            [\PHP_BINARY, $root . '/tools/debug-targets.php', '--json'],
+            [\PHP_BINARY, $root . '/devtools/bin/debug-targets.php', '--json'],
             $descriptors,
             $pipes,
             $this->dir,

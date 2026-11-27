@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Dev\Debug\Discovery;
+use Drift\DevTools\Host\Discovery;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**

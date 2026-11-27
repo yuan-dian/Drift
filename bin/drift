@@ -32,8 +32,8 @@ declare(strict_types=1);
  */
 require dirname(__DIR__) . '/tools/autoload.php';
 
-use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\Cli\Registry;
+use Drift\DevTools\Cli\Commands;
+use Drift\DevTools\Cli\Registry;
 
 $root = dirname(__DIR__);
 $args = array_slice($argv, 1);
@@ -42,7 +42,10 @@ $rest = array_slice($args, 1);
 
 /** @return list<string> */
 $build = static function (string $script, array $rest, string $root): array {
-    return [PHP_BINARY, $root . '/tools/' . $script, ...$rest];
+    // 调试出口搬进了 devtools/bin/，工具链本体仍在 tools/；这里按前缀分流。
+    $dir = \str_starts_with($script, 'debug-') ? '/devtools/bin/' : '/tools/';
+
+    return [PHP_BINARY, $root . $dir . $script, ...$rest];
 };
 
 $verify = [PHP_BINARY, $root . '/tests/Verify/verify.php'];
@@ -90,7 +93,7 @@ $debug = static function (array $rest, string $root): array {
     }
 
     if ($verb === '' || \str_starts_with($verb, '-')) {
-        return [PHP_BINARY, $root . '/tools/debug-report.php', ...$rest];
+        return [PHP_BINARY, $root . '/devtools/bin/debug-report.php', ...$rest];
     }
 
     // 拼错的 verb 落到这里：列出可用动词，而不是替人猜一个。

@@ -5,7 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\View\Web;
+use Drift\DevTools\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -107,8 +107,8 @@ final class WebInfoTest extends SmokeTestCase
     /** 发现卡：metric / 判据 / 复算必须是可见节点，不能只在 tooltip 里。 */
     public function testFindingsShowTheirEvidenceInsteadOfHidingItInATooltip(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
-        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/index.html');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/index.html');
 
         $render = $this->functionOf($js, 'function renderFindings(findings)');
         foreach (['f.metric', 'f.threshold', 'f.recheck'] as $field) {
@@ -130,7 +130,7 @@ final class WebInfoTest extends SmokeTestCase
     /** 地址 `frame:1 node:32` 的两个部分必须一起用：只选节点会拿当前帧的几何。 */
     public function testFindingAddressUsesFrameAndNodeTogether(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
         $jump = $this->functionOf($js, 'function jump(address)');
 
         check('地址里的帧号被取用', \str_contains($jump, 'loadFrame(Number(f[1]))'), $jump);
@@ -143,8 +143,8 @@ final class WebInfoTest extends SmokeTestCase
     /** 帧时间轴与全域搜索用的是后端现成查询，页面不另算。 */
     public function testFrameStripAndGlobalSearchAreWired(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
-        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/index.html');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/index.html');
 
         check('时间轴读 /api/frames', \str_contains($js, "get('/api/frames?limit=120')"), 'app.js 没有帧列表接线');
         check('点帧跳到那一帧', \str_contains($js, 'loadFrame(Number(r.id))'), '帧条目没有点击接线');
@@ -156,8 +156,8 @@ final class WebInfoTest extends SmokeTestCase
     /** 无图时区分"这份证据没有"与"宿主还没拍到"，别让人以为坏了。 */
     public function testEmptyShotExplainsItsSource(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
-        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/index.html');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/index.html');
 
         check('只读证据的文案', \str_contains($js, '这份证据没有画面通道'), 'app.js 没区分只读会话');
         check('自走宿主的文案', \str_contains($js, '宿主未拍到新帧'), 'app.js 没区分宿主未拍帧');

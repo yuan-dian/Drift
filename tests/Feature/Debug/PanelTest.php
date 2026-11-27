@@ -5,8 +5,8 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\App\Application;
 use Drift\DevTools\App\DebugSession;
-use Drift\Dev\Debug\View\Fit;
-use Drift\Dev\Debug\View\Panel;
+use Drift\DevTools\View\Fit;
+use Drift\DevTools\View\Panel;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\FakePanelSession;
 use Drift\Dev\Tests\Support\SmokeTestCase;

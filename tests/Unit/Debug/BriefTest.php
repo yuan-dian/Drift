@@ -4,13 +4,13 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Debug;
 
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\View\Brief;
-use Drift\Dev\Debug\View\BriefText;
-use Drift\Dev\Debug\View\Finding;
-use Drift\Dev\Debug\View\Rules\RuleRegistry;
-use Drift\Dev\Debug\View\Rules\RuleSelection;
-use Drift\Dev\Debug\View\Rules\Severity;
-use Drift\Dev\Debug\View\RulesText;
+use Drift\DevTools\View\Brief;
+use Drift\DevTools\View\BriefText;
+use Drift\DevTools\View\Finding;
+use Drift\DevTools\View\Rules\RuleRegistry;
+use Drift\DevTools\View\Rules\RuleSelection;
+use Drift\DevTools\View\Rules\Severity;
+use Drift\DevTools\View\RulesText;
 use PHPUnit\Framework\TestCase;
 
 /**

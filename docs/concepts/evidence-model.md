@@ -429,18 +429,18 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 
 | 期 | 内容 | 判据 | 落点 |
 |---|---|---|---|
-| S1 | 发现 + 简报投影 | 同一证据两次简报逐字节相同；裁剪计数与全量差一致；五个标注案例里仅凭简报与查询能定位到正确帧与节点 | `tools/Debug/View/Brief.php`、`tools/debug-brief.php` |
+| S1 | 发现 + 简报投影 | 同一证据两次简报逐字节相同；裁剪计数与全量差一致；五个标注案例里仅凭简报与查询能定位到正确帧与节点 | `devtools/View/Brief.php`、`devtools/bin/debug-brief.php` |
 | S3a | 结构 + 几何 + 约束链（两种构建态） | 几何四层有真值且跨 JSON 边界不变；约束链两次复算逐字节相同；归不到基类默认的跳明说来源；三种"查不到"分开报；深度截断自报 `cut`/`omitted` | `GeometryRecord`、`Query::constraints/boxModel/boxes` |
 | S3b | 属性（Widget 配置、`State` 字段，仅 dev 反射） | 面板类名与控件实类一致；含基类私有 `mods`、不含 `sealed` 与框架内部态；闭包/资源/NAN 有界编码；循环回 `ref`、脱敏报处数；**不进证据包、不写快照窗口**；与 eval `$node` 看到同一字段集 | `ObjectDump`、`Query::props`（A55 已降 L2） |
 | S3c | 网络骨架 + 按 id 的脱敏报文 | 帧内与 worker 两条路径都记；结算同帧写入回填 `landed` 且 `why` 的边带 `request:N`；归因标记帧末清零；网络 500 条窗口独立于帧 600 且逐域自报；`networkBody` 脱敏报处数、超限截断报原字节、三类 miss 分开报、不进 digest | `NetworkRecord`、`NetworkBodyRecord`、`AsyncHttp` 的 tap |
 | S4 | 跨域对齐：一个节点同时取到因果、几何、网络 | 显式帧贯穿三域；每域回显**实际**命中帧号，几何回退标 `stale`；窗口外帧不被"往前找最近"骗成命中；三类 miss 归一为 `{found,reason,window}`；本地与远端逐字一致 | `Query::align` |
 | S3d | 绘制归因：这一帧画了谁、省了谁 | 重画集合 ⊆ 结构树（每个节点有类型与路径）；集合大小 ≤ 真画次数（命中不是"画过"）；聚合可由逐帧复算；`paint-not-captured` 与"这帧没画"分开；窗口外不 clamp；独立 60 帧窗口有界且自报；证据往返逐值相同 | `Core\PaintObserver`、`PaintRecord`、`Query::paint/repaints` |
-| A63 | 异步时间线：后端调度过的 job | 三后端内侧 tap 落 submit / start / settle / cancel；没装录制器时 tap 返回 0；取消 / 超时保留各自终态；`job:N` 归因同时写进 `landed` 与因果 detail；默认不导出，显式要时导入逐值相同；CLI / Web / 离线读同一查询面 | `AsyncRecord`、`Recorder::tapAsync*`、`Query::async`、`tools/debug-async.php` |
-| S-live | 实时跟随：常驻宿主自走 + 观察者按游标只读连接 | 同一会话的帧序列连续；`--at` 停住记 `paused/at`、跑完记 `finished/null`；访问令牌与会话令牌分开；暂停 / 单步不改脚本指纹 | `tools/Debug/Host.php`、`tools/debug-serve.php`、`tools/debug-brief.php` |
-| S5（Web 切片） | 浏览器视图：几何画布 + 发现，与终端同源 | `/api/brief` 与 `brief --json` 的 findings 逐值相同；页面不重算数字；增量游标无状态；接自走宿主时可暂停 / 单步 / 继续 | `tools/Debug/View/Web.php`、`tools/Debug/View/web/`、`tools/debug-web.php` |
-| S5（搜索切片） | 在证据里找：给一段文本，回一串可追问的地址 | 命中集合 == 自身类型匹配的节点集合（不按祖先路径命中）；每个地址能被对应查询解析；`scanned`/`matched`/`returned` 三数可对账；截断、空窗口、已回收三种"没结果"分开报；不做正则（`Padding\|Text` 按字面找） | `Query::find`、`tools/Debug/View/Find.php`、`/api/find` |
-| S6（暂停 / 单步切片） | 干预只改推进节奏，不改记录 | 自走宿主每推一步回头看控制面；`resume --frames=1` 停在 `paused/step`；`state` 是唯一真相；直跑与中途暂停再跑的脚本指纹相同 | `tools/Debug/Drive.php`、`tools/Debug/Host.php`、`tools/Debug/Cli/Commands.php` |
-| S0 | 证据包：版本化导出 / 导入 + 三指纹分离 | 导出→导入逐字节相同、三指纹逐值不变、损坏包或未知版本拒绝；`EvidenceTest` 9 用例 | `devtools/Session/Evidence.php`、`EvidenceBag.php`、`tools/Debug/Source.php` |
+| A63 | 异步时间线：后端调度过的 job | 三后端内侧 tap 落 submit / start / settle / cancel；没装录制器时 tap 返回 0；取消 / 超时保留各自终态；`job:N` 归因同时写进 `landed` 与因果 detail；默认不导出，显式要时导入逐值相同；CLI / Web / 离线读同一查询面 | `AsyncRecord`、`Recorder::tapAsync*`、`Query::async`、`devtools/bin/debug-async.php` |
+| S-live | 实时跟随：常驻宿主自走 + 观察者按游标只读连接 | 同一会话的帧序列连续；`--at` 停住记 `paused/at`、跑完记 `finished/null`；访问令牌与会话令牌分开；暂停 / 单步不改脚本指纹 | `devtools/Host/Host.php`、`devtools/bin/debug-serve.php`、`devtools/bin/debug-brief.php` |
+| S5（Web 切片） | 浏览器视图：几何画布 + 发现，与终端同源 | `/api/brief` 与 `brief --json` 的 findings 逐值相同；页面不重算数字；增量游标无状态；接自走宿主时可暂停 / 单步 / 继续 | `devtools/View/Web.php`、`devtools/View/web/`、`devtools/bin/debug-web.php` |
+| S5（搜索切片） | 在证据里找：给一段文本，回一串可追问的地址 | 命中集合 == 自身类型匹配的节点集合（不按祖先路径命中）；每个地址能被对应查询解析；`scanned`/`matched`/`returned` 三数可对账；截断、空窗口、已回收三种"没结果"分开报；不做正则（`Padding\|Text` 按字面找） | `Query::find`、`devtools/View/Find.php`、`/api/find` |
+| S6（暂停 / 单步切片） | 干预只改推进节奏，不改记录 | 自走宿主每推一步回头看控制面；`resume --frames=1` 停在 `paused/step`；`state` 是唯一真相；直跑与中途暂停再跑的脚本指纹相同 | `devtools/Host/Drive.php`、`devtools/Host/Host.php`、`devtools/Cli/Commands.php` |
+| S0 | 证据包：版本化导出 / 导入 + 三指纹分离 | 导出→导入逐字节相同、三指纹逐值不变、损坏包或未知版本拒绝；`EvidenceTest` 9 用例 | `devtools/Session/Evidence.php`、`EvidenceBag.php`、`devtools/Host/Source.php` |
 
 | S2 | 常驻黑匣子（发布态，不进证据） | 每应用一份 Core 标量环，帧末唯一写点；Frame 致命异常留第一现场，release 可恢复错误留独立面包屑且立即 flush；文件自报容量 / 总量 / 被覆盖数，最慢帧在覆盖外另留 | `src/Core/BlackBox.php`、`src/Core/Pipeline.php`、`src/Errors.php`（A60/A61） |
 
@@ -450,13 +450,13 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 
 | 主题 | 结论 | 落点 |
 |---|---|---|
-| 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `tools/Debug/Reopen.php`、`tools/Debug/View/LoopReport.php` |
-| 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `tools/Debug/Cli/OptionSet.php`、`tools/Debug/Cli/Parsed.php` |
-| 出口（B7） | 15 个出口只在 Registry 声明；分发与两级 help 都从它派生（`eval` 是协议型出口，不进 schema） | `tools/Debug/Cli/Registry.php`、`bin/drift` |
-| 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`tools/Debug/Source.php` |
-| 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `tools/Debug/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
+| 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `devtools/Host/Reopen.php`、`devtools/View/LoopReport.php` |
+| 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `devtools/Cli/OptionSet.php`、`devtools/Cli/Parsed.php` |
+| 出口（B7） | 15 个出口只在 Registry 声明；分发与两级 help 都从它派生（`eval` 是协议型出口，不进 schema） | `devtools/Cli/Registry.php`、`bin/drift` |
+| 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`devtools/Host/Source.php` |
+| 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `devtools/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
 
-| 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`devtools/Protocol/Methods.php`、`tools/debug-highlight.php` |
+| 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`devtools/Protocol/Methods.php`、`devtools/bin/debug-highlight.php` |
 
 ### 未做（按执行顺序）
 
@@ -479,7 +479,7 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 
 ## 实现校订（原型验证之后）
 
-写了一份原型（`tools/debug-brief.php` + `tools/Debug/View/Brief.php`）：用现有查询面在一张真实页面上算出发现，不新增任何采集。它跑通了，也暴露了十条设计上没写死的东西。这些不是"实现细节"，是会静默给出错误结论的地方：
+写了一份原型（`devtools/bin/debug-brief.php` + `devtools/View/Brief.php`）：用现有查询面在一张真实页面上算出发现，不新增任何采集。它跑通了，也暴露了十条设计上没写死的东西。这些不是"实现细节"，是会静默给出错误结论的地方：
 
 | # | 原来的说法 | 实测暴露 | 改成 |
 |---|---|---|---|

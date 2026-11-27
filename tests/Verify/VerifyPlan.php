@@ -193,7 +193,7 @@ final class VerifyPlan
                 'tier'    => 'full',
                 'class'   => 'behavior',
                 'label'   => '重开同一页三次：因果 / 结构 / 录下的脚本逐值相同（--assert）',
-                'command' => [$php, $root . '/tools/debug-loop.php', '--page=table', '--runs=3', '--assert'],
+                'command' => [$php, $root . '/devtools/bin/debug-loop.php', '--page=table', '--runs=3', '--assert'],
             ],
             'aot' => [
                 'id'      => 'aot',

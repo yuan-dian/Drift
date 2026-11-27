@@ -5,8 +5,8 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\Shot;
-use Drift\Dev\Debug\View\Web;
+use Drift\DevTools\Host\Shot;
+use Drift\DevTools\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Rendering\RasterCanvas;
 
@@ -75,7 +75,7 @@ final class ShotSessionIsolationTest extends SmokeTestCase
     /** web 侧必须把 attach 到的会话号传下去，否则多会话时又退回全局目录。 */
     public function testWebReadsTheAttachedSessionShotDirectory(): void
     {
-        $src = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/debug-web.php');
+        $src = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/bin/debug-web.php');
         check('web 把会话号交给视图', \str_contains($src, '->sessionId()'), $src);
         check('evidence 目录带上会话号', \str_contains($src, 'shotDirFor'), $src);
 

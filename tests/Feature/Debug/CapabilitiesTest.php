@@ -12,12 +12,12 @@ use Drift\DevTools\Protocol\Wire;
 use Drift\DevTools\Session\QueryRouter;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
-use Drift\Dev\Debug\Drive;
-use Drift\Dev\Debug\Host;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\ProcessTransport;
-use Drift\Dev\Debug\Runner;
-use Drift\Dev\Debug\SingleServer;
+use Drift\DevTools\Host\Drive;
+use Drift\DevTools\Host\Host;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\ProcessTransport;
+use Drift\DevTools\Host\Runner;
+use Drift\DevTools\Host\SingleServer;
 use Drift\Dev\Tests\Support\FakeTransport;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
@@ -238,7 +238,7 @@ final class CapabilitiesTest extends SmokeTestCase
 
     public function testRemoteSessionProbesTheHostBeforeOpenOverARealPipe(): void
     {
-        $transport = ProcessTransport::spawn([\PHP_BINARY, \dirname(__DIR__, 3) . '/tools/debug-host.php']);
+        $transport = ProcessTransport::spawn([\PHP_BINARY, \dirname(__DIR__, 3) . '/devtools/bin/debug-host.php']);
         $remote = new RemoteSession($transport);
         try {
             $reply = $remote->capabilities();

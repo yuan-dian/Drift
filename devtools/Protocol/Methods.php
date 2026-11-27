@@ -22,7 +22,7 @@ namespace Drift\DevTools\Protocol;
  * 对端就多一份"哪个先哪个后"的状态要维护，而状态会漂。`script` / `digest` 因此是
  * **查询名**，不是方法名。
  *
- * `eval` 是这条纪律的**唯一例外**，理由写在 {@see \Drift\Dev\Debug\Evaluator}：它要摸
+ * `eval` 是这条纪律的**唯一例外**，理由写在 {@see \Drift\DevTools\Host\Evaluator}：它要摸
  * 活应用，而 `query` 那层刻意不认识应用（离线包没有应用）；`effect` 会写脚本，而
  * 求值明确不进包。它不是"顺手能做的事"，是内省这条独立的线。
  *

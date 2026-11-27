@@ -255,7 +255,7 @@ if (in_array('--selftest', $argv, true)) {
     exit(selftest());
 }
 
-$webDir = $root . '/tools/Debug/View';
+$webDir = $root . '/devtools/View';
 $php = (string) file_get_contents($webDir . '/Web.php');
 $js = (string) file_get_contents($webDir . '/web/app.js');
 $html = (string) file_get_contents($webDir . '/web/index.html');

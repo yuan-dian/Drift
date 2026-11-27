@@ -8,7 +8,7 @@ declare(strict_types=1);
  */
 require __DIR__ . '/autoload.php';
 
-use Drift\Dev\Debug\Cli\Doc;
+use Drift\DevTools\Cli\Doc;
 
 $mode = $argv[1] ?? '--write';
 if (!\in_array($mode, ['--write', '--check'], true)) {

@@ -6,10 +6,10 @@ namespace Drift\Dev\Tests\Feature\Debug;
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\App\Replay;
 use Drift\DevTools\Session\History;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Runner;
-use Drift\Dev\Debug\View\Brief;
-use Drift\Dev\Debug\View\Finding;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Runner;
+use Drift\DevTools\View\Brief;
+use Drift\DevTools\View\Finding;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**

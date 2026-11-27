@@ -15,9 +15,9 @@ declare(strict_types=1);
 
 require \dirname(__DIR__, 2) . '/tools/autoload.php';
 
-use Drift\Dev\Debug\Discovery;
-use Drift\Dev\Debug\LiveTicker;
-use Drift\Dev\Debug\SocketServer;
+use Drift\DevTools\Host\Discovery;
+use Drift\DevTools\Host\LiveTicker;
+use Drift\DevTools\Host\SocketServer;
 use Drift\Dev\Smoke\App\EchoApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Geometry\BoxConstraints;

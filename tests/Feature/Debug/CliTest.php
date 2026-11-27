@@ -3,11 +3,11 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Dev\Debug\Cli\CliError;
-use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\Cli\Opt;
-use Drift\Dev\Debug\Cli\OptionSet;
-use Drift\Dev\Debug\Cli\Registry;
+use Drift\DevTools\Cli\CliError;
+use Drift\DevTools\Cli\Commands;
+use Drift\DevTools\Cli\Opt;
+use Drift\DevTools\Cli\OptionSet;
+use Drift\DevTools\Cli\Registry;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -189,7 +189,7 @@ final class CliTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $onDisk = [];
-        foreach (\glob($root . '/tools/debug-*.php') ?: [] as $file) {
+        foreach (\glob($root . '/devtools/bin/debug-*.php') ?: [] as $file) {
             $onDisk[] = \basename($file);
         }
         \sort($onDisk);
@@ -310,7 +310,7 @@ final class CliTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $proc = \proc_open(
-            \array_merge([\PHP_BINARY, $root . "/tools/debug-{$name}.php"], $args),
+            \array_merge([\PHP_BINARY, $root . "/devtools/bin/debug-{$name}.php"], $args),
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $root,

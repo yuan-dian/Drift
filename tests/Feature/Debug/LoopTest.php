@@ -5,9 +5,9 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\App\DebugSession;
 use Drift\Debug\Session\Script;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Reopen;
-use Drift\Dev\Debug\Runner;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Reopen;
+use Drift\DevTools\Host\Runner;
 use Drift\Dev\Smoke\App\PageHostApplication;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
@@ -229,7 +229,7 @@ final class LoopTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $proc = \proc_open(
-            \array_merge([\PHP_BINARY, $root . '/tools/debug-loop.php'], $args),
+            \array_merge([\PHP_BINARY, $root . '/devtools/bin/debug-loop.php'], $args),
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $root,

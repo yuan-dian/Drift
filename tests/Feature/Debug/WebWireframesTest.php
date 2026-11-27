@@ -5,8 +5,8 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\App\Replay;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Runner;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Runner;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -80,7 +80,7 @@ final class WebWireframesTest extends SmokeTestCase
     /** 画框时容器退到辅助线，选中/悬停的祖先链保持清晰。 */
     private function drawFunction(): string
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
         $start = \strpos($js, 'function draw()');
         self::assertIsInt($start, '找不到 draw()');
         $end = \strpos($js, "\nfunction placeShot", $start);

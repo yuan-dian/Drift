@@ -161,7 +161,7 @@ final class BaselineCliTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $proc = \proc_open(
-            \array_merge([\PHP_BINARY, $root . '/tools/debug-brief.php'], $args),
+            \array_merge([\PHP_BINARY, $root . '/devtools/bin/debug-brief.php'], $args),
             [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             $root,

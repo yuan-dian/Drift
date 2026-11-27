@@ -5,7 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\View\Web;
+use Drift\DevTools\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -114,8 +114,8 @@ final class WebSelectionTest extends SmokeTestCase
     /** 页面那一半是 JS：钉住"点击写宿主、轮询读宿主、轮询不回写"这三条接线。 */
     public function testPageMirrorsHostInsteadOfKeepingItsOwnTruth(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
-        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/index.html');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/index.html');
 
         check('点击画布写宿主高亮', \str_contains($js, "{ action: 'highlight', node }"), 'app.js 没有 highlight 动作');
         check('轮询读宿主选中', \str_contains($js, "get('/api/highlight')"), 'app.js 没有读 /api/highlight');

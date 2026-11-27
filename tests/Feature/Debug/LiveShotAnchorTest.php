@@ -59,7 +59,7 @@ final class LiveShotAnchorTest extends SmokeTestCase
 
     public function testLiveTickerAnchorsTheShotToGeometryCoverage(): void
     {
-        $src = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/LiveTicker.php');
+        $src = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/Host/LiveTicker.php');
         $at = \strpos($src, 'public function onPainted(');
         check('找得到帧出口回调', $at !== false);
         $body = \substr($src, $at === false ? 0 : $at, 900);

@@ -6,9 +6,9 @@ namespace Drift\Dev\Tests\Feature\Debug;
 use Drift\DevTools\App\DebugSession;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\Step;
-use Drift\Dev\Debug\Drive;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Runner;
+use Drift\DevTools\Host\Drive;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Runner;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**

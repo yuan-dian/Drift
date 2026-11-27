@@ -5,7 +5,7 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\Session\SessionQueries;
 use Drift\Debug\Session\Thresholds;
-use Drift\Dev\Debug\View\Web;
+use Drift\DevTools\View\Web;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -89,8 +89,8 @@ final class WebNetworkTest extends SmokeTestCase
 
     public function testRequestLaneSharesTheFrameAxis(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
-        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/index.html');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
+        $html = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/index.html');
 
         check('泳道读 /api/network', \str_contains($js, "get('/api/network?limit=100')"), 'app.js 没有请求列表接线');
         check('请求条有容器', \str_contains($html, 'id="netlane"'), 'index.html 没有泳道');
@@ -111,7 +111,7 @@ final class WebNetworkTest extends SmokeTestCase
 
     public function testRequestDetailFollowsTheChainToPaint(): void
     {
-        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/tools/Debug/View/web/app.js');
+        $js = (string) \file_get_contents(\dirname(__DIR__, 3) . '/devtools/View/web/app.js');
         $show = $this->functionOf($js, 'async function showRequest(id)');
 
         check('选中请求在泳道上高亮', \str_contains($show, 'markActiveRequest()'), $show);

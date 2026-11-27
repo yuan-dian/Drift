@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\Props;
+use Drift\DevTools\View\Props;
 use PHPUnit\Framework\TestCase;
 
 /**

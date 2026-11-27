@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\Pick;
+use Drift\DevTools\View\Pick;
 use PHPUnit\Framework\TestCase;
 
 /** 点选视图是纯函数：同一份答案逐字节同输出，且把无主盒与 miss 原因照实说出。 */

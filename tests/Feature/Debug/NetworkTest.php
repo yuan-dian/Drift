@@ -387,7 +387,7 @@ final class NetworkTest extends SmokeTestCase
             \json_encode($off->request),
         );
 
-        $text = \implode("\n", \Drift\Dev\Debug\View\Network::body([
+        $text = \implode("\n", \Drift\DevTools\View\Network::body([
             'found' => true,
             'request' => 9,
             'requestBody' => $off->requestBody,
@@ -513,7 +513,7 @@ final class NetworkTest extends SmokeTestCase
             check('脱敏处数如实报出', ($answer['requestMeta']['redacted'] ?? 0) === 1
                 && ($answer['responseMeta']['redacted'] ?? 0) === 1, \json_encode($answer));
 
-            $lines = \Drift\Dev\Debug\View\Network::body($answer);
+            $lines = \Drift\DevTools\View\Network::body($answer);
             $text = \implode("\n", $lines);
             check('视图输出带上 id 与脱敏元信息', \str_contains($text, "请求 #{$id} 报文")
                 && \str_contains($text, '脱敏 1 处') && \str_contains($text, '"name": "ok"'), $text);

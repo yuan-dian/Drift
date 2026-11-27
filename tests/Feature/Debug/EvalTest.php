@@ -8,13 +8,13 @@ use Drift\DevTools\Protocol\Methods;
 use Drift\DevTools\Protocol\ProtocolError;
 use Drift\DevTools\Protocol\Wire;
 use Drift\Debug\Session\Script;
-use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\Cli\Registry;
-use Drift\Dev\Debug\Host;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Runner;
-use Drift\Dev\Debug\SingleServer;
-use Drift\Dev\Debug\View\EvalText;
+use Drift\DevTools\Cli\Commands;
+use Drift\DevTools\Cli\Registry;
+use Drift\DevTools\Host\Host;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Runner;
+use Drift\DevTools\Host\SingleServer;
+use Drift\DevTools\View\EvalText;
 use Drift\Dev\Tests\Support\FakeTransport;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
@@ -104,7 +104,7 @@ final class EvalTest extends SmokeTestCase
 
         // 协议型出口不进 driver 的 help 判据，单独钉直跑与路由两级同源。
         $root = \dirname(__DIR__, 3);
-        $direct = self::runCli([PHP_BINARY, $root . '/tools/debug-eval.php', '--help']);
+        $direct = self::runCli([PHP_BINARY, $root . '/devtools/bin/debug-eval.php', '--help']);
         $viaDrift = self::runCli([PHP_BINARY, $root . '/bin/drift', 'debug', 'eval', '--help']);
         check('eval 两级 help 逐字节相同', $direct === $viaDrift && $direct !== '', self::show([$direct, $viaDrift]));
         $this->flushChecks();

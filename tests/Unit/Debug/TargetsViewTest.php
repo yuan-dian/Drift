@@ -3,10 +3,10 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\Finding;
-use Drift\Dev\Debug\View\Rules\Severity;
-use Drift\Dev\Debug\View\Targets;
-use Drift\Dev\Debug\View\TargetsText;
+use Drift\DevTools\View\Finding;
+use Drift\DevTools\View\Rules\Severity;
+use Drift\DevTools\View\Targets;
+use Drift\DevTools\View\TargetsText;
 use PHPUnit\Framework\TestCase;
 
 /**

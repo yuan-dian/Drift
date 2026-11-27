@@ -5,8 +5,8 @@ namespace Drift\Dev\Tests\Feature\Debug;
 
 use Drift\DevTools\Protocol\ProtocolError;
 use Drift\DevTools\Protocol\RemoteSession;
-use Drift\Dev\Debug\Discovery;
-use Drift\Dev\Debug\SocketChannel;
+use Drift\DevTools\Host\Discovery;
+use Drift\DevTools\Host\SocketChannel;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**
@@ -62,7 +62,7 @@ final class LiveHostTest extends SmokeTestCase
         $root = \dirname(__DIR__, 3);
         $devNull = \PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
         $process = \proc_open(
-            [\PHP_BINARY, $root . '/tools/debug-serve.php', ...$args],
+            [\PHP_BINARY, $root . '/devtools/bin/debug-serve.php', ...$args],
             [
                 0 => ['file', $devNull, 'r'],
                 1 => ['file', $this->log, 'a'],

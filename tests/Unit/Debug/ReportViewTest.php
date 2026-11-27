@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\Fit;
-use Drift\Dev\Debug\View\Report;
+use Drift\DevTools\View\Fit;
+use Drift\DevTools\View\Report;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
  *
  * ## 为什么这段现在才第一次有判据
  *
- * 排版原先住在 `tools/debug-report.php` 的 `render_text()` 里，往 `STDOUT` 写、还带
+ * 排版原先住在 `devtools/bin/debug-report.php` 的 `render_text()` 里，往 `STDOUT` 写、还带
  * `--top` 裁剪 —— 想断言一行，只能把整个脚本跑一遍再比字符串。于是它长期没有判据，
  * 也就长期歪着（「耗时分布」的毫秒列遇中文差 4 列）。搬成 `Report::lines()` 之后，
  * `$report` 是个数组，判据可以只喂它几百字节的 fixture。

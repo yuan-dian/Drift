@@ -8,10 +8,10 @@ use Drift\DevTools\Protocol\Methods;
 use Drift\DevTools\Protocol\ProtocolError;
 use Drift\DevTools\Protocol\Wire;
 use Drift\Debug\Session\Script;
-use Drift\Dev\Debug\Host;
-use Drift\Dev\Debug\Plan;
-use Drift\Dev\Debug\Runner;
-use Drift\Dev\Debug\SingleServer;
+use Drift\DevTools\Host\Host;
+use Drift\DevTools\Host\Plan;
+use Drift\DevTools\Host\Runner;
+use Drift\DevTools\Host\SingleServer;
 use Drift\Dev\Tests\Support\FakeTransport;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 

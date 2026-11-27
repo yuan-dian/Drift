@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Unit\Debug;
 
-use Drift\Dev\Debug\View\TreeRows;
+use Drift\DevTools\View\TreeRows;
 use PHPUnit\Framework\TestCase;
 
 /**

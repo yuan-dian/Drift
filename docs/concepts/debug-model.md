@@ -350,7 +350,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 
 `A > B` 合并在同一行显示（单孩子、`count` 相同），这件事不进记录、不进查询——记录里
 它们是两个节点、两条边。合并只发生在视图层，纯函数 `TreeRows::flatten(roots, collapsed)`，
-`tools/debug-report.php` 与面板共用同一份：命令行看到的树和面板里看到的树不是"两套实现
+`devtools/bin/debug-report.php` 与面板共用同一份：命令行看到的树和面板里看到的树不是"两套实现
 碰巧长得像"，而是同一份排版被钉在判据上。判据钉 `label` / `key` / `parentKey` 三个字段
 就够——键取链尾，父键是链尾的父行。
 
@@ -382,7 +382,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 ### 浏览器说不了 NDJSON
 
 协议传输是"一行进一行出"（`Transport`），三个实现都是本机管道。浏览器只会 HTTP。
-`debug web` 因此自己起一个最小 HTTP/1.1（`tools/Debug/HttpServer.php`）：一个连接一条
+`debug web` 因此自己起一个最小 HTTP/1.1（`devtools/Host/HttpServer.php`）：一个连接一条
 请求、`Connection: close`、不做 keep-alive / 分块 / 压缩。它不用 `php -S`，因为那些请求
 要读的是**本进程里的** `SessionQueries` —— 把几百帧的数组交给另一个进程只能落盘，而落盘
 等于每个请求重做一遍采集。

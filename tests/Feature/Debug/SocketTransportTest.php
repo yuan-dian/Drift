@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Dev\Debug\SingleServer;
-use Drift\Dev\Debug\SocketChannel;
-use Drift\Dev\Debug\SocketServer;
+use Drift\DevTools\Host\SingleServer;
+use Drift\DevTools\Host\SocketChannel;
+use Drift\DevTools\Host\SocketServer;
 use Drift\Dev\Tests\Support\FakeTransport;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 

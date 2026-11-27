@@ -8,8 +8,8 @@ use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\Session\Evidence;
 use Drift\DevTools\Session\MemoryProbe;
 use Drift\DevTools\Session\SourceLocator;
-use Drift\Dev\Debug\Cli\Commands;
-use Drift\Dev\Debug\Cli\Registry;
+use Drift\DevTools\Cli\Commands;
+use Drift\DevTools\Cli\Registry;
 use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\Geometry\BoxConstraints;
@@ -195,7 +195,7 @@ final class ProbeTest extends SmokeTestCase
         check('probe 有 source 参数', \in_array('source', Commands::set('probe')->words(), true));
 
         $root = \dirname(__DIR__, 3);
-        $direct = self::runCli([PHP_BINARY, $root . '/tools/debug-probe.php', '--help']);
+        $direct = self::runCli([PHP_BINARY, $root . '/devtools/bin/debug-probe.php', '--help']);
         $viaDrift = self::runCli([PHP_BINARY, $root . '/bin/drift', 'debug', 'probe', '--help']);
         check('probe 两级 help 逐字节相同', $direct === $viaDrift && $direct !== '', self::show([$direct, $viaDrift]));
         $this->flushChecks();

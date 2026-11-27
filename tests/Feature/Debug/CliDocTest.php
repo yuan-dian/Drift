@@ -3,9 +3,9 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
-use Drift\Dev\Debug\Cli\Doc;
-use Drift\Dev\Debug\Cli\OptionSet;
-use Drift\Dev\Debug\Cli\Registry;
+use Drift\DevTools\Cli\Doc;
+use Drift\DevTools\Cli\OptionSet;
+use Drift\DevTools\Cli\Registry;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 
 /**

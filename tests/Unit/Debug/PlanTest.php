@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\Dev\Tests\Unit\Debug;
 
 use Drift\Debug\Session\Step;
-use Drift\Dev\Debug\Plan;
+use Drift\DevTools\Host\Plan;
 use PHPUnit\Framework\TestCase;
 
 /**
