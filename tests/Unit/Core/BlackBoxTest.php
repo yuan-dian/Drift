@@ -208,6 +208,59 @@ final class BlackBoxTest extends TestCase
         self::assertCount(BlackBox::MAX_SIDECARS, \glob($this->dir . '/blackbox-*.json') ?: []);
     }
 
+    public function testFreshSidecarsAreNeverPrunedEvenOverLimit(): void
+    {
+        // 全部新鲜（模拟"多个进程都活着，只是没有新帧可写"）⇒ 一个都不许删。
+        // 纯数量上限会在这里误删活进程的现场，这正是 A79 修订要堵的口子。
+        $now = \time();
+        $total = BlackBox::MAX_SIDECARS + 4;
+        for ($i = 0; $i < $total; ++$i) {
+            $file = $this->dir . '/blackbox-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, $now);
+        }
+        $box = new BlackBox(8, $this->dir . '/blackbox-' . $total . '.json');
+        $box->flush();
+
+        self::assertCount($total + 1, \glob($this->dir . '/blackbox-*.json') ?: []);
+        for ($i = 0; $i < $total; ++$i) {
+            self::assertFileExists($this->dir . '/blackbox-' . $i . '.json');
+        }
+    }
+
+    public function testMixedAgePrunesOnlyStaleCandidatesUpToBudget(): void
+    {
+        $now = \time();
+        // 8 份僵尸（超过 TTL，越往后越老）+ 6 份新鲜。
+        for ($i = 0; $i < 8; ++$i) {
+            $file = $this->dir . '/blackbox-old-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, $now - BlackBox::SIDECAR_TTL_SECONDS - 100 - $i);
+        }
+        for ($i = 0; $i < 6; ++$i) {
+            $file = $this->dir . '/blackbox-new-' . $i . '.json';
+            \file_put_contents($file, "{\"tag\":$i}\n");
+            \touch($file, $now);
+        }
+
+        // flush 再加一份新鲜：总数 15，预算 = 15 - 12 = 3。
+        $box = new BlackBox(8, $this->dir . '/blackbox-live.json');
+        $box->flush();
+
+        self::assertCount(BlackBox::MAX_SIDECARS, \glob($this->dir . '/blackbox-*.json') ?: []);
+        // 新鲜的一个不动。
+        for ($i = 0; $i < 6; ++$i) {
+            self::assertFileExists($this->dir . '/blackbox-new-' . $i . '.json');
+        }
+        // 只删最老的 3 个僵尸（old-7 / old-6 / old-5），剩下的僵尸因预算用完而留下。
+        for ($i = 5; $i < 8; ++$i) {
+            self::assertFileDoesNotExist($this->dir . '/blackbox-old-' . $i . '.json');
+        }
+        for ($i = 0; $i < 5; ++$i) {
+            self::assertFileExists($this->dir . '/blackbox-old-' . $i . '.json');
+        }
+    }
+
     public function testFailedFlushDoesNotLieAboutLastFlushFrame(): void
     {
         $target = $this->dir . '/blackbox.json';

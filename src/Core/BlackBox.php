@@ -52,6 +52,18 @@ final class BlackBox
      */
     public const int MAX_SIDECARS = 12;
 
+    /**
+     * 超过上限之后，还要多老才允许删（秒，A79 修订）。
+     *
+     * ★ 只按数量删会误伤"活着但静止"的进程：`Frame::run()` 走快路时不进 record，
+     *   也就不 flush，它的 sidecar mtime 会停在最后一次落盘 —— 另一个进程的清理
+     *   会把这份还活着的现场当僵尸删掉。静止但没崩的进程，恰是最该留着现场的那类。
+     * ★ 一小时后允许删，是因为崩溃那一刻 `crash_report.cc` 已把 sidecar 原文写进
+     *   `crash-latest.log`；之后留着的只是"PHP 侧异常退出、事后再看"的备份，
+     *   价值随时间衰减，而磁盘与崩溃日志的噪声是实打实的。
+     */
+    public const int SIDECAR_TTL_SECONDS = 3600;
+
     /** @var list<array{frame: int, cost: float, settle: int, layout: int, paint: int, skipped: bool}|null> */
     private array $frames;
 
@@ -209,13 +221,16 @@ final class BlackBox
     }
 
     /**
-     * 把同目录的 sidecar 数收在上限内（A79）。
+     * 把同目录的 sidecar 数收在上限内（A79：数量 + TTL 双条件）。
      *
      * ★ 只在本份**写成功之后**跑：清理失败是次要问题，不能让它盖掉刚落下的现场。
      * ★ 存量也在这里消化：新代码第一次 flush 就会把旧版本留下的无界文件
      *   一次删到上限，不需要单独的迁移入口。
-     * ★ 按 mtime 从老到新丢，不用对象号或名字排序：`noteFailure()` 会立即
-     *   `flushAt()`，把失败那份的 mtime 刷到最新，于是它永远是最后被丢的。
+     * ★ **新鲜文件一个都不删**：只按数量删会误伤"活着但静止"的进程（它不 flush，
+     *   mtime 停住），所以候选必须先过 TTL。代价是总数短时超过上限 —— 有界靠 TTL
+     *   兜住，比"严格 12 份但可能丢掉活进程的现场"更符合黑匣子的目的。
+     * ★ 候选按 mtime 从老到新丢，不用对象号或名字排序：`noteFailure()` 会立即
+     *   `flushAt()`，把失败那份的 mtime 刷到最新，于是它既进不了候选、也不会被先删。
      * ★ 只认 `blackbox-*.json`，与原生过滤器的通配符同口径；临时名
      *   `blackbox-*.json.tmp-*` 不匹配，不会被扫进来删掉正在写的那份。
      * ★ 全程静默：清理是卫生，不是崩溃现场的一部分，任何失败都不改应用行为。
@@ -229,15 +244,30 @@ final class BlackBox
 
         // 用 stat()['mtime'] 而不是 filemtime()：后者不在 tpc 的扩展映射表里
         // （NanoExtensionSelector 只列 stat / lstat），极小 AOT 构建未必带它。
-        \usort($files, static function (string $a, string $b): int {
-            $ta = \stat($a);
-            $tb = \stat($b);
+        // 同理用 microtime(true) 而不是 time()：后者也不在表里。
+        $now = \microtime(true);
+        /** @var list<array{0: string, 1: int}> $stale */
+        $stale = [];
+        foreach ($files as $file) {
+            $stat = \stat($file);
+            $mtime = $stat === false ? 0 : (int) $stat['mtime'];
+            if ($now - $mtime > self::SIDECAR_TTL_SECONDS) {
+                $stale[] = [$file, $mtime];
+            }
+        }
+        if ($stale === []) {
+            // 全都还新鲜：一个都不删。总数暂时超限是可接受的，TTL 会兜住。
+            return;
+        }
 
-            return (($ta === false ? 0 : $ta['mtime']) <=> ($tb === false ? 0 : $tb['mtime']));
-        });
-        $drop = \array_slice($files, 0, \count($files) - self::MAX_SIDECARS);
-        foreach ($drop as $file) {
+        \usort($stale, static fn(array $a, array $b): int => $a[1] <=> $b[1]);
+        $budget = \count($files) - self::MAX_SIDECARS;
+        foreach ($stale as [$file, $_mtime]) {
+            if ($budget <= 0) {
+                break;
+            }
             @\unlink($file);
+            --$budget;
         }
     }
 
