@@ -91,6 +91,7 @@ final class DebugSessionTest extends SmokeTestCase
                 'semanticsNode' => ['index' => 0],
                 'semanticsHit' => ['x' => 1.0, 'y' => 2.0],
                 'align' => ['node' => $nodeId, 'frame' => 2],
+                'nodeContext' => ['node' => $nodeId, 'frame' => 2],
                 'find' => ['pattern' => 'Text'],
                 'props' => ['node' => $nodeId],
                 'memory' => [],
@@ -203,6 +204,46 @@ final class DebugSessionTest extends SmokeTestCase
         } finally {
             $session->close();
         }
+    }
+
+    public function testNodeContextKeepsSectionStatusAndLiveProps(): void
+    {
+        $app = $this->boot();
+        $session = DebugSession::open($app, $this->constraints());
+
+        try {
+            $session->pump(0.0);
+            QueryState::$last?->increment();
+            $session->pump(16.0);
+            $boxes = $session->query('boxes', ['frame' => 1]);
+            $node = (int) ($boxes['rows'][0]['node'] ?? 0);
+
+            $all = $session->query('nodeContext', ['node' => $node, 'frame' => 2]);
+            check('聚合视图回显节点', (int) ($all['node'] ?? 0) === $node, \json_encode($all['node'] ?? null));
+            check('几何 section 可用', ($all['sections']['geometry']['status'] ?? '') === 'ok', \json_encode($all['sections']['geometry'] ?? []));
+            check('几何回退到已采帧并标 stale', ($all['sections']['geometry']['data']['stale'] ?? false) === true, \json_encode($all['sections']['geometry'] ?? []));
+            check('属性 section 标 live', ($all['sections']['properties']['live'] ?? false) === true, \json_encode($all['sections']['properties'] ?? []));
+            check('源码 section 不吞成异常', ($all['sections']['source']['status'] ?? 'error') !== 'error', \json_encode($all['sections']['source'] ?? []));
+
+            $stateNode = QueryState::$last?->element()?->debugId ?? 0;
+            $src = $session->query('nodeContext', ['node' => $stateNode, 'frame' => 2, 'sections' => 'source']);
+            check('源码 section 能定位', ($src['sections']['source']['status'] ?? '') === 'ok', \json_encode($src['sections']['source'] ?? []));
+            check('源码带编辑器 URI', \str_starts_with((string) ($src['sections']['source']['data']['editorUri'] ?? ''), 'vscode://file/'), \json_encode($src['sections']['source']['data'] ?? []));
+
+            $one = $session->query('nodeContext', ['node' => $node, 'frame' => 2, 'sections' => 'geometry']);
+            check('只回请求的 section', \array_keys($one['sections']) === ['geometry'], \implode(',', \array_keys($one['sections'])));
+
+            $net = $session->query('nodeContext', ['node' => $node, 'frame' => 2, 'sections' => 'network']);
+            check(
+                '没发请求的节点回 empty 而非 unavailable',
+                ($net['sections']['network']['status'] ?? '') === 'empty',
+                \json_encode($net['sections']['network'] ?? []),
+            );
+        } finally {
+            $session->close();
+        }
+
+        $this->flushChecks();
     }
 
     public function testFrameRecordsCarryStageCosts(): void

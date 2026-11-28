@@ -74,6 +74,8 @@ final class Query
 
     private readonly SemanticsQuery $semantics;
 
+    private readonly NodeContext $context;
+
     public function __construct(Recorder $recorder)
     {
         $history = new History($recorder);
@@ -88,6 +90,7 @@ final class Query
         $this->live = new LiveQuery($recorder, $history);
         // 无障碍是 L2 内省：读现建的语义树，不写任何记录（A77）。
         $this->semantics = new SemanticsQuery($history);
+        $this->context = new NodeContext($this, $history);
     }
 
     /** @return array<string, mixed> 帧数 / 节点数 / 容量 / 最近帧耗时与重建数 */
@@ -421,6 +424,17 @@ final class Query
             'network' => $network,
             'windows' => $win,
         ];
+    }
+
+    /**
+     * 一个节点的聚合视图：section 各自带状态，调用方不必拼多次查询。
+     *
+     * @param list<mixed> $roots 活树根；只给 properties 用
+     * @return array{node: int, frame: int, sections: array<string, array<string, mixed>>}
+     */
+    public function nodeContext(int $node, ?int $frame = null, string $sections = '', array $roots = []): array
+    {
+        return $this->context->of($node, $frame, $sections, $roots);
     }
 
     /**

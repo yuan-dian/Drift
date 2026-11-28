@@ -7,6 +7,7 @@ use Drift\DevTools\Session\CausalQuery;
 use Drift\DevTools\Session\GeometryQuery;
 use Drift\DevTools\Session\History;
 use Drift\DevTools\Session\LiveQuery;
+use Drift\DevTools\Session\NodeContext;
 use Drift\DevTools\Session\PaintQuery;
 use Drift\DevTools\Session\Query;
 use Drift\DevTools\Session\QueryRouter;
@@ -69,6 +70,14 @@ final class QuerySeamsTest extends SmokeTestCase
      */
     private const WRITE_AWARE = [LiveQuery::class];
 
+    /**
+     * 门面上的投影：把已有查询按需拼成一份读模型，自己不采集、不缓存。
+     *
+     * 与域的区别是它**回问门面**，所以不进 `DOMAINS`（那条"域之间只有一条边"
+     * 的判据不该为它开口子）。
+     */
+    private const PROJECTIONS = [NodeContext::class];
+
     public function testTheFacadeHoldsNoMutableState(): void
     {
         $ref = new \ReflectionClass(Query::class);
@@ -85,10 +94,10 @@ final class QuerySeamsTest extends SmokeTestCase
             '可变的：' . \implode(', ', $mutable),
         );
 
-        // 一个读面 + 各域，多一个就说明有人把状态搬回门面了。
+        // 一个读面 + 各域 + 投影，多一个就说明有人把状态搬回门面了。
         check(
-            '门面只持有读面与各域',
-            \count($ref->getProperties()) === 1 + \count(self::DOMAINS),
+            '门面只持有读面、各域与投影',
+            \count($ref->getProperties()) === 1 + \count(self::DOMAINS) + \count(self::PROJECTIONS),
             '实际 ' . \count($ref->getProperties()) . ' 个',
         );
 

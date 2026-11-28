@@ -1542,6 +1542,23 @@ function renderCard(card) {
   }
   host.appendChild(table);
 
+  const source = card.sections && card.sections.source;
+  if (source) {
+    host.appendChild(el('h3', '', '源码'));
+    if (source.status === 'ok' && source.data) {
+      const d = source.data;
+      const a = el('a', 'source', `${d.method || d.site || '?'} · ${d.file}:${d.line}`);
+      if (d.editorUri) {
+        a.href = d.editorUri;
+        a.target = '_blank';
+        a.rel = 'noreferrer';
+      }
+      host.appendChild(a);
+    } else {
+      host.appendChild(el('div', 'none', `源码不可用（${source.reason || source.status}）`));
+    }
+  }
+
   const props = card.props || {};
   if (props.found === false) {
     // `props` 是 dev 反射，按需读活树；节点这一帧没挂上就读不到。说清是"读不到"

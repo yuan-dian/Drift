@@ -461,5 +461,12 @@ h2 {
   font-size: 12px;
   word-break: break-word;
 }
+#card a.source {
+  display: block;
+  padding: 2px 0;
+  color: var(--accent);
+  font-size: 12px;
+  word-break: break-all;
+}
 #card .hop .bad { color: var(--bad); }
 #card .none { color: var(--dim); font-size: 12px; }

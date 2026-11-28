@@ -59,17 +59,30 @@ final class WebInfoTest extends SmokeTestCase
 
     public function testNodeCardCarriesConstraintAndCauseChains(): void
     {
+        $boxModel = ['found' => true, 'node' => 7, 'size' => ['w' => 10, 'h' => 10]];
         $web = $this->web([
-            'boxModel' => ['found' => true, 'node' => 7, 'size' => ['w' => 10, 'h' => 10]],
-            'props' => ['found' => true, 'type' => 'Text'],
-            'constraints' => ['found' => true, 'node' => 7, 'chain' => [['from' => 3, 'to' => 7, 'verified' => true]]],
-            'why' => ['node' => 7, 'frame' => 2, 'rebuilt' => true, 'trail' => [['kind' => 'state']]],
+            'nodeContext' => [
+                'node' => 7,
+                'frame' => 2,
+                'sections' => [
+                    'geometry' => ['status' => 'ok', 'reason' => null, 'frame' => 2, 'live' => false, 'data' => $boxModel],
+                    'layout' => [
+                        'status' => 'ok', 'reason' => null, 'frame' => 2, 'live' => false,
+                        'data' => ['found' => true, 'node' => 7, 'chain' => [['from' => 3, 'to' => 7, 'verified' => true]]],
+                    ],
+                    'causality' => [
+                        'status' => 'ok', 'reason' => null, 'frame' => 2, 'live' => false,
+                        'data' => ['node' => 7, 'frame' => 2, 'rebuilt' => true, 'trail' => [['kind' => 'state']]],
+                    ],
+                ],
+            ],
         ]);
 
         $body = $this->body($web->route('GET', '/api/node', ['node' => 7, 'frame' => 2]));
         check('节点卡带约束链', ($body['constraints']['chain'][0]['from'] ?? 0) === 3, \json_encode($body['constraints'] ?? []));
         check('节点卡带因果链', ($body['why']['trail'][0]['kind'] ?? '') === 'state', \json_encode($body['why'] ?? []));
         check('约束链按请求的帧取', ($body['constraints']['node'] ?? 0) === 7, \json_encode($body['constraints'] ?? []));
+        check('新页面可读 section 信封', ($body['sections']['geometry']['status'] ?? '') === 'ok', \json_encode($body['sections'] ?? []));
     }
 
     public function testRequestAddressResolvesThroughTheQuerySurface(): void

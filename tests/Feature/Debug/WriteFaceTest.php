@@ -52,7 +52,7 @@ final class WriteFaceTest extends SmokeTestCase
         'History', 'Query', 'QueryRouter', 'Evidence', 'Digest',
         'CausalQuery', 'GeometryQuery', 'PaintQuery', 'TrafficQuery', 'StructureQuery', 'LiveQuery',
         'SessionDriver', 'SessionQueries', 'Session', 'ObjectDump', 'MemoryProbe', 'SourceLocator',
-        'DebugSession', 'Replay',
+        'DebugSession', 'Replay', 'NodeContext', 'SourceCatalog', 'SourceLink',
     ];
 
     public function testReadMethodsDoNotComeBack(): void

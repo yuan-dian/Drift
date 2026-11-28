@@ -122,6 +122,7 @@ final class WebTest extends SmokeTestCase
         check('回显的就是问的那个节点', (int) $card['node'] === $node, (string) $card['node']);
         check('几何查得到', ($card['boxModel']['found'] ?? false) === true, \json_encode($card['boxModel']));
         check('几何的节点号与问的一致', (int) $card['boxModel']['node'] === $node);
+        check('节点卡带 section 信封', ($card['sections']['geometry']['status'] ?? '') === 'ok', \json_encode($card['sections'] ?? []));
 
         $bad = $this->json($port, '/api/node');
         check('不给 node 说清缺什么', ($bad['error'] ?? '') === 'bad_request', \json_encode($bad));

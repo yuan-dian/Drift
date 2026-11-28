@@ -255,11 +255,10 @@ final class Web
     }
 
     /**
-     * 一个节点的事实卡：几何 + 属性。
+     * 一个节点的事实卡：一次取全，每个 section 自己报可用性。
      *
-     * 页面上点一下要能回答"这是谁、多大、为什么这么宽"，三样分别来自 `boxModel`
-     * 与 `props`。分两次请求会让"选中"这个动作要等两个往返，而中间那一刻页面
-     * 显示的是上一帧的尺寸。
+     * 同时保留旧的顶层键（geometry / layout / properties / causality），让现有页面
+     * 不必在这一次改动里重写；新代码只读 `sections`。
      *
      * @param array<string, mixed> $query
      * @return array{status: int, type: string, body: string}
@@ -271,19 +270,51 @@ final class Web
             return $this->error(400, 'bad_request', '缺少 node 参数（节点 id 从 /api/boxes 的 node 字段取）');
         }
 
-        $frame = (int) ($query['frame'] ?? 0) ?: null;
-        $args = $frame === null ? ['node' => $node] : ['node' => $node, 'frame' => $frame];
+        $sections = $query['sections'] ?? '';
+        if (\is_array($sections)) {
+            $sections = \implode(',', \array_map('\strval', $sections));
+        }
+
+        try {
+            $context = $this->queries->query('nodeContext', [
+                'node' => $node,
+                'frame' => (int) ($query['frame'] ?? 0) ?: null,
+                'sections' => (string) $sections,
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return $this->error(400, 'bad_request', $e->getMessage());
+        }
+
+        $sections = (array) ($context['sections'] ?? []);
 
         return $this->json([
             'node' => $node,
-            'frame' => $frame,
-            'boxModel' => $this->tryQuery('boxModel', $args),
-            'props' => $this->tryQuery('props', $args),
-            // 节点卡要回答的是"为什么是这个尺寸/为什么这一帧重建"，这两问的答案
-            // 分别是约束链与因果链；缺了它们，页面只剩几何数字，开发者还得回 CLI 追问。
-            'constraints' => $this->tryQuery('constraints', $args + ['maxDepth' => 12]),
-            'why' => $this->tryQuery('why', $args),
+            'frame' => (int) ($context['frame'] ?? 0),
+            'sections' => $sections,
+            'boxModel' => $this->sectionData($sections, 'geometry'),
+            'props' => $this->sectionData($sections, 'properties'),
+            'constraints' => $this->sectionData($sections, 'layout'),
+            'why' => $this->sectionData($sections, 'causality'),
         ]);
+    }
+
+    /** @param array<string, array<string, mixed>> $sections */
+    private function sectionData(array $sections, string $name): array
+    {
+        $one = $sections[$name] ?? null;
+        if (!\is_array($one)) {
+            return ['found' => false, 'reason' => 'section-missing'];
+        }
+        if (($one['status'] ?? '') === 'error') {
+            return ['error' => (string) ($one['reason'] ?? 'section-error')];
+        }
+        if (($one['status'] ?? '') === 'ok') {
+            return \is_array($one['data'] ?? null) ? $one['data'] : ['found' => false];
+        }
+
+        $miss = \is_array($one['data'] ?? null) ? $one['data'] : [];
+
+        return ['found' => false, 'reason' => (string) ($one['reason'] ?? $one['status'] ?? 'not-found')] + $miss;
     }
 
     /** @param array<string, mixed> $query */

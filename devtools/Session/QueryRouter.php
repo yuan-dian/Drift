@@ -58,6 +58,7 @@ final class QueryRouter implements SessionQueries
         'semanticsNode' => '单个语义节点：按下标取全部字段（下标是 UIA 快照下标，不是结构节点号）',
         'semanticsHit' => '按视口坐标取包含该点的最深语义节点（与生产 hitTest 同口径）',
         'align' => '跨域对齐：同一节点与显式帧的因果 / 几何 / 网络三域事实（各自回显实际帧号与窗口）',
+        'nodeContext' => '单节点聚合视图：身份 / 几何 / 约束 / 因果 / 绘制 / 网络 / 属性 / 源码，每段自报可用性',
         'find' => '在证据里按字面子串搜索：节点自身的类型 / 网络方法·URL·状态，回一串可追问的地址',
         'props' => '按节点读 Widget / State 配置（dev 反射活树，即时内省、不是证据、不进包）',
         'memory' => '进程内存与活树对象存活跨度（dev 内省，WeakMap 台账，不是证据、不进包）',
@@ -164,6 +165,12 @@ final class QueryRouter implements SessionQueries
             'y' => ['float'],
         ]],
         'align' => ['align', ['node' => ['int'], 'frame' => ['int']]],
+        'nodeContext' => ['nodeContext', [
+            'node' => ['int'],
+            'frame' => ['?int'],
+            'sections' => ['string', ''],
+            'roots' => ['inject', 'treeRoots'],
+        ]],
         'find' => ['find', [
             'pattern' => ['string'],
             'domain' => ['string', 'all'],
