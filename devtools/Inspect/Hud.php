@@ -254,7 +254,51 @@ final class Hud
     }
 
     /**
-     * 右下角实底面板。返回"真的画了"——没有选中时一律 `false`，让记账停在
+     * 面板落在哪：优先右下，撞上被检查的盒就换角，四角全撞取重叠最小的。
+     *
+     * ★ 为什么不做"折叠"：折叠的用途是少挡一点，而这已经被换角解决；彻底不想看时
+     *   `inspect --off=hud` 本来就关得掉。自动折叠会在用户没要求时悄悄减少信息。
+     *
+     * @param Rect|null $target 被检查盒的屏幕矩形（`null` = 没有选中 / 没有盒）
+     */
+    public static function place(Rect $viewport, float $w, float $h, ?Rect $target): Rect
+    {
+        // 窗口比 HUD 还小时贴左上，不画到视口外 —— 负坐标在硬件裁剪下会整块消失。
+        $right = \max(self::MARGIN, $viewport->width - $w - self::MARGIN);
+        $bottom = \max(self::MARGIN, $viewport->height - $h - self::MARGIN);
+        $home = new Rect($right, $bottom, $w, $h);
+        if ($target === null) {
+            return $home;
+        }
+
+        $corners = [[$right, $bottom], [$right, self::MARGIN], [self::MARGIN, $bottom], [self::MARGIN, self::MARGIN]];
+        $best = $home;
+        $bestOverlap = \INF;
+        foreach ($corners as [$x, $y]) {
+            $candidate = new Rect($x, $y, $w, $h);
+            $overlap = self::overlap($candidate, $target);
+            if ($overlap <= 0.0) {
+                return $candidate;
+            }
+            if ($overlap < $bestOverlap) {
+                $bestOverlap = $overlap;
+                $best = $candidate;
+            }
+        }
+
+        return $best;
+    }
+
+    /** 两个矩形的交面积；不相交为 0。 */
+    private static function overlap(Rect $a, Rect $b): float
+    {
+        $hit = $a->intersect($b);
+
+        return $hit->isEmpty() ? 0.0 : $hit->width * $hit->height;
+    }
+
+    /**
+     * 实底面板。返回"真的画了"——没有选中时一律 `false`，让记账停在
      * 上一次成功，与 `box-model` 同一套语义。
      *
      * @param array<string, mixed> $values {@see self::values()}
@@ -287,16 +331,21 @@ final class Hud
 
         $w = $textWidth + self::PAD_X * 2.0;
         $h = $textHeight + self::PAD_Y * 2.0;
-        // 窗口比 HUD 还小时贴左上，不画到视口外 —— 负坐标在硬件裁剪下会整块消失。
-        $x = \max(self::MARGIN, $viewport->width - $w - self::MARGIN);
-        $y = \max(self::MARGIN, $viewport->height - $h - self::MARGIN);
+        // 目标盒外扩 6px：面板贴着环线也等于挡住判断"框在哪"的那条边。
+        $target = ($values['x'] ?? null) === null || ($values['width'] ?? null) === null
+            ? null
+            : new Rect(
+                (float) $values['x'] - 6.0,
+                (float) $values['y'] - 6.0,
+                (float) $values['width'] + 12.0,
+                (float) $values['height'] + 12.0,
+            );
+        $panel = self::place($viewport, $w, $h, $target);
+        $x = $panel->left;
+        $y = $panel->top;
 
         // 实底才读得清：半透明面板压在内容上，数字随背景深浅时隐时现。
-        $canvas->drawRect(
-            new Rect($x, $y, $w, $h),
-            Paint::fill($theme->color(ColorToken::Pane)->withAlpha(230)),
-            6.0,
-        );
+        $canvas->drawRect($panel, Paint::fill($theme->color(ColorToken::Pane)->withAlpha(230)), 6.0);
 
         $picking = ($values['picking'] ?? false) === true;
         $warn = Paint::fill($theme->color(ColorToken::Warning));
