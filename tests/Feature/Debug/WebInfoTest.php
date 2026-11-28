@@ -74,6 +74,17 @@ final class WebInfoTest extends SmokeTestCase
                         'status' => 'ok', 'reason' => null, 'frame' => 2, 'live' => false,
                         'data' => ['node' => 7, 'frame' => 2, 'rebuilt' => true, 'trail' => [['kind' => 'state']]],
                     ],
+                    'properties' => [
+                        'status' => 'ok', 'reason' => null, 'frame' => null, 'live' => true,
+                        'data' => [
+                            'found' => true, 'node' => 7, 'widget' => 'Text', 'element' => 'StatelessElement',
+                            'state' => null, 'liveFrame' => 2, 'redact' => true, 'redacted' => 1,
+                            'fields' => [
+                                ['owner' => 'Text', 'name' => 'content', 'value' => ['kind' => 'string', 'value' => 'hi']],
+                            ],
+                            'omitted' => 0, 'cut' => 0, 'cycles' => 0, 'costMs' => 0.125,
+                        ],
+                    ],
                 ],
             ],
         ]);
@@ -83,6 +94,12 @@ final class WebInfoTest extends SmokeTestCase
         check('节点卡带因果链', ($body['why']['trail'][0]['kind'] ?? '') === 'state', \json_encode($body['why'] ?? []));
         check('约束链按请求的帧取', ($body['constraints']['node'] ?? 0) === 7, \json_encode($body['constraints'] ?? []));
         check('新页面可读 section 信封', ($body['sections']['geometry']['status'] ?? '') === 'ok', \json_encode($body['sections'] ?? []));
+
+        // 页面读的是行模型，不是编码值：`{kind,value}` 这种查询层形态不该漏到前端。
+        $view = $body['propsView'] ?? [];
+        check('属性面板带行模型', ($view['rows'][0]['name'] ?? '') === 'content', \json_encode($view));
+        check('行模型把值说成人话', ($view['rows'][0]['value'] ?? '') === '"hi"', \json_encode($view['rows'][0] ?? []));
+        check('行模型自报裁剪与脱敏', \count($view['notes'] ?? []) === 2, \json_encode($view['notes'] ?? []));
     }
 
     public function testRequestAddressResolvesThroughTheQuerySurface(): void

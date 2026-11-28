@@ -286,13 +286,17 @@ final class Web
         }
 
         $sections = (array) ($context['sections'] ?? []);
+        $props = $this->sectionData($sections, 'properties');
 
         return $this->json([
             'node' => $node,
             'frame' => (int) ($context['frame'] ?? 0),
             'sections' => $sections,
             'boxModel' => $this->sectionData($sections, 'geometry'),
-            'props' => $this->sectionData($sections, 'properties'),
+            'props' => $props,
+            // 同一份行模型喂给终端与 Web：页面不该自己解析编码值，否则两个出口
+            // 对同一个字段迟早给出两种说法。
+            'propsView' => Props::rows($props),
             'constraints' => $this->sectionData($sections, 'layout'),
             'why' => $this->sectionData($sections, 'causality'),
         ]);

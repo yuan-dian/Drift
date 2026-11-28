@@ -90,4 +90,57 @@ final class PropsViewTest extends TestCase
         self::assertStringContainsString('reflection-unavailable', $text);
         self::assertStringNotContainsString('窗口', $text);
     }
+
+    /**
+     * 终端与 Web 是同一份行模型的两个出口，不是两套说法。
+     *
+     * 变异：在 `lines()` 里加一行只给终端看的内容 ⇒ 条数对不上，必红。
+     */
+    public function testLinesAreOnlyARenderingOfRows(): void
+    {
+        $answer = [
+            'found' => true,
+            'node' => 2,
+            'widget' => 'Table',
+            'element' => 'StatefulElement',
+            'state' => 'TableState',
+            'liveFrame' => 5,
+            'fields' => [
+                [
+                    'owner' => 'Table',
+                    'name' => 'rows',
+                    'value' => [
+                        'kind' => 'list',
+                        'count' => 2,
+                        'items' => [
+                            ['key' => '0', 'value' => ['kind' => 'scalar', 'value' => 1]],
+                            ['key' => '1', 'value' => ['kind' => 'scalar', 'value' => 2]],
+                        ],
+                        'omitted' => 0,
+                    ],
+                ],
+                ['owner' => 'TableState', 'name' => 'page', 'value' => ['kind' => 'scalar', 'value' => 3]],
+            ],
+            'omitted' => 1,
+            'cut' => 0,
+            'cycles' => 0,
+            'costMs' => 0.5,
+        ];
+
+        $view = Props::rows($answer);
+        self::assertCount(2, $view['rows']);
+
+        $details = 0;
+        foreach ($view['rows'] as $row) {
+            $details += \count($row['detail']);
+        }
+        $lines = Props::lines($answer);
+        self::assertCount(1 + \count($view['rows']) + $details + \count($view['notes']), $lines);
+
+        $text = \implode("\n", $lines);
+        foreach ($view['rows'] as $row) {
+            self::assertStringContainsString($row['owner'] . '::' . $row['name'], $text);
+            self::assertStringContainsString($row['value'], $text);
+        }
+    }
 }

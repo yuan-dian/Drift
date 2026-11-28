@@ -268,7 +268,7 @@ L0 采集        frame  state-write  rebuild  input  network  geometry  props  p
 | **P9** | 真机检查器叠加 | 已落地（A81）：`bounds` / `box-model` / `hud` 三层覆盖式开关，按层记账；四层矩形与 `boxModel()` 逐值同源，视口外不画、容器淡画、选中链满；快照拍在叠加之前，叠加不进证据 / 指纹 / 重放。判据含“开关前后 drawn 是否前进”与非零面积，变异咬红 | A58、A81 | M |
 | **P9** | 持续拾取与命中链换层 | 已落地：`pick-live` 默认进模式，点击不撤防、吞整段 down/up/move，`Ctrl+Shift+I` 与 Esc 进出、应用占用组合键时让位；`↑/↓` 沿命中链找父级。HUD `PICK` 行与 Web 顶栏镜像同一状态 | A58、A81 | M |
 | **P9** | HUD 说人话与 Web 四层图 | 已落地：HUD 读 `stageNs` 的布局 / 绘制 / 整理三段（过滤 <0.05ms），不读 pump 噪声；身份、屏幕坐标、父约束、只列非零间距。Web 四层由 `boxModel` 数值推导，不扩证据 schema；节点卡同字段同格式 | A81 | S |
-| **P10** | 对照评分的短板收敛 | 部分落地：dev 源码位置已进节点卡（`nodeContext` 的 `source` 段，`SourceCatalog` 静态索引 + 编辑器 URI，A82）。待做：只读属性面板增强、HUD 折叠 / 避让、网络与内存扩面、多窗口 join；属性实时编辑须先裁决 dev / AOT 边界，不能照抄 Chrome。完成口径见 2026-11-28 的 DevTools 对照评审（旧册） | P9 | M |
+| **P10** | 对照评分的短板收敛 | 部分落地：dev 源码位置已进节点卡（`nodeContext` 的 `source` 段，`SourceCatalog` 静态索引 + 编辑器 URI，A82）；只读属性面板改成行模型，与终端同源（`Props::rows()`，页面不再自己解析编码值）。待做：HUD 折叠 / 避让、网络与内存扩面、多窗口 join；属性实时编辑须先裁决 dev / AOT 边界，不能照抄 Chrome。完成口径见 2026-11-28 的 DevTools 对照评审（旧册） | P9 | M |
 
 ### 建议顺序的理由
 

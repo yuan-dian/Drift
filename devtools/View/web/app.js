@@ -1559,15 +1559,30 @@ function renderCard(card) {
     }
   }
 
-  const props = card.props || {};
-  if (props.found === false) {
+  const view = card.propsView;
+  host.appendChild(el('h3', '', '属性'));
+  if (!view || !view.rows || view.rows.length === 0) {
     // `props` 是 dev 反射，按需读活树；节点这一帧没挂上就读不到。说清是"读不到"
     // 而不是"没有属性"——两者对一个 inspector 是不同的结论。
-    host.appendChild(el('div', 'dim small', `属性读不到（${props.reason || '?'}）`));
-  } else if (Object.keys(props).length) {
-    const pre = el('div', 'box');
-    pre.textContent = JSON.stringify(props, null, 2);
-    host.appendChild(pre);
+    host.appendChild(el('div', 'none', (view && view.title) || '属性读不到'));
+  } else {
+    host.appendChild(el('div', 'dim small', view.title));
+    const t = el('table', 'props');
+    for (const row of view.rows) {
+      const tr = el('tr');
+      tr.appendChild(el('th', '', `${row.owner}::${row.name}`));
+      const td = el('td');
+      td.appendChild(el('div', '', row.value));
+      if (row.detail && row.detail.length) {
+        const detail = el('div', 'detail');
+        detail.textContent = row.detail.join('\n');
+        td.appendChild(detail);
+      }
+      tr.appendChild(td);
+      t.appendChild(tr);
+    }
+    host.appendChild(t);
+    for (const note of view.notes || []) host.appendChild(el('div', 'note', note));
   }
 
   const cons = card.constraints || {};

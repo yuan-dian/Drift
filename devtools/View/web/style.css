@@ -423,7 +423,18 @@ h2 {
   white-space: nowrap;
   vertical-align: top;
 }
+/* 属性表左列是 `类::字段`，比几何表的短标签长得多：让它换行，别把值挤出去。 */
+#card table.props th { width: 45%; white-space: normal; word-break: break-all; }
+#card table.props td { vertical-align: top; word-break: break-word; }
 #card td { font-family: ui-monospace, Consolas, monospace; padding: 2px 0; }
+#card td .detail {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+#card .note { margin-top: 4px; color: var(--dim); font-size: 12px; }
 #card .box {
   margin: 6px 0 10px;
   padding: 6px 8px;

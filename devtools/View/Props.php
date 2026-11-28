@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Drift\DevTools\View;
 
 /**
- * 属性视图：把 `props(node)` 的返回压成可读文本。
+ * 属性视图：把 `props(node)` 的返回压成行模型，终端与 Web 两个出口共用。
  *
  * ## 它不采集、不反射、不判断
  *
@@ -13,14 +13,15 @@ namespace Drift\DevTools\View;
  *
  * ## 两条纪律
  *
- * 1. **纯函数**：同样的 answer 必须给出逐字节相同的行；不读时钟、不读环境。
+ * 1. **`rows()` 是唯一真相，`lines()` 只是它的文本出口**（与 `Report::lines()` 同形）。
+ *    两个出口各写一份"怎么说"，迟早会对同一个值给出两种描述。
  * 2. **自报裁剪**：`omitted` / `cut` / `cycles` 必须写出来。读者把"我没看到"
  *    当成"不存在"，而一列文本看不出这一点。
  *
  * ★ 属性是 dev 即时内省，不是证据（A55）：没有快照窗口、不写包。头部明说
  *   这是"第 N 帧现读"的值，避免被当成可回放的历史事实。
  *
- * @internal 内省视图；`devtools/bin/debug-props.php` 是它唯一的调用方
+ * @internal 内省视图；`devtools/bin/debug-props.php` 与 `Web::node()` 是调用方
  */
 final class Props
 {
@@ -33,22 +34,58 @@ final class Props
      */
     private const int DETAIL_LIMIT = 12;
 
-    /** @param array<string, mixed> $answer `props()` 的返回 */
-    public static function lines(array $answer): array
+    /**
+     * @param array<string, mixed> $answer `props()` 的返回
+     * @return array{
+     *     title: string,
+     *     rows: list<array{owner: string, name: string, value: string, detail: list<string>}>,
+     *     notes: list<string>
+     * }
+     */
+    public static function rows(array $answer): array
     {
         $node = (int) ($answer['node'] ?? 0);
         if (($answer['found'] ?? false) !== true) {
             return [
-                \sprintf(
+                'title' => \sprintf(
                     '节点 #%d 的属性查不到：%s',
                     $node,
-                    (string) ($answer['reason'] ?? 'unknown'),
+                    (string) ($answer['reason'] ?? $answer['error'] ?? 'unknown'),
                 ),
+                'rows' => [],
+                'notes' => [],
             ];
         }
 
-        $lines = [
-            \sprintf(
+        $rows = [];
+        foreach ($answer['fields'] ?? [] as $field) {
+            $value = $field['value'] ?? [];
+            $rows[] = [
+                'owner' => (string) ($field['owner'] ?? '?'),
+                'name' => (string) ($field['name'] ?? '?'),
+                'value' => self::value($value, 0),
+                'detail' => self::details($value, 1),
+            ];
+        }
+
+        $notes = [];
+        if ($rows === []) {
+            $notes[] = '没有可枚举的字段；这不等于控件没有配置';
+        }
+        $notes[] = \sprintf(
+            '字段 %d 项，省略 %d；深度/预算截断 %d 处；循环引用 %d 处；读取 %.3fms',
+            \count($rows),
+            (int) ($answer['omitted'] ?? 0),
+            (int) ($answer['cut'] ?? 0),
+            (int) ($answer['cycles'] ?? 0),
+            (float) ($answer['costMs'] ?? 0.0),
+        );
+        $notes[] = ($answer['redact'] ?? true) === true
+            ? \sprintf('凭证脱敏 %d 处', (int) ($answer['redacted'] ?? 0))
+            : '未脱敏（含明文）';
+
+        return [
+            'title' => \sprintf(
                 '节点 #%d  %s（%s）%s · 第 %d 帧现读（即时内省，不进证据包）',
                 $node,
                 (string) ($answer['widget'] ?? '?'),
@@ -56,36 +93,25 @@ final class Props
                 ($answer['state'] ?? null) === null ? '' : ' / State=' . $answer['state'],
                 (int) ($answer['liveFrame'] ?? 0),
             ),
+            'rows' => $rows,
+            'notes' => $notes,
         ];
+    }
 
-        $fields = $answer['fields'] ?? [];
-        if ($fields === []) {
-            $lines[] = '  （没有可枚举的字段；这不等于控件没有配置）';
-        }
-        foreach ($fields as $field) {
-            $lines[] = \sprintf(
-                '  %-24s %s',
-                (string) ($field['owner'] ?? '?') . '::' . (string) ($field['name'] ?? '?'),
-                self::value($field['value'] ?? [], 0),
-            );
-            // 上面的定宽会把嵌套内容压成一行；对象/列表的明细另起缩进行。
-            $detail = self::details($field['value'] ?? [], 1);
-            foreach ($detail as $line) {
+    /** @param array<string, mixed> $answer `props()` 的返回 @return list<string> */
+    public static function lines(array $answer): array
+    {
+        $view = self::rows($answer);
+        $lines = [$view['title']];
+        foreach ($view['rows'] as $row) {
+            $lines[] = \sprintf('  %-24s %s', $row['owner'] . '::' . $row['name'], $row['value']);
+            foreach ($row['detail'] as $line) {
                 $lines[] = '      ' . $line;
             }
         }
-
-        $lines[] = \sprintf(
-            '字段 %d 项，省略 %d；深度/预算截断 %d 处；循环引用 %d 处；读取 %.3fms',
-            \count($fields),
-            (int) ($answer['omitted'] ?? 0),
-            (int) ($answer['cut'] ?? 0),
-            (int) ($answer['cycles'] ?? 0),
-            (float) ($answer['costMs'] ?? 0.0),
-        );
-        $lines[] = ($answer['redact'] ?? true) === true
-            ? \sprintf('凭证脱敏 %d 处', (int) ($answer['redacted'] ?? 0))
-            : '未脱敏（含明文）';
+        foreach ($view['notes'] as $note) {
+            $lines[] = '  ' . $note;
+        }
 
         return $lines;
     }
@@ -100,7 +126,7 @@ final class Props
             'scalar' => \is_bool($raw) ? ($raw ? 'true' : 'false') : ($raw === null ? 'null' : (string) $raw),
             'string' => '"' . (string) $raw . '"' . (($value['truncated'] ?? false) === true
                 ? ' …（原长 ' . (int) ($value['length'] ?? 0) . ' 字节）' : ''),
-            'list', 'map' => \sprintf('%s（%d 项，列 %d）', $kind, (int) ($value['count'] ?? 0), \count($value['items'] ?? [])),
+            'list', 'map' => \sprintf('%s（共 %d 项，展开 %d）', $kind, (int) ($value['count'] ?? 0), \count($value['items'] ?? [])),
             'obj' => (string) ($value['class'] ?? '?') . '（' . \count($value['props'] ?? []) . ' 字段）',
             'closure' => 'Closure @ ' . (string) ($value['at'] ?? '?'),
             'resource' => 'resource(' . (string) ($value['type'] ?? '?') . ')',
