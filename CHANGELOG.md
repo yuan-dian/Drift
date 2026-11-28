@@ -80,6 +80,8 @@
 
 ### 已实现
 
+- **DevTools 对照评审与路线更新**：新增 `_legacy-docs/REVIEW-DevTools对照成熟检查器-2026-11-28.md`，按 26 项能力给当前分支 **7.2**、成熟基线 **8.75**；证据链与成熟工具持平，Web 属性编辑 / 源码落点 / 生态是短板。`ROADMAP` 与[调试器成熟度路线](docs/concepts/debugger-roadmap.md)同步收口 P9（真机检查器与 HUD），P10 明确收敛顺序；真机 hover follow、3D / 设计稿叠加与插件生态保持不做。
+
 - **真机 HUD 说人话，段取渲染三件套**：身份带面包屑（`TextFieldCell #673 in Dock > Card`）、
   尺寸带 px 与屏幕坐标、帧耗时带 60fps 预算参照、约束翻成"宽锁定 608 / 尺寸由内容决定"、
   间距用中文且 0 不占位（全零写 `无间距`）。分段改读 `FrameRecord::stageNs` 的
