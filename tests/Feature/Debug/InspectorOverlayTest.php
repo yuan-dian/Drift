@@ -8,6 +8,7 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\Inspect\BoxLayers;
+use Drift\DevTools\Inspect\Hud;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
 use Drift\Geometry\Size;
@@ -251,6 +252,63 @@ final class InspectorOverlayTest extends SmokeTestCase
         } finally {
             $session->close();
         }
+    }
+
+    public function testHudLinesOmitZeroValues(): void
+    {
+        [$app, $session] = $this->open();
+        try {
+            $node = $this->targetNode($app);
+            check('找得到 Column 节点', $node > 0, 'node=' . $node);
+            if ($node <= 0) {
+                return;
+            }
+
+            $session->highlight($node);
+            $session->inspect(['hud']);
+            $session->pump(16.0);
+            $hud = $session->inspect(['hud'])['hud'] ?? [];
+            $text = \implode("\n", Hud::lines($hud));
+
+            check('标题带节点号与类型', \str_contains($text, '#' . $node) && \str_contains($text, 'Column'), $text);
+            check('有 border 就只说 border', \str_contains($text, 'border 3'), $text);
+            check(
+                '0 值不占位',
+                !\str_contains($text, 'margin 0') && !\str_contains($text, 'padding 0'),
+                $text,
+            );
+            check('带父给约束', \str_contains($text, 'tight') || \str_contains($text, '..'), $text);
+        } finally {
+            $session->close();
+        }
+    }
+
+    public function testHudLinesExplainInvisible(): void
+    {
+        $lines = Hud::lines([
+            'type' => 'Text',
+            'node' => 7,
+            'width' => null,
+            'height' => null,
+            'x' => null,
+            'y' => null,
+            'frame' => 1,
+            'costMs' => 0.0,
+            'rebuiltNode' => false,
+            'stage' => null,
+            'parentNode' => null,
+            'constraint' => null,
+            'padding' => null,
+            'border' => null,
+            'margin' => null,
+            'picking' => false,
+            'visibility' => 'no box',
+        ]);
+        $text = \implode("\n", $lines);
+
+        check('没有盒时仍报身份', \str_contains($text, '#7  Text'), $text);
+        check('说清为什么看不见', \str_contains($text, '⚠ no box'), $text);
+        check('没有盒时不编尺寸', !\str_contains($text, '×'), $text);
     }
 
     public function testAllLayersOffDrawsNothing(): void

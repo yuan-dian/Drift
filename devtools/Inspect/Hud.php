@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Drift\DevTools\Inspect;
 
 use Drift\Debug\Session\Recorder;
+use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\Rect;
 use Drift\Geometry\Scale;
 use Drift\Rendering\Canvas;
@@ -47,7 +48,7 @@ final class Hud
     private const float MARGIN = 12.0;
 
     /** 单行最大宽度：再宽就换行，HUD 不该横跨半个窗口 */
-    private const float MAX_LINE = 320.0;
+    private const float MAX_LINE = 380.0;
 
     /**
      * 这一帧 HUD 要展示的数值。`null` = 没有可展示的选中节点。
@@ -56,43 +57,111 @@ final class Hud
      *     frame: int,
      *     costMs: float,
      *     rebuilt: int,
+     *     node: int|null,
      *     type: string|null,
      *     width: float|null,
      *     height: float|null,
+     *     x: float|null,
+     *     y: float|null,
+     *     parentNode: int|null,
+     *     parentType: string|null,
+     *     constraint: string|null,
+     *     stage: string|null,
+     *     visibility: string,
+     *     rebuiltNode: bool,
      *     padding: array{l: float, t: float, r: float, b: float}|null,
      *     border: float|null,
      *     margin: array{l: float, t: float, r: float, b: float}|null,
      *     picking: bool,
      * }
      */
-    public static function values(Recorder $recorder, ?Element $selected, bool $picking = false): array
+    public static function values(Recorder $recorder, ?Element $selected, bool $picking = false, ?Rect $viewport = null): array
     {
         $stats = $recorder->stats();
+        $frame = $recorder->lastFrameId();
+        $record = $recorder->frame($frame);
         $values = [
-            'frame' => $recorder->lastFrameId(),
+            'frame' => $frame,
             'costMs' => (float) ($stats['lastCostMs'] ?? 0.0),
             'rebuilt' => (int) ($stats['lastRebuilt'] ?? 0),
+            'node' => null,
             'type' => null,
             'width' => null,
             'height' => null,
+            'x' => null,
+            'y' => null,
+            'parentNode' => null,
+            'parentType' => null,
+            'constraint' => null,
+            'stage' => null,
+            'visibility' => 'visible',
+            'rebuiltNode' => false,
             'padding' => null,
             'border' => null,
             'margin' => null,
             'picking' => $picking,
         ];
 
-        $box = $selected?->effectiveBox();
-        $layers = $box === null ? null : BoxLayers::of($box);
-        if ($layers === null || $selected === null) {
+        // 分段按 `stages` 的**执行顺序**取，不硬编码段名：显示器不该维护第二份段表。
+        if ($record !== null && $record->stages !== []) {
+            $parts = [];
+            foreach ($record->stages as $name) {
+                $ns = (int) ($record->stageNs[$name] ?? 0);
+                if ($ns <= 0) {
+                    continue;
+                }
+                $parts[] = $name . ' ' . self::num((float) $ns / 1e6);
+                if (\count($parts) >= 3) {
+                    break;
+                }
+            }
+            if ($parts !== []) {
+                $values['stage'] = \implode(' / ', $parts);
+            }
+        }
+
+        if ($selected === null) {
             return $values;
         }
 
+        $values['node'] = $selected->debugId;
         $values['type'] = self::shortType($selected);
+
+        $box = $selected->effectiveBox();
+        $layers = $box === null ? null : BoxLayers::of($box);
+        if ($layers === null || $box === null) {
+            // Offstage / 未布局：没有盒，但身份与"为什么没有"仍要说。
+            $values['visibility'] = 'no box';
+
+            return $values;
+        }
+
+        [$x, $y] = \Drift\Layout\RenderBox::absoluteOrigin($box);
+        $parent = $selected->parent();
+
         $values['width'] = (float) $layers['border']['w'];
         $values['height'] = (float) $layers['border']['h'];
+        $values['x'] = $x;
+        $values['y'] = $y;
+        $values['parentNode'] = $parent?->debugId;
+        $values['parentType'] = $parent === null ? null : self::shortType($parent);
+        $values['constraint'] = self::constraintText($box->constraints());
+        $values['rebuiltNode'] = $record?->rebuilt($selected->debugId) ?? false;
         $values['padding'] = $layers['padding'];
         $values['border'] = (float) $layers['borderWidth'];
         $values['margin'] = $layers['margin'];
+
+        if ($viewport !== null) {
+            $rect = new Rect(
+                $layers['border']['x'],
+                $layers['border']['y'],
+                $layers['border']['w'],
+                $layers['border']['h'],
+            );
+            if ($rect->intersect($viewport)->isEmpty()) {
+                $values['visibility'] = 'outside';
+            }
+        }
 
         return $values;
     }
@@ -109,28 +178,73 @@ final class Hud
             return [];
         }
 
-        $pick = ($values['picking'] ?? false) === true ? 'PICK · ' : '';
+        $lines = [];
+        if (($values['picking'] ?? false) === true) {
+            $lines[] = 'PICK · 点击选中 · ↑↓ 换层（Esc 退出）';
+        }
 
-        return [
-            $pick . \sprintf(
-                '#%d  %sms  %d rebuilt',
-                (int) $values['frame'],
-                self::num((float) $values['costMs']),
-                (int) $values['rebuilt'],
-            ),
-            \sprintf(
-                '%s  %sx%s',
-                (string) $values['type'],
+        $lines[] = \sprintf('#%d  %s', (int) $values['node'], (string) $values['type']);
+
+        if (($values['width'] ?? null) !== null) {
+            $lines[] = \sprintf(
+                '%s × %s  @ %s, %s',
                 self::num((float) $values['width']),
                 self::num((float) $values['height']),
-            ),
-            \sprintf(
-                'pad %s | border %s | margin %s',
-                self::edges($values['padding']),
-                self::num((float) $values['border']),
-                self::edges($values['margin']),
-            ),
-        ];
+                self::num((float) $values['x']),
+                self::num((float) $values['y']),
+            );
+            $lines[] = \sprintf(
+                'frame %d · %sms · %s',
+                (int) $values['frame'],
+                self::num((float) $values['costMs']),
+                ($values['rebuiltNode'] ?? false) ? 'rebuilt' : 'kept',
+            );
+            if (($values['stage'] ?? null) !== null) {
+                $lines[] = (string) $values['stage'];
+            }
+
+            // 约束与父级同一行：只报 `w tight 608` 而不报"谁给的"，读者还得再查一次。
+            $where = [];
+            if (($values['parentNode'] ?? null) !== null) {
+                $where[] = \sprintf(
+                    'parent #%d %s',
+                    (int) $values['parentNode'],
+                    (string) ($values['parentType'] ?? ''),
+                );
+            }
+            if (($values['constraint'] ?? null) !== null) {
+                $where[] = (string) $values['constraint'];
+            }
+            if ($where !== []) {
+                $lines[] = \implode(' → ', $where);
+            }
+
+            // 0 值不占位：全零说"没有间距"，有哪层只说哪层。
+            $box = [];
+            $pad = self::edges($values['padding']);
+            if ($pad !== '0') {
+                $box[] = 'pad ' . $pad;
+            }
+            $border = (float) ($values['border'] ?? 0.0);
+            if ($border > 0.0) {
+                $box[] = 'border ' . self::num($border);
+            }
+            $margin = self::edges($values['margin']);
+            if ($margin !== '0') {
+                $box[] = 'margin ' . $margin;
+            }
+            $lines[] = $box === [] ? 'spacing none' : \implode(' · ', $box);
+        }
+
+        // 看不见的时候，"为什么看不见"比尺寸更该占据这行。
+        $visibility = (string) ($values['visibility'] ?? 'visible');
+        if ($visibility !== 'visible') {
+            $lines[] = $visibility === 'no box'
+                ? '⚠ no box（Offstage / 未布局）'
+                : '⚠ outside viewport';
+        }
+
+        return $lines;
     }
 
     /**
@@ -178,12 +292,23 @@ final class Hud
             6.0,
         );
 
-        $paint = Paint::fill($theme->textColor(TextRole::Caption));
+        $picking = ($values['picking'] ?? false) === true;
+        $warn = Paint::fill($theme->color(ColorToken::Warning));
+        $danger = Paint::fill($theme->color(ColorToken::Danger));
+        $strong = Paint::fill($theme->color(ColorToken::Text));
+        $muted = Paint::fill($theme->color(ColorToken::Muted));
+        // 有 PICK 行时它排第 0、标题退到第 1；没有时标题就是第 0。
+        $title = $picking ? 1 : 0;
+
         $cursor = $y + self::PAD_Y;
         foreach ($paragraphs as $i => $paragraph) {
             if ($i > 0) {
                 $cursor += self::GAP;
             }
+            // `⚠` 是"为什么看不见"的唯一一行，必须比其余行更刺眼。
+            $paint = \str_starts_with($paragraph->text, '⚠')
+                ? $danger
+                : ($i === 0 && $picking ? $warn : ($i === $title ? $strong : $muted));
             $canvas->drawParagraph($paragraph, $paint, $x + self::PAD_X, $cursor);
             $cursor += $paragraph->height;
         }
@@ -194,6 +319,26 @@ final class Hud
     private static function shortType(Element $element): string
     {
         return \basename(\str_replace('\\', '/', $element->widget()::class));
+    }
+
+    /** 父给的约束：紧的一侧写 `tight N`，松的一侧写区间。排查"谁把我的宽定死了"靠它。 */
+    private static function constraintText(?BoxConstraints $c): ?string
+    {
+        if ($c === null) {
+            return null;
+        }
+
+        return 'w ' . self::range($c->minWidth, $c->maxWidth)
+            . ' · h ' . self::range($c->minHeight, $c->maxHeight);
+    }
+
+    private static function range(float $min, float $max): string
+    {
+        if ($min == $max) {
+            return 'tight ' . self::num($min);
+        }
+
+        return self::num($min) . '..' . (\is_finite($max) ? self::num($max) : '∞');
     }
 
     /** 四边相同给一个数，否则 `l/t/r/b` —— 省得读到 `padding 12` 却以为四边都是 12 */

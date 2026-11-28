@@ -172,6 +172,23 @@ final class LivePickTest extends SmokeTestCase
         $ticker->close();
     }
 
+    public function testArrowKeysAreCapturedOnlyInPickMode(): void
+    {
+        $ticker = $this->ticker();
+
+        check('未拾取时 ↑ 放行', !$ticker->interceptInput(KeyEvent::down(KeyChord::up())));
+        check('未拾取时 ↓ 放行', !$ticker->interceptInput(KeyEvent::down(KeyChord::down())));
+
+        $ticker->armPick(true);
+        $ticker->interceptInput(PointerEvent::down(160.0, 120.0));
+        $ticker->interceptInput(PointerEvent::up(160.0, 120.0));
+
+        // 点过一次之后命中链才有东西可走；此时方向键归调试器，不能漏给应用。
+        check('点击后 ↑ 被吞（在命中链上换层）', $ticker->interceptInput(KeyEvent::down(KeyChord::up())));
+        check('点击后 ↓ 被吞', $ticker->interceptInput(KeyEvent::down(KeyChord::down())));
+        $ticker->close();
+    }
+
     public function testShortcutYieldsToApplicationBinding(): void
     {
         $transport = new FakeTransport([]);

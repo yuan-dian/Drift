@@ -61,6 +61,18 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
      */
     private bool $pickChordEnabled = false;
 
+    /**
+     * 最近一次拾取的命中链（最深 → 根）与当前层。
+     *
+     * ★ `↑/↓` 在这条链上走：点中的永远是最深节点，而"这一圈 padding 是谁的"
+     *   往往在父级。没有这条链，读者只能再点一次（还是点到同一个最深节点）。
+     *
+     * @var list<int>
+     */
+    private array $pickChain = [];
+
+    private int $pickIndex = 0;
+
     private readonly Discovery $discovery;
 
     /**
@@ -230,6 +242,8 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         $this->shot = null;
         $this->pickArmed = false;
         $this->pickSwallowing = false;
+        $this->pickChain = [];
+        $this->pickIndex = 0;
         if ($this->entryId !== null) {
             $this->discovery->unregister($this->entryId);
             $this->entryId = null;
@@ -348,6 +362,19 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
 
             return true;
         }
+
+        // ↑/↓ 在命中链上换层：↑ 向父级、↓ 向子级。点中的永远是最深节点，
+        // 而"这圈 padding 是谁的"通常在父级 —— 没有这条，读者只能再点一次。
+        if ($event instanceof KeyEvent
+            && ($event->chord->is(KeyChord::up()) || $event->chord->is(KeyChord::down()))) {
+            if ($this->pickChain === []) {
+                return false;   // 还没点过，方向键留给应用
+            }
+            $this->movePick($event->chord->is(KeyChord::up()) ? 1 : -1);
+
+            return true;
+        }
+
         if (!$event instanceof PointerEvent) {
             return false;
         }
@@ -380,20 +407,34 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         }
 
         $chain = $answer['chain'] ?? [];
-        // 链是根 → 最深；倒着找最近的有主盒。无主盒没有 Element 身份，描不了边，
+        // 链是根 → 最深；倒着收集全部有主盒的节点。无主盒没有 Element 身份，描不了边，
         // 但"点在装饰盒上"仍应选中它的宿主 Widget，否则拾取会经常性地没反应。
-        $node = 0;
+        $nodes = [];
         foreach (\is_array($chain) ? \array_reverse($chain) : [] as $fact) {
             if (!\is_array($fact)) {
                 continue;
             }
             $candidate = $fact['node'] ?? null;
             if (\is_int($candidate) && $candidate > 0) {
-                $node = $candidate;
-                break;
+                $nodes[] = $candidate;
             }
         }
-        $this->session?->highlight($node);
+        $nodes = \array_values(\array_unique($nodes));
+        $this->pickChain = $nodes;
+        $this->pickIndex = 0;
+        $this->session?->highlight($nodes[0] ?? 0);
+    }
+
+    /** 命中链是"最深 → 根"：↑ 往父级走（+1），↓ 往子级走（-1）。 */
+    private function movePick(int $delta): void
+    {
+        $next = $this->pickIndex + $delta;
+        if ($next < 0 || $next >= \count($this->pickChain)) {
+            return;
+        }
+
+        $this->pickIndex = $next;
+        $this->session?->highlight($this->pickChain[$next]);
     }
 
     /** 判据用：会话是否在跑；没装上时是 `null`。 */

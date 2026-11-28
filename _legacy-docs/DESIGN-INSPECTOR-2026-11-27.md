@@ -375,8 +375,11 @@ Web 读**记录**（`GeometryQuery` 的 history），真机要读**活树**（`e
 
 ### 棒 4（HUD，2026-11-28）
 
-`hud` 作为第三层落地：右下角三行实底面板（`#帧号  耗时  重画数` / `类名  宽x高` /
-`pad | border | margin`），`ColorToken::Pane` + 90% alpha，文字走主题 `Caption`。
+`hud` 作为第三层落地：右下角实底面板，按排查动线分五行 —— 身份（`#节点 类型`）、
+尺寸与绝对位置（`608 × 16.8 @ 0,270`）、帧耗时与 `build/layout/paint` 分段、
+父级与父给约束（`parent #503 Padding → w tight 608`）、只列非零的间距层。
+`ColorToken::Pane` + 90% alpha，标题用 `Text`、正文 `Muted`、`PICK` 用 `Warning`、
+`⚠` 用 `Danger`。
 
 - **数字与 `stats()` 同一份**：`paint()` 跑在帧中间，正在录的帧还没有 `costMs`，所以
   帧号、耗时、重画数全取上一完成帧（`lastFrameId()` + `stats()`）。`hudValues()` 既是

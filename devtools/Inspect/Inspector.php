@@ -152,7 +152,7 @@ final class Inspector
             $drew = Hud::paint(
                 $canvas,
                 $viewport,
-                Hud::values($recorder, $selected, $app->debugPickArmed()),
+                Hud::values($recorder, $selected, $app->debugPickArmed(), $viewport),
                 $theme,
                 $app->metrics(),
             ) || $drew;
@@ -179,8 +179,13 @@ final class Inspector
 
         $roots = $app->treeRoots();
         $selected = $roots === [] ? null : $this->selected($roots, $recorder);
+        $viewport = null;
+        $size = $roots === [] ? null : $roots[0]->effectiveBox()?->size();
+        if ($size !== null) {
+            $viewport = new Rect(0.0, 0.0, $size->width, $size->height);
+        }
 
-        return Hud::values($recorder, $selected, $app->debugPickArmed());
+        return Hud::values($recorder, $selected, $app->debugPickArmed(), $viewport);
     }
 
     /**
