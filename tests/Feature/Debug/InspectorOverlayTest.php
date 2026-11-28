@@ -8,6 +8,7 @@ use Drift\Dev\Smoke\Frame\SurfaceProbe;
 use Drift\Dev\Tests\Support\SmokeTestCase;
 use Drift\DevTools\App\DebugSession;
 use Drift\DevTools\Inspect\BoxLayers;
+use Drift\Debug\Session\FrameRecord;
 use Drift\DevTools\Inspect\Hud;
 use Drift\Geometry\BoxConstraints;
 use Drift\Geometry\EdgeInsets;
@@ -165,6 +166,19 @@ final class InspectorOverlayTest extends SmokeTestCase
             check('padding 与几何记录相同', ($hud['padding'] ?? null) == $model['padding'], \json_encode([$hud['padding'] ?? null, $model['padding']]));
             check('border 与几何记录相同', ($hud['border'] ?? null) == $model['border']['width'], \json_encode([$hud['border'] ?? null, $model['border']]));
             check('margin 与几何记录相同', ($hud['margin'] ?? null) == $model['margin'], \json_encode([$hud['margin'] ?? null, $model['margin']]));
+
+            // 段名取自渲染段（stageNs），不是壳的执行段（stages）：后者只有 pump*。
+            $stage = (string) ($hud['stage'] ?? '');
+            check('段来自渲染段而非 pump 噪声', !\str_contains($stage, 'pump'), $stage);
+            if ($stage !== '') {
+                check('渲染段带人话标签', \str_contains($stage, '布局') || \str_contains($stage, '绘制') || \str_contains($stage, '整理'), $stage);
+                check('段耗时带 ms 单位', \str_contains($stage, 'ms'), $stage);
+            }
+            check(
+                '面包屑与会话路径一致',
+                ($hud['path'] ?? null) === $session->query('highlight')['path'],
+                \json_encode([$hud['path'] ?? null, $session->query('highlight')['path']]),
+            );
         } finally {
             $session->close();
         }
@@ -271,16 +285,51 @@ final class InspectorOverlayTest extends SmokeTestCase
             $text = \implode("\n", Hud::lines($hud));
 
             check('标题带节点号与类型', \str_contains($text, '#' . $node) && \str_contains($text, 'Column'), $text);
-            check('有 border 就只说 border', \str_contains($text, 'border 3'), $text);
+            check('有 border 就只说 border', \str_contains($text, '边框 3'), $text);
             check(
                 '0 值不占位',
                 !\str_contains($text, 'margin 0') && !\str_contains($text, 'padding 0'),
                 $text,
             );
-            check('带父给约束', \str_contains($text, 'tight') || \str_contains($text, '..'), $text);
+            check('约束翻成人话', \str_contains($text, '锁定') || \str_contains($text, '最多') || \str_contains($text, '内容决定'), $text);
+            check('尺寸带单位与屏幕参照', \str_contains($text, 'px · 屏幕('), $text);
+            check('帧耗时带 60fps 预算', \str_contains($text, '60fps 预算'), $text);
+            check('渲染段优先，pump 噪声不上屏', !\str_contains($text, 'pumpIo') && !\str_contains($text, 'pumpTasks'), $text);
+            check('间距翻成人话', \str_contains($text, '边框') || \str_contains($text, '无间距'), $text);
         } finally {
             $session->close();
         }
+    }
+
+    public function testStageTextReadsRenderStagesNotPumpNoise(): void
+    {
+        // pump 段给大值、渲染段给小值：旧口径（遍历 stages 取前三个）会显示 pump，
+        // 新口径只认渲染段。这是能咬红的判据 —— 夹具真实帧的 pump 都低于阈值，
+        // 只靠 inspect 回执无法区分"取对了"和"恰好没有 pump"。
+        $frame = new FrameRecord(
+            7,
+            112.0,
+            9.0,
+            [],
+            [],
+            ['pumpIo', 'pumpTasks', 'pumpTimers', 'layout', 'paint'],
+            [
+                'pumpIo' => 6_000_000,
+                'pumpTasks' => 2_000_000,
+                'pumpTimers' => 1_000_000,
+                'layout' => 1_200_000,
+                'paint' => 800_000,
+                'settle' => 40_000,   // 0.04ms，低于阈值，不该出现
+            ],
+            false,
+            false,
+        );
+        $text = (string) Hud::stageText($frame);
+
+        check('布局与绘制在屏上', \str_contains($text, '布局 1.2ms') && \str_contains($text, '绘制 0.8ms'), $text);
+        check('pump 段即使很大也不上屏', !\str_contains($text, 'pump'), $text);
+        check('低于 0.05ms 的段不占位', !\str_contains($text, '整理'), $text);
+        check('段名翻成人话', !\str_contains($text, 'layout') && !\str_contains($text, 'paint'), $text);
     }
 
     public function testHudLinesExplainInvisible(): void
@@ -306,7 +355,7 @@ final class InspectorOverlayTest extends SmokeTestCase
         ]);
         $text = \implode("\n", $lines);
 
-        check('没有盒时仍报身份', \str_contains($text, '#7  Text'), $text);
+        check('没有盒时仍报身份', \str_contains($text, 'Text #7'), $text);
         check('说清为什么看不见', \str_contains($text, '⚠ no box'), $text);
         check('没有盒时不编尺寸', !\str_contains($text, '×'), $text);
     }

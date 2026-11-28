@@ -152,7 +152,7 @@ final class Inspector
             $drew = Hud::paint(
                 $canvas,
                 $viewport,
-                Hud::values($recorder, $selected, $app->debugPickArmed(), $viewport),
+                $this->hudData($recorder, $selected, $app->debugPickArmed(), $viewport),
                 $theme,
                 $app->metrics(),
             ) || $drew;
@@ -185,7 +185,21 @@ final class Inspector
             $viewport = new Rect(0.0, 0.0, $size->width, $size->height);
         }
 
-        return Hud::values($recorder, $selected, $app->debugPickArmed(), $viewport);
+        return $this->hudData($recorder, $selected, $app->debugPickArmed(), $viewport);
+    }
+
+    /** HUD 唯一数据入口：路径只有这里取得到（History 是会话层的东西）。 */
+    private function hudData(
+        Recorder $recorder,
+        ?Element $selected,
+        bool $picking,
+        ?Rect $viewport,
+    ): array {
+        $path = $selected === null || $this->history === null
+            ? null
+            : $this->history->pathOf($selected->debugId);
+
+        return Hud::values($recorder, $selected, $picking, $viewport, $path);
     }
 
     /**
