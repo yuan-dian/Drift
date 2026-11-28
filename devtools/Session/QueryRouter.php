@@ -272,7 +272,7 @@ final class QueryRouter implements SessionQueries
      * 分两次查时中间可能又推进了一帧，于是"观察者看到的末帧"与"宿主报的末帧"
      * 天然对不上——而那条判据（#2）正是要证明它们同源。
      *
-     * @return array{session: string, state: string, reason: ?string, lastFrame: int}
+     * @return array{session: string, state: string, reason: ?string, lastFrame: int, picking: bool}
      */
     private function stateQuery(): array
     {
@@ -283,6 +283,8 @@ final class QueryRouter implements SessionQueries
             'state' => $state instanceof SessionState ? $state->state : 'offline',
             'reason' => $state instanceof SessionState ? $state->reason : null,
             'lastFrame' => $this->history->lastFrameId(),
+            // 拾取模式：Web 顶栏靠它显示"拾取中"，真机 HUD 靠 `AppShell` 的同名状态。
+            'picking' => $state instanceof SessionState && $state->picking,
         ];
     }
 

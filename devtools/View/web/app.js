@@ -1673,12 +1673,16 @@ function updateNoShot(driven) {
     : '离线包 / 只读会话只带几何与发现，节点与因果仍可查';
 }
 
-/** 真机开着的层：页面只镜像。开关在真机侧（`debug inspect`），这里不提供控制。 */
-function renderInspector(layers) {
+/** 真机开着的层与拾取模式：页面只镜像。开关在真机侧（`debug inspect` / `Ctrl+Shift+I`）。 */
+function renderInspector(layers, picking) {
   const chip = document.getElementById('inspectorLayers');
   chip.hidden = false;
-  chip.textContent = layers.length ? `真机叠加 ${layers.join(' · ')}` : '真机叠加 关';
-  chip.title = '真机窗口此刻开着的检查器层（Web 只镜像，不控制）';
+  const base = layers.length ? `真机叠加 ${layers.join(' · ')}` : '真机叠加 关';
+  chip.textContent = picking ? `${base} · 拾取中` : base;
+  chip.title = picking
+    ? '真机正在拾取：点真窗口里的控件会换选中（Esc 或 Ctrl+Shift+I 退出）'
+    : '真机窗口此刻开着的检查器层（Web 只镜像，不控制）';
+  chip.classList.toggle('picking', picking);
 }
 
 async function poll() {
@@ -1692,7 +1696,7 @@ async function poll() {
     document.getElementById('ctl').hidden = !driven;
 
     const layers = Array.isArray(st.inspector) ? st.inspector : [];
-    renderInspector(layers);
+    renderInspector(layers, st.picking === true);
 
     // ★ 这里**不**按 `lastFrame` 刷几何。帧号是"主循环跑过几轮"，空闲的应用
     //   被调试桥叫醒也会涨（~80fps）—— 按它刷新等于每 500ms 全量重取一遍几何，

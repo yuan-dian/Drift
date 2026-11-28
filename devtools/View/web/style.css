@@ -44,6 +44,12 @@ body { display: flex; flex-direction: column; }
   color: var(--accent);
 }
 
+/* 拾取中要一眼看见：这是"下一次点击不会进应用"的唯一提示。 */
+.chip.picking {
+  border-color: var(--warn, #e0a030);
+  color: var(--warn, #e0a030);
+}
+
 button {
   background: #2c2c31;
   color: var(--text);

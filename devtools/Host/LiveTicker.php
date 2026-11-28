@@ -46,11 +46,20 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
 
     private bool $closed = false;
 
-    /** `PICK {enabled:true}` 布防：下一次真窗口点击转为拾取（A58）。 */
+    /**
+     * 拾取模式（A58）。**模式保持**，不是一次性布防：进入后每次点击都换选中，
+     * 直到 `Ctrl+Shift+I` 再按一次或 Esc。
+     */
     private bool $pickArmed = false;
 
     /** 已吞下一次 down，正等这段点击收尾；期间所有指针输入都不进应用。 */
     private bool $pickSwallowing = false;
+
+    /**
+     * `Ctrl+Shift+I` 能不能用。应用自己绑了同一组合时让位 —— 只留 CLI，
+     * 不能因为调试器抢了一个应用快捷键。
+     */
+    private bool $pickChordEnabled = false;
 
     private readonly Discovery $discovery;
 
@@ -145,6 +154,8 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         // web 上没底图，几何照旧 —— 不报错、不降级会话。
         $this->shot = new Shot(\dirname($this->discovery->path()), Shot::MIN_GAP_MS, $this->entryId);
         $this->bound = $app;
+        // 让位规则只有一条：应用已经声明了这个组合，调试器就不抢。CLI 仍可用。
+        $this->pickChordEnabled = $app->scope()->accelerators()->resolve(self::pickChord()) === null;
         $app->setFrameObserver(\Closure::fromCallable([$this, 'onPainted']));
 
         $this->report?->__invoke(\sprintf(
@@ -207,6 +218,9 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         $this->closed = true;
 
         $this->host?->closeChannels();
+        // 先让屏幕与状态面知道"模式关了"，再拆会话 —— 反过来的话最后一帧会留着 PICK。
+        $this->session?->markPicking(false);
+        $this->bound?->setDebugPickArmed(false);
         $this->session?->close();
         $this->session = null;
         $this->host = null;
@@ -273,6 +287,9 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         if (!$enabled) {
             $this->pickSwallowing = false;
         }
+        // 屏幕与状态面都跟着走：HUD 的 PICK、Web 顶栏的"拾取中"读的是这两处。
+        $this->session?->markPicking($this->pickArmed);
+        $this->bound?->setDebugPickArmed($this->pickArmed);
 
         return ['armed' => $this->pickArmed];
     }
@@ -295,6 +312,15 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
         }
 
         $escape = $event instanceof KeyEvent && $event->chord->is(KeyChord::escape());
+        $toggle = $this->pickChordEnabled && $event instanceof KeyEvent && $event->chord->is(self::pickChord());
+
+        // 模式开关排在最前：它不属于任何一段点击，点击收尾期间也必须生效。
+        if ($toggle) {
+            $this->pickSwallowing = false;
+            $this->armPick(!$this->pickArmed);
+
+            return true;
+        }
 
         if ($this->pickSwallowing) {
             if ($event instanceof PointerEvent) {
@@ -316,9 +342,9 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
             return false;
         }
 
-        // Esc 是取消拾取，不是"Alt+F4 那类应用快捷键"：布防期先吃掉，别让应用看到。
+        // Esc 是退出拾取，不是"Alt+F4 那类应用快捷键"：模式开着就先吃掉。
         if ($escape) {
-            $this->pickArmed = false;
+            $this->armPick(false);
 
             return true;
         }
@@ -326,15 +352,21 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
             return false;
         }
 
-        // 布防期的所有指针输入都吞；只有 down 真正拾取。move 也吞是因为
+        // 模式期的所有指针输入都吞；只有 down 真正拾取。move 也吞是因为
         // "悬停即高亮"是 A50 失效条件里的独立一件（连续流要节流合并），这里不顺手做。
         if ($event->isDown()) {
             $this->pickAt($event->x, $event->y);
-            $this->pickArmed = false;
+            // ★ 不撤防：这是 DevTools 的 inspect 模式，点第二下要换第二个控件。
             $this->pickSwallowing = true;
         }
 
         return true;
+    }
+
+    /** 拾取模式的窗口内开关：与 Chrome DevTools 的 inspect 键位一致。 */
+    private static function pickChord(): KeyChord
+    {
+        return KeyChord::make('i', ctrl: true, shift: true);
     }
 
     /** 坐标 → 最深有主节点 → 高亮；没命中就明确清除，不留下一次的高亮骗人。 */

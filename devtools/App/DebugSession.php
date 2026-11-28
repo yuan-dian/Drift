@@ -203,6 +203,17 @@ final class DebugSession implements Session
     }
 
     /**
+     * 拾取模式开关：写给 `/api/state` 与 Web 顶栏看的镜像。
+     *
+     * 真正的输入闸门在 `LiveTicker`；这里只保证"宿主怎么接着输入"这件事
+     * 在状态面上读得到，而不是只有 CLI 自己知道。
+     */
+    public function markPicking(bool $picking): void
+    {
+        $this->state->picking = $picking;
+    }
+
+    /**
      * 推进一帧，返回**整帧墙钟**（毫秒）。
      *
      * 这个数与记录里的 `cost` 不是一个口径：记录里的 `cost` 只包住 `shell->frame()`，

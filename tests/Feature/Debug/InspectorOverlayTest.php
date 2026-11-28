@@ -225,6 +225,34 @@ final class InspectorOverlayTest extends SmokeTestCase
         }
     }
 
+    public function testHudMarksPickMode(): void
+    {
+        [$app, $session] = $this->open();
+        try {
+            $node = $this->targetNode($app);
+            check('找得到 Column 节点', $node > 0, 'node=' . $node);
+            if ($node <= 0) {
+                return;
+            }
+
+            $session->highlight($node);
+            $session->inspect(['hud']);
+            $before = $session->inspect(['hud'])['hud'] ?? [];
+            check('默认不在拾取模式', ($before['picking'] ?? true) === false, \json_encode($before));
+
+            $app->setDebugPickArmed(true);
+            $session->pump(16.0);
+            $after = $session->inspect(['hud'])['hud'] ?? [];
+            check('宿主编排后 HUD 回执报拾取中', ($after['picking'] ?? false) === true, \json_encode($after));
+
+            $app->setDebugPickArmed(false);
+            $off = $session->inspect(['hud'])['hud'] ?? [];
+            check('关掉后不再报拾取中', ($off['picking'] ?? true) === false, \json_encode($off));
+        } finally {
+            $session->close();
+        }
+    }
+
     public function testAllLayersOffDrawsNothing(): void
     {
         [$app, $session, $probe] = $this->open();

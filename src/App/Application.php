@@ -445,6 +445,22 @@ abstract class Application
         $this->shell->setDebugHighlight($element);
     }
 
+    /**
+     * 拾取模式：由宿主（`LiveTicker`）写，HUD 读。应用自己永不调用。
+     *
+     * @internal 调试会话专用
+     */
+    public function setDebugPickArmed(bool $armed): void
+    {
+        $this->shell->setDebugPickArmed($armed);
+    }
+
+    /** @internal 调试会话专用 */
+    public function debugPickArmed(): bool
+    {
+        return $this->shell->debugPickArmed();
+    }
+
     /** 排一个一次性延时回调。 */
     public function after(int $milliseconds, \Closure $callback): int
     {

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\Dev\Tests\Feature\Debug;
 
+use Drift\App\Application;
 use Drift\App\DebugInputInterceptor;
 use Drift\App\DebugTicker;
 use Drift\App\EventLoop;
@@ -33,6 +34,9 @@ use Drift\Platform\Win32\Win32Platform;
  * | 未布防时不拦截 | 窗口假死：所有点击都到不了应用 |
  * | 命中节点落到 `highlight` | 拾取只是"看了"，开发者拿不到可追问的身份 |
  * | down..up 整段吞 | 只吞 down 会让 up 触发按钮激活 —— 选中即点下 |
+ * | 点击后模式保持 | 点第二个控件要回命令行再布一次，排查就断了 |
+ * | `Ctrl+Shift+I` 可进出 | 只能命令行开、还要另发一条退出 |
+ * | 应用绑了同一组合时让位 | 调试器抢了应用快捷键，功能被静默改掉 |
  * | 窗口外松开有兜底 | 收不到 up 时吞态永驻，窗口看起来死了 |
  * | Esc 取消且被吞 | 布防期按 Esc 顺手关掉了应用菜单 |
  * | 暂停态拒布防 | 回执说布防了，但闸门根本不读输入，等到超时 |
@@ -63,7 +67,7 @@ final class LivePickTest extends SmokeTestCase
         parent::tearDown();
     }
 
-    private function ticker(): LiveTicker
+    private function ticker(?Application $app = null): LiveTicker
     {
         $transport = new FakeTransport([]);
         $discovery = Discovery::inDirectory($this->dir);
@@ -76,7 +80,7 @@ final class LivePickTest extends SmokeTestCase
             null,
             $discovery,
         );
-        $app = new EchoApplication();
+        $app ??= new EchoApplication();
         $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
         $ticker->bind([1 => $app]);
         self::assertNotNull($ticker->session(), '夹具没有装上会话');
@@ -122,14 +126,19 @@ final class LivePickTest extends SmokeTestCase
         $ticker->close();
     }
 
-    public function testWholeClickIsSwallowedThenGateRecovers(): void
+    public function testWholeClickIsSwallowedAndModeStays(): void
     {
         $ticker = $this->ticker();
         $ticker->armPick(true);
         $ticker->interceptInput(PointerEvent::down(160.0, 120.0));
 
         check('up 也吞，不能让按钮在拾取时激活', $ticker->interceptInput(PointerEvent::up(160.0, 120.0)));
-        check('收尾后闸门恢复', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        // 模式保持：这是 DevTools 的 inspect，不是"只接一发"的布防。收尾之后
+        // 下一次 down 仍然归调试器；要放行只能显式撤防（Esc / 快捷键 / --clear）。
+        check('收尾后模式仍在：下一次 down 仍被吞', $ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        $ticker->interceptInput(PointerEvent::up(160.0, 120.0));
+        $ticker->armPick(false);
+        check('撤防后才放行', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
         $ticker->close();
     }
 
@@ -141,7 +150,49 @@ final class LivePickTest extends SmokeTestCase
 
         // 在窗口外松开时这里收不到 up；下一条 move 的 button=0 就是兜底。
         check('无按键的 move 仍吞，但释放吞态', $ticker->interceptInput(PointerEvent::move(200.0, 90.0)));
-        check('不会留下永久假死', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        // 释放的是"这段点击的收尾"，不是模式本身：下一次点击仍应被调试器接住。
+        check('模式保持，不会把后续点击漏给应用', $ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        $ticker->interceptInput(PointerEvent::up(160.0, 120.0));
+        $ticker->armPick(false);
+        check('撤防后才不会永久假死残留', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        $ticker->close();
+    }
+
+    public function testCtrlShiftITogglesPickMode(): void
+    {
+        $ticker = $this->ticker();
+        $chord = KeyChord::make('i', ctrl: true, shift: true);
+
+        check('快捷键进入模式并被吞', $ticker->interceptInput(KeyEvent::down($chord)));
+        check('进入后点击被吞', $ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        $ticker->interceptInput(PointerEvent::up(160.0, 120.0));
+
+        check('再按一次退出并被吞', $ticker->interceptInput(KeyEvent::down($chord)));
+        check('退出后点击放行', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
+        $ticker->close();
+    }
+
+    public function testShortcutYieldsToApplicationBinding(): void
+    {
+        $transport = new FakeTransport([]);
+        $ticker = new LiveTicker(
+            new SingleServer($transport),
+            'token',
+            'pick-test',
+            0,
+            5.0,
+            null,
+            Discovery::inDirectory($this->dir),
+        );
+        $app = new EchoApplication();
+        $app->attach(new SurfaceProbe(), BoxConstraints::tight(new Size(320.0, 240.0)));
+
+        $chord = KeyChord::make('i', ctrl: true, shift: true);
+        $app->scope()->accelerators()->bind($chord, 'app.command');
+        $ticker->bind([1 => $app]);
+
+        check('应用占用时快捷键不拦', !$ticker->interceptInput(KeyEvent::down($chord)));
+        check('也没有偷偷进入模式', !$ticker->interceptInput(PointerEvent::down(160.0, 120.0)));
         $ticker->close();
     }
 

@@ -89,6 +89,13 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     private ?Element $paintedHighlight = null;
 
     /**
+     * 拾取模式是否开着。只影响 HUD 的一个标记：不改结构、不参与判据。
+     *
+     * ★ 真相在宿主（`LiveTicker::$pickArmed`）；这里只是让屏幕能说出来。
+     */
+    private bool $debugPickArmed = false;
+
+    /**
      * 这个窗口的录制器（`null` = 没在录）。
      *
      * ★ 录制器**属于应用**而不是进程：一个进程可以有两个窗口，而一份录制器同时收
@@ -1877,6 +1884,25 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
         $this->debugHighlight = $element;
         $this->pipeline->scheduleFrame();
+    }
+
+    /**
+     * 拾取模式开/关。与高亮同一条纪律：叠加层绕过 `setState`，不排帧就不会重画，
+     * HUD 上的 `PICK` 会等到下一次真实输入才出现。
+     */
+    public function setDebugPickArmed(bool $armed): void
+    {
+        if ($this->debugPickArmed === $armed) {
+            return;
+        }
+
+        $this->debugPickArmed = $armed;
+        $this->pipeline->scheduleFrame();
+    }
+
+    public function debugPickArmed(): bool
+    {
+        return $this->debugPickArmed;
     }
 
     /**

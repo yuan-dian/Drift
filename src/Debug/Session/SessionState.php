@@ -36,6 +36,13 @@ final class SessionState
     /** 为什么停：`at`（跑到了 `--at`）/ `requested`（有人在客户端按了暂停）/ null。 */
     public ?string $reason = null;
 
+    /**
+     * 拾取模式是否开着。宿主独占真相，`/api/state` 只是镜像给 Web 顶栏。
+     *
+     * ★ 不进证据、不进指纹：它描述的是"调试器此刻怎么接输入"，不是应用行为。
+     */
+    public bool $picking = false;
+
     public function __construct(public readonly string $token)
     {
     }

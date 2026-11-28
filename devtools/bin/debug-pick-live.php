@@ -18,15 +18,18 @@ declare(strict_types=1);
  * （A51）。再开一个"拾取结果"查询等于同一件事两个名字，两边迟早会给出不同答案。
  *
  * 用法：
- *   php devtools/bin/debug-pick-live.php --session=ab12cd34
- *   php devtools/bin/debug-pick-live.php --timeout=10000 --json
- *   php devtools/bin/debug-pick-live.php --clear
+ *   php devtools/bin/debug-pick-live.php --session=ab12cd34        # 进入拾取模式（保持）
+ *   php devtools/bin/debug-pick-live.php --wait --timeout=10000    # 等一次点击（脚本用）
+ *   php devtools/bin/debug-pick-live.php --clear                   # 撤防
  *
  * 参数：
  *   --session=<id>  多会话时点名（id 见 .drift/session.json）
- *   --timeout=N     等点击的毫秒数（默认 30000）
- *   --clear         只撤防，不等点击
+ *   --wait          等一次点击就退出（旧行为）；默认只进入模式，点完不撤防
+ *   --timeout=N     `--wait` 的等待上限（默认 30000）
+ *   --clear         只撤防，不进入模式
  *   --json          结构化输出
+ *
+ * 窗口内等价开关是 `Ctrl+Shift+I`（应用自己绑了同一组合时让位，只留 CLI）。
  *
  * @internal 手工工具；不进 V2 判据清单
  */
@@ -47,12 +50,15 @@ $session = null;
 $timeoutMs = 30000;
 $clear = false;
 $json = false;
+$wait = false;
 
 foreach (\array_slice($argv, 1) as $arg) {
     if ($arg === '--json') {
         $json = true;
     } elseif ($arg === '--clear') {
         $clear = true;
+    } elseif ($arg === '--wait') {
+        $wait = true;
     } elseif (\str_starts_with($arg, '--timeout=')) {
         $timeoutMs = \max(1, (int) \substr($arg, 10));
     } elseif (\str_starts_with($arg, '--session=')) {
@@ -94,6 +100,22 @@ try {
         // 2 = 这次不能这么做（会话形态 / 宿主状态不满足），不是进程异常。
         exit(2);
     }
+
+    // 默认是**模式**：进一次，之后每次点击都换选中，直到 Esc / Ctrl+Shift+I / --clear。
+    // 不在命令退出时撤防 —— 否则用户还得回命令行再布一次，那正是要淘汰的用法。
+    if (!$wait) {
+        if ($json) {
+            \fwrite(\STDOUT, (string) \json_encode(
+                ['target' => $source->label(), 'armed' => true, 'mode' => 'pick'],
+                \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,
+            ) . "\n");
+        } else {
+            \fwrite(\STDOUT, "已进入拾取模式：点真窗口里的控件换选中；Esc 或 Ctrl+Shift+I 退出。\n");
+        }
+
+        return;
+    }
+
     if (!$json) {
         \fwrite(\STDERR, "请在窗口里点一下要检查的控件…\n");
     }

@@ -80,6 +80,11 @@
 
 ### 已实现
 
+- **真机拾取改成模式，并支持窗口内快捷键**：`Ctrl+Shift+I` 进出拾取，点哪选哪，
+  不再"点一次就失效"；应用自己绑了同一组合时让位，只留 `debug-pick-live`。
+  模式期间 HUD 首行标 `PICK`，`/api/state.picking` 与 Web 顶栏同步显示"拾取中"。
+  `debug-pick-live` 默认只进入模式，`--wait` 才等一次点击。
+
 - **Web 检查器补盒模型四层图与开关镜像**：选中节点时 canvas 按 `boxModel` 的
   margin / border / padding 数值画四层（与真机同一套公式），节点卡片补三行数值；
   顶栏镜像真机此刻开着的层（`真机叠加 bounds · hud`），不提供控制。

@@ -62,9 +62,10 @@ final class Hud
      *     padding: array{l: float, t: float, r: float, b: float}|null,
      *     border: float|null,
      *     margin: array{l: float, t: float, r: float, b: float}|null,
+     *     picking: bool,
      * }
      */
-    public static function values(Recorder $recorder, ?Element $selected): array
+    public static function values(Recorder $recorder, ?Element $selected, bool $picking = false): array
     {
         $stats = $recorder->stats();
         $values = [
@@ -77,6 +78,7 @@ final class Hud
             'padding' => null,
             'border' => null,
             'margin' => null,
+            'picking' => $picking,
         ];
 
         $box = $selected?->effectiveBox();
@@ -107,8 +109,10 @@ final class Hud
             return [];
         }
 
+        $pick = ($values['picking'] ?? false) === true ? 'PICK · ' : '';
+
         return [
-            \sprintf(
+            $pick . \sprintf(
                 '#%d  %sms  %d rebuilt',
                 (int) $values['frame'],
                 self::num((float) $values['costMs']),

@@ -149,7 +149,13 @@ final class Inspector
             $drew = ($box !== null && $this->paintBoxModel($canvas, $box, $theme)) || $drew;
         }
         if ($this->layers['hud'] && $selected !== null) {
-            $drew = Hud::paint($canvas, $viewport, Hud::values($recorder, $selected), $theme, $app->metrics()) || $drew;
+            $drew = Hud::paint(
+                $canvas,
+                $viewport,
+                Hud::values($recorder, $selected, $app->debugPickArmed()),
+                $theme,
+                $app->metrics(),
+            ) || $drew;
         }
 
         return $drew;
@@ -174,7 +180,7 @@ final class Inspector
         $roots = $app->treeRoots();
         $selected = $roots === [] ? null : $this->selected($roots, $recorder);
 
-        return Hud::values($recorder, $selected);
+        return Hud::values($recorder, $selected, $app->debugPickArmed());
     }
 
     /**
