@@ -80,6 +80,40 @@
 
 ### 已实现
 
+- **构建不再"卡住"看得见也收拾得干净**：`drift-build` 的子进程监督抽成
+  `Drift\Dev\Build\Supervisor`，三件事一起解决 ——
+  - **输出实时透传**：tpc 的 stdout/stderr 写 `_build/tpc.stdout.log`，脚本按偏移增量转发，
+    `Compiling [███]` 的 `\r` 进度条原样上屏。此前输出攒在管道里、进程退出才一次性落盘，
+    "真卡"与"只是慢"在屏幕上完全一样。根因是 Windows 匿名管道**设不了非阻塞**
+    （`stream_set_blocking()` 直接返回 false），读管道会阻塞到 EOF。
+  - **停滞看门狗**：判据是「最后一次进展距今」而不是「开工至今」（真全量要 200s+，总超时必误杀）。
+    进展取两处——输出文件变长、`build/` 与 `apps/<app>/build/` 下文件数或 mtime 变化；两者同时静默
+    超过 `--stall-timeout`（默认 300s，可用 `DRIFT_BUILD_STALL_TIMEOUT` 覆盖）即判停滞，
+    `taskkill /T /F` 清整棵进程树，并给"这是上游 tpc 收尾死锁、直接重跑"的明确错误。
+  - **孤儿兜底**：构建 PID 落 `_build/tpc.pid`；父进程被 SIGTERM 直接截断时 shutdown 钩子跑不到，
+    下次启动先清这个残留 —— 它握着 MSVC 的 PDB 锁，不清理则"卡一次之后次次卡"。
+  - 判据 `tools/build-supervise-check.php`（21 条，含正反例）：静默必须被杀、持续输出不许误杀、
+    只落盘也算进展、孙进程一起消失、pid 文件指向自己时绝不自杀。
+  - 构建失败时旧产物**先改名备份、成功才删**：此前先 `unlink` 再 `proc_open`，启动失败就让用户
+    既没有新 exe 也没有旧 exe。
+- **`drift-build` 参数解析按选项表走**：`--jobs 2 hello` 不再把 `2` 当应用名（此前只有
+  `--jobs=2` 能用，而空格写法才是人最自然的写法）；未知选项直接报错（`--increment` 静默失效
+  会让"又走了全量"变成无从解释）；`--jobs` 默认 **1**（本机 `cl.exe` 并发会偶发挂死，安全值
+  不该是手动开关）；`--full` 与 `--incremental` 同时给时明确提示前者优先。
+- **`--dry` 不要求工具链**：缺 MSVC / PHPX 时降级为警告并照常打印决策 —— 它存在的意义就是
+  "环境坏了先看决策"，此前却在 `--dry` 分支之前就把缺失当致命。新增 `--print-command`
+  打印真实 argv 与 `PHPRC` / `PHPX_HOME` / `INCLUDE` / `LIB`。
+- **根 `php.ini` 出库**：它由构建生成、内容是构建机绝对路径（`extension_dir`），提交它等于
+  让别人 clone 后拿到一个指向不存在目录的 ini。已移出版本控制并进 `.gitignore`；
+  `drift-dev` 在这种情况下会自己拼一份最小可用的（不再写出空 ini 让壳报 `undefined mb_substr`）。
+- **`drift-dev` 停进程按本次 PID**：此前 `taskkill /IM dev.exe` 会连带杀掉别的终端里那个实例
+  （它的 `finally` 不跑、业务状态直接丢）。现在启动前记 `tasklist` 集合、启动后取差集，
+  只停自己那个；认不出 PID 时才退回 `/IM`，并打一行警告。壳编译改走 `proc_open` + 实时透传
+  （`passthru()` 不返回句柄，父进程被截断时 `cmd.exe` 与 `tpc.php` 都留成孤儿）。
+  `--print-runtime` 提到编译分支之前（壳指纹一变，这条诊断此前要先等三分钟编译）。
+- **`docs/guides/build-troubleshooting.md`**：真卡 / 假卡 / 孤儿三类症状的判别表、看门狗口径、
+  为什么不要随手 `kill`、手动干预时为什么必须 `/T`。
+
 - **`debug inspect`：真机叠加层**。协议新增 `inspect` 动词（干预组第 4 个，与 `highlight`
   同形：不进证据包 / 指纹 / 重放，但进 `state.inspector` 与 `state.inspectorDrawn`），
   两个叠加层可分别开关、覆盖式传参（`--layer=a,b` 与 `--layer=a --layer=b` 同义）：

@@ -25,12 +25,6 @@ final class HotReloadStopTest extends TestCase
 
     public function testStopRequestsGracefulCloseBeforeForcing(): void
     {
-        $graceful = strpos($this->source, 'taskkill /IM dev.exe 2>&1');
-        $forced = strpos($this->source, 'taskkill /IM dev.exe /F 2>&1');
-
-        self::assertNotFalse($graceful, '必须有不带 /F 的 WM_CLOSE 请求');
-        self::assertNotFalse($forced, '必须有强杀兜底');
-        self::assertLessThan($forced, $graceful, '优雅请求必须先于强杀');
         self::assertSame(
             1,
             preg_match('/\$elegant\s*=\s*\$graceful\s*\?\s*gracefulStop\(/', $this->source),
@@ -38,8 +32,39 @@ final class HotReloadStopTest extends TestCase
         );
         self::assertSame(
             1,
-            preg_match('/if\s*\(!\$elegant\)\s*\{\s*\$forceKill\(\);/s', $this->source),
+            preg_match('/if\s*\(!\$elegant\)\s*\{\s*\$signal\(true\);/s', $this->source),
             '强杀只能在优雅失败后的兜底分支',
+        );
+        // 优雅 = 不带 /F，强杀 = 带 /F；两条都从同一个 $signal 出发，只靠参数区分。
+        self::assertStringContainsString(
+            "\$force ? ' /F' : ''",
+            $this->source,
+            '优雅 / 强杀必须是同一个信号动作的两种强度，不能各写一套',
+        );
+    }
+
+    /**
+     * 停进程必须按**本次启动的 PID**，不能按映像名。
+     *
+     * ★ `/IM dev.exe` 会连带杀掉别的终端里那个实例，它的 `finally` 不跑、业务状态直接丢
+     *   （2026-11-28 评审 P1-1）。`/IM` 只能作为"认不出 PID"的降级路径，且必须警告。
+     */
+    public function testStopTargetsThisInstancePidNotImageName(): void
+    {
+        self::assertStringContainsString(
+            "exec('taskkill /PID ' . \$pid",
+            $this->source,
+            '停止要按 PID 定位本次起的进程',
+        );
+        self::assertSame(
+            1,
+            preg_match('/if\s*\(\$pid\s*!==\s*null\)\s*\{/', $this->source),
+            'PID 优先，按映像名只能是 else 分支',
+        );
+        self::assertStringContainsString(
+            '退回按映像名停进程',
+            $this->source,
+            '降级到 /IM 时必须留下警告，否则误杀别的实例是静默的',
         );
     }
 
@@ -52,9 +77,9 @@ final class HotReloadStopTest extends TestCase
             '--hard-restart 必须被解析，不能只是文档里的一行字',
         );
         self::assertStringContainsString(
-            'stop($process, $pipes, !$hardRestart)',
+            'stop($process, $pipes, !$hardRestart, $devPid)',
             $this->source,
-            '重启与退出两条路径都要尊重硬重启开关',
+            '重启与退出两条路径都要尊重硬重启开关，并带上本次 PID',
         );
     }
 

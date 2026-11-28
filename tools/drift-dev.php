@@ -13,6 +13,11 @@ namespace Drift\Dev;
  * （cpp-src / dev-shell.php / project.yml / 两个桥接回调文件）不变就永不重编。
  */
 
+// 只引进程监督这一个类：本文件其余部分是自足的纯函数，不值得为它拉起整套 autoload。
+use Drift\Dev\Build\Supervisor;
+
+require_once __DIR__ . '/Build/Supervisor.php';
+
 function out(string $message): void
 {
     fwrite(STDOUT, "[drift-dev] {$message}\n");
@@ -210,11 +215,6 @@ function businessSnapshot(string $root, string $app, ?string $entry = null, ?str
 }
 
 /**
- * 运行期 ini：以构建产物的 ini 为底（否则缺 mbstring），再关 opcache。
- * ★ 关 opcache 有两个理由：ASLR 下它拒绝启动会让进程秒退；且它缓存 opcode
- *   会挡住「改 PHP 重启即生效」。
- */
-/**
  * 生成壳用的 ini，返回 ini 所在目录（喂给 `PHPRC`）。
  *
  * ★ 两条来源，判据是「壳旁边有没有自带运行时」：
@@ -222,7 +222,8 @@ function businessSnapshot(string $root, string $app, ?string $entry = null, ?str
  *     必须指向**包内** ext。抄宿主 php.ini 是错的 —— 那里面是构建机的绝对路径，
  *     换台机器扩展就全加载失败，报的是 `Call to undefined function mb_substr()`。
  *   - 本地开发机（壳由 drift-build 编出、DLL 来自完整 TypePHP 发行版）：沿用
- *     宿主配置，再关掉 opcache（热重启要读最新源码）。
+ *     宿主配置。两条路都要关 opcache：ASLR 下它拒绝启动会让进程秒退，且它缓存
+ *     opcode 会挡住「改 PHP 重启即生效」。
  */
 function runtimeIni(string $root, ?string $project, string $runtimeDir): string
 {
@@ -247,6 +248,12 @@ function runtimeIni(string $root, ?string $project, string $runtimeDir): string
     $source = is_file("{$project}/php.ini") ? "{$project}/php.ini"
         : (is_file("{$root}/php.ini") ? "{$root}/php.ini" : (string) php_ini_loaded_file());
     $base = $source !== '' ? (string) file_get_contents($source) : '';
+    if (trim($base) === '') {
+        // 三层都没有（根 php.ini 不再入库，发行版也可能没放 ini）：自己拼一份最小可用的。
+        // 空 ini 的症状是壳起来就 `undefined function mb_substr`，比缺扩展难看得多。
+        $base = 'extension_dir = "' . win(dirname(win(PHP_BINARY))) . "/ext/\"\n"
+            . "extension=mbstring\nextension=openssl\nextension=curl\n";
+    }
     file_put_contents("{$dir}/php.ini", rtrim($base) . "\nopcache.enable=0\n");
 
     return $dir;
@@ -258,15 +265,71 @@ function win(string $path): string
     return str_replace('/', '\\', $path);
 }
 
-/** @return array{0: resource, 1: array<int, resource>} */
+/**
+ * 当前所有 `dev.exe` 的 PID。
+ *
+ * ★ 为什么不能只用 `proc_get_status()['pid']`：AOT 产物在 Windows 上那个号在
+ *   tasklist 里查不到（历史实测），于是停止只能按映像名 `/IM` —— 而 `/IM` 会连带
+ *   杀掉**别的终端**里那个 dev.exe，它的 `finally` 不跑、业务状态直接丢。
+ *   改为「启动前记集合、启动后取差集」，只动本次真正起的那个。
+ *
+ * @return list<int>
+ */
+function devExePids(): array
+{
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return [];
+    }
+    $lines = [];
+    exec('tasklist /FI "IMAGENAME eq dev.exe" /NH /FO CSV 2>NUL', $lines);
+    $pids = [];
+    foreach ($lines as $line) {
+        if (preg_match('/"dev\.exe"\s*,\s*"(\d+)"/i', $line, $m) === 1) {
+            $pids[] = (int) $m[1];
+        }
+    }
+
+    return $pids;
+}
+
+/**
+ * 等一个新出现的 `dev.exe` PID。
+ *
+ * ★ 并发起两个 drift-dev 时，两边可能各把对方认成自己的（窗口只有几十毫秒）。
+ *   这是 `/IM` 之外唯一可行的口径 —— 已知限制，写在这里而不是留给下一个人猜。
+ *
+ * @param list<int> $before
+ */
+function awaitNewDevPid(array $before, float $timeout = 2.0): ?int
+{
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return null;
+    }
+    $deadline = microtime(true) + $timeout;
+    while (microtime(true) < $deadline) {
+        $fresh = array_values(array_diff(devExePids(), $before));
+        if ($fresh !== []) {
+            return $fresh[0];
+        }
+        usleep(50000);
+    }
+
+    return null;
+}
+
+/**
+ * @return array{0: resource, 1: array<int, resource>, 2: ?int} 第 3 项 = 本次起的 PID
+ */
 function spawn(string $exe, string $root, array $env): array
 {
+    $before = devExePids();
     $process = proc_open(
         [$exe],
         [0 => ['file', 'nul', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
         $pipes,
         $root,
-        $env
+        $env,
+        ['bypass_shell' => true],
     );
     if (!is_resource($process)) {
         fail('启动 dev.exe 失败');
@@ -274,7 +337,7 @@ function spawn(string $exe, string $root, array $env): array
     stream_set_blocking($pipes[1], false);
     stream_set_blocking($pipes[2], false);
 
-    return [$process, $pipes];
+    return [$process, $pipes, awaitNewDevPid($before)];
 }
 
 /**
@@ -344,22 +407,35 @@ function drain(array $pipes): void
 
 /**
  * @param resource $process
+ * @param int|null $pid 本次起的 PID；null 时退回按映像名（会警告）
  * @return bool 是否优雅退出（false = 已强杀，本次会话状态未写回）
  */
-function stop($process, array $pipes, bool $graceful = true): bool
+function stop($process, array $pipes, bool $graceful = true, ?int $pid = null): bool
 {
-    // ★ 实测：Windows 上 proc_open 对 AOT 进程返回的 pid / running 都不可靠
-    //   （pid 在 tasklist 里查不到，running 会误报 yes）⇒ 按固定映像名 dev.exe 操作。
-    //   不带 /F 会投 WM_CLOSE ⇒ 应用走正常关窗 ⇒ WindowSet::run() 的 finally 写回状态。
-    $requestClose = PHP_OS_FAMILY === 'Windows'
-        ? static function (): void { exec('taskkill /IM dev.exe 2>&1'); }
-        : static function () use ($process): void { proc_terminate($process, 15); };
-    $forceKill = PHP_OS_FAMILY === 'Windows'
-        ? static function (): void { exec('taskkill /IM dev.exe /F 2>&1'); }
-        : static function () use ($process): void { proc_terminate($process, 9); };
+    $warned = false;
+    $signal = static function (bool $force) use ($process, $pid, &$warned): void {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            proc_terminate($process, $force ? 9 : 15);
+
+            return;
+        }
+        // 不带 /F 会投 WM_CLOSE ⇒ 应用走正常关窗 ⇒ WindowSet::run() 的 finally 写回状态。
+        if ($pid !== null) {
+            exec('taskkill /PID ' . $pid . ($force ? ' /F' : '') . ' 2>NUL');
+
+            return;
+        }
+        if (!$warned) {
+            $warned = true;
+            out('! 没认出本次 dev.exe 的 PID ⇒ 退回按映像名停进程，可能连带关掉别的终端里那个');
+        }
+        exec('taskkill /IM dev.exe' . ($force ? ' /F' : '') . ' 2>&1');
+    };
 
     $elegant = $graceful ? gracefulStop(
-        $requestClose,
+        static function () use ($signal): void {
+            $signal(false);
+        },
         static function () use ($pipes): bool {
             drain($pipes);
 
@@ -368,7 +444,7 @@ function stop($process, array $pipes, bool $graceful = true): bool
     ) : false;
 
     if (!$elegant) {
-        $forceKill();
+        $signal(true);
     }
     drain($pipes);
     foreach ($pipes as $pipe) {
@@ -379,6 +455,48 @@ function stop($process, array $pipes, bool $graceful = true): bool
     proc_close($process);
 
     return $elegant;
+}
+
+/**
+ * 编壳：以子进程方式跑 `drift-build dev`，输出实时透传。
+ *
+ * ★ 不用 `passthru()`：它不返回句柄，父进程被 SIGTERM 截断时 `cmd.exe` 与 `tpc.php`
+ *   都还活着 —— 孤儿握着 MSVC 的 PDB 锁，下一次构建在链接阶段等锁（"卡一次之后次次卡"）。
+ * ★ 不设停滞阈值：内层 `drift-build` 自己带看门狗，外层再判一次会两边打架、
+ *   同一个死法报两遍。这里只负责透传与「父进程被截断时能收拾」。
+ */
+function buildShell(string $root): void
+{
+    $work = "{$root}/_build";
+    if (!is_dir($work) && !mkdir($work, 0777, true) && !is_dir($work)) {
+        fail("建不了 {$work}");
+    }
+    $outLog = "{$work}/dev-build.stdout.log";
+    $errLog = "{$work}/dev-build.stderr.log";
+    @unlink($outLog);
+    @unlink($errLog);
+
+    // 输出走文件：Windows 管道设不了非阻塞，构建 3 分钟里会一个字都看不到。
+    $process = proc_open(
+        [PHP_BINARY, "{$root}/tools/drift-build.php", 'dev'],
+        [0 => ['file', 'nul', 'r'], 1 => ['file', $outLog, 'w'], 2 => ['file', $errLog, 'w']],
+        $pipes,
+        $root,
+        null,
+        ['bypass_shell' => true],
+    );
+    if (!is_resource($process)) {
+        fail('启动构建失败');
+    }
+
+    $result = (new Supervisor($process, $outLog, $errLog, 0.0, [], static function (string $chunk): void {
+        fwrite(STDOUT, $chunk);
+    }))->run();
+
+    // 双判据：exit==0 只说明 tpc 说完了，产物不在就是没编出来（判据与 drift-build 同一口径）。
+    if ($result['exit'] !== 0 || !is_file("{$root}/dev.exe")) {
+        fail("壳编译失败（exit={$result['exit']}）");
+    }
 }
 
 /** project.yml 的 sources 段；同时认 `- xxx` 与 `- path: xxx`（后者是条件 sources）。 */
@@ -650,7 +768,7 @@ foreach ($rest as $argument) {
         break;
     }
 }
-if (preg_match('/^[A-Za-z0-9_]+$/', $app) !== 1) {
+if (preg_match('/^[A-Za-z0-9_-]+$/', $app) !== 1) {
     fail("应用名不合法：{$app}");
 }
 
@@ -685,9 +803,38 @@ $previous = is_file($shaFile) ? trim((string) file_get_contents($shaFile)) : '';
 $project = resolveProject($root, $projectOption);
 $entry = resolveEntry($root, $project, $entryOption);
 
+$iniDir = runtimeIni($root, $project, dirname($exe));
+$env = getenv();
+if (!is_array($env)) {
+    $env = [];
+}
+// 壳旁边的运行时优先：发布包自带 phpx.dll / php8ts.dll，本地开发机则靠 PHP
+// 发行版目录（TypePHP 发行版里才有 phpx.dll）。两者都在时包目录在前。
+$env['PATH'] = dirname($exe) . ';' . dirname(PHP_BINARY) . ';' . (string) ($env['PATH'] ?? '');
+$env['PHPRC'] = $iniDir;
+$env['DRIFT_DEV_ENTRY'] = $entry;
+$env['DRIFT_DEV_APP'] = $app;
+
+// ★ 只报环境、不启动 —— 起不来的第一件事就是看这三样指向哪里。
+//   必须在编译分支**之前**：它只要路径与 ini（`runtimeIni()` 不依赖编译结果），
+//   排在编译之后的话，壳指纹一变，这条诊断就要先等三分钟编译。
+if (in_array('--print-runtime', $rest, true)) {
+    out("壳      : {$exe}");
+    out('自带运行时: ' . (is_file(dirname($exe) . '/php8ts.dll') ? '是（包内）' : '否（用 PATH 里的 PHP 目录）'));
+    out("ini     : {$iniDir}/php.ini");
+    out("入口    : {$entry}");
+    out('--- php.ini ---');
+    fwrite(STDOUT, (string) file_get_contents("{$iniDir}/php.ini"));
+    exit(0);
+}
+
 if ($prebuilt) {
     if (!is_file($exe)) {
         fail('--prebuilt 需要可用的壳：仓库根的 dev.exe，或把发布包解压到 _build/dev-shell/');
+    }
+    if ($rebuild) {
+        // 静默忽略会让人以为"重编过了"
+        out('! --prebuilt 优先，--rebuild 被忽略');
     }
     out('使用现成 dev.exe，跳过壳指纹检查');
 } elseif ($usingPack) {
@@ -703,60 +850,35 @@ if ($prebuilt) {
     out('壳未变 ⇒ 跳过编译');
 } elseif ($rebuild || !is_file($exe) || $previous !== $hash) {
     out('壳输入有变或无产物 ⇒ 编译 dev.exe（只此一次，之后改 PHP 不再编）');
-    $command = escapeshellarg(PHP_BINARY) . ' ' . escapeshellarg("{$root}/tools/drift-build.php") . ' dev';
-    passthru($command, $code);
-    if ($code !== 0 || !is_file($exe)) {
-        fail('壳编译失败');
-    }
+    buildShell($root);
     writeShellFingerprint($root);
 } else {
     out('壳未变 ⇒ 跳过编译');
 }
 
-$iniDir = runtimeIni($root, $project, dirname($exe));
-$env = getenv();
-if (!is_array($env)) {
-    $env = [];
-}
-// 壳旁边的运行时优先：发布包自带 phpx.dll / php8ts.dll，本地开发机则靠 PHP
-// 发行版目录（TypePHP 发行版里才有 phpx.dll）。两者都在时包目录在前。
-$env['PATH'] = dirname($exe) . ';' . dirname(PHP_BINARY) . ';' . (string) ($env['PATH'] ?? '');
-$env['PHPRC'] = $iniDir;
-$env['DRIFT_DEV_ENTRY'] = $entry;
-$env['DRIFT_DEV_APP'] = $app;
-
-// 只报环境、不启动 —— 起不来的第一件事就是看这三样指向哪里。
-if (in_array('--print-runtime', $rest, true)) {
-    out("壳      : {$exe}");
-    out('自带运行时: ' . (is_file(dirname($exe) . '/php8ts.dll') ? '是（包内）' : '否（用 PATH 里的 PHP 目录）'));
-    out("ini     : {$iniDir}/php.ini");
-    out("入口    : {$entry}");
-    out('--- php.ini ---');
-    fwrite(STDOUT, (string) file_get_contents("{$iniDir}/php.ini"));
-    exit(0);
-}
-
 $process = null;
 $pipes = [];
-register_shutdown_function(static function () use (&$process, &$pipes, $hardRestart): void {
+$devPid = null;
+register_shutdown_function(static function () use (&$process, &$pipes, &$devPid, $hardRestart): void {
     if ($process !== null) {
-        stop($process, $pipes, !$hardRestart);
+        stop($process, $pipes, !$hardRestart, $devPid);
     }
 });
 
-$start = static function () use (&$process, &$pipes, $exe, $root, $env): void {
-    [$process, $pipes] = spawn($exe, $root, $env);
-    out('启动 dev.exe（PID ' . proc_get_status($process)['pid'] . '）');
+$start = static function () use (&$process, &$pipes, &$devPid, $exe, $root, $env): void {
+    [$process, $pipes, $devPid] = spawn($exe, $root, $env);
+    out('启动 dev.exe（PID ' . ($devPid ?? '未知') . '）');
 };
-$stopProcess = static function () use (&$process, &$pipes, $hardRestart): void {
+$stopProcess = static function () use (&$process, &$pipes, &$devPid, $hardRestart): void {
     if ($process === null) {
         return;
     }
-    if (!stop($process, $pipes, !$hardRestart)) {
+    if (!stop($process, $pipes, !$hardRestart, $devPid)) {
         out('优雅关闭未生效 ⇒ 已强杀，本次会话状态未写回');
     }
     $process = null;
     $pipes = [];
+    $devPid = null;
 };
 
 $start();

@@ -30,6 +30,7 @@
 | 第一次用调试器，5 分钟从简报定位到节点 | [调试器上手](guides/debug-walkthrough.md) |
 | 诊断静默失败、看懂错误码与退化日志 | [调试](guides/debugging.md) |
 | 跑 T0/T1/T2、理解 CI 与什么时候必须上真机 | [测试与验证](guides/testing.md) |
+| 构建卡住了先看这里：真卡 / 假卡 / 孤儿进程 | [构建卡住怎么办](guides/build-troubleshooting.md) |
 | 获取 Skia/字体包、管版本、发版 | [依赖与发布](guides/dependencies-and-release.md) |
 
 ## 理解机制

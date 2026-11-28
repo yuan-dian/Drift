@@ -25,12 +25,18 @@ function stale_missing(string $src): array
         'StalePolicy::SKIP' => '缺 SKIP 短路分支',
         'StalePolicy::INCREMENTAL' => '缺 INCREMENTAL 分支',
         'StalePolicy::label(' => '决策没输出原因（--dry 与日志要共用）',
-        "'--incremental'" => '缺 --incremental 开关（默认必须不放行增量）',
     ];
     foreach ($require as $needle => $why) {
         if (!\str_contains($src, $needle)) {
             $missing[] = $why . '：缺 ' . $needle;
         }
+    }
+
+    // `--incremental` 的两种认法：老的一次性 `in_array('--incremental', $argvRest)`，
+    // 新的统一选项表 `isset($options['incremental'])`（2026-11-28 参数解析重写）。
+    // 两种都不在 ⇒ 开关真没了；只认其中一种就等于把另一种合法写法判成红。
+    if (!\str_contains($src, "'--incremental'") && !\str_contains($src, "isset(\$options['incremental'])")) {
+        $missing[] = "缺 --incremental 开关（默认必须不放行增量）：缺 '--incremental'";
     }
 
     // 函数定义 1 次 + 根缓存 1 次 + app 级缓存 1 次。少一处就是 watermark 那次 stale。

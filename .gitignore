@@ -129,3 +129,9 @@ __pycache__/
 # `drift debug serve` 把「怎么连上我」写在 .drift/session.json（含访问令牌）。
 # 它是运行期产物，不是源码：换机器、换会话都该变，而提交它等于把一个令牌搁进历史。
 .drift/
+
+# `drift-build` 生成的运行时 ini：内容是本机绝对路径（extension_dir），换机器必错。
+# 它不是源码 —— 谁构建谁生成，提交它等于给别人埋 undefined function mb_substr()。
+/php.ini
+# 旧产物备份（构建失败时还原用）
+*.exe.bak
