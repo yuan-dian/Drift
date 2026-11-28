@@ -97,14 +97,6 @@ final class VerifyPlan
                 'label'   => 'DX 退化判据对账',
                 'command' => [$php, $root . '/tools/diagnostic-check.php'],
             ],
-            'stalepolicy' => [
-                'id'      => 'stalepolicy',
-                'layer'   => 'static',
-                'tier'    => 'fast',
-                'class'   => 'static',
-                'label'   => '构建 stale 决策接线',
-                'command' => [$php, $root . '/tools/build-stale-check.php'],
-            ],
             'errshape' => [
                 'id'      => 'errshape',
                 'layer'   => 'static',

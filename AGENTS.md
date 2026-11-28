@@ -5,7 +5,7 @@
 
 ## Commands
 - 开发（改 PHP 不重编壳）：`php tools/drift-dev.php <app>`（`--rebuild` 强编壳，`--selftest` 红线自检，`--no-watch` 跑一次）
-- AOT 构建：`php tools/drift-build.php <app>`（输入指纹变了 / 首次 / 产物不在 ⇒ **自动全量**，门不能信缓存；`--incremental` 显式放行增量，`--full` 强制全量，`--dry` 只打印决策且不碰缓存）
+- AOT 构建：`php tools/drift-build.php <app>`（默认走 tpc 增量、不清缓存；`--full` 透传 `--force` 全量重编。脚本只做「环境适配 + 透传 + 产物双判据」）
 - 验证（唯一入口）：`php bin/drift verify`（日常）/ `php bin/drift verify --full`（CI 口径）；判据清单只在 `php bin/drift verify --list`，别抄项数
 - 真机探针（自动起窗/关窗/退出码 0）：`python tools/probe-window.py <app>` / `--dev` / `--dev-runner`
 - AOT 语义等价（T2 手动）：`php tools/aot-equivalence.php`、`php tools/dual-mode-equivalence.php`；解释器侧指纹 `php tools/fingerprint.php`（`probes/frame_tax_aot/build.sh` 会硬调，删不得）

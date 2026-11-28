@@ -28,7 +28,7 @@ jobs:
   # ★ 判据集**不写白名单**（2026-11-11）：此前是
   #     --only=lint,selftest,devshell,docref,apidoc,probe,tick,scale,sym,m2,unit
   #   —— 11 项 vs `gate` 真实 28 项，漏掉的是 abi / cppbridge / dxdiag /
-  #   stalepolicy / errshape 这五个「接线对账 + 变异自证」对，共 10 项亚秒级纯 PHP
+  #   errshape 这几个「接线对账 + 变异自证」对，共若干项亚秒级纯 PHP
   #   判据。它们恰恰是最该进 CI 的类型（没有前置依赖、抓的是"能力是假的"）。
   #   根因是白名单不会随新增判据增长 ⇒ 改成跑全量廉价项。
   #   2026-11-12 起这 10 条在顶层收成 `tooling` 一组；2026-11-13 S4 起 V1 gate

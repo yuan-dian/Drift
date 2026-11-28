@@ -95,7 +95,7 @@ php tools/drift-build.php hello       # 等价：php bin/drift build -- hello
 python tools/probe-window.py hello    # 等价：php bin/drift probe -- hello
 ```
 
-`drift-build.php` 输出独立 exe，三态由 `StalePolicy` 裁决：输入未变且产物仍在则跳过；首次、输入变了或产物不在则自动全量；只有显式 `--incremental` 才走增量。`--full` 强制全量，`--dry` 只打印决策不构建。AOT 运行时不再要求 cwd 为仓库根：字体先查 exe 旁可选 `fonts/`，再查系统字体；但 showcase 的示例资源按 `<cwd>/assets` 找，跑那个示例仍需从仓库根启动。
+`drift-build.php` 输出独立 exe，只做三件事：把 bash 变成 MSVC 环境、跑 tpc（输出直连终端）、判产物（`exit==0` 且新 exe 存在）。编译决策全归 tpc 的增量（不清缓存）；`--full` 透传 `--force` 全量重编。AOT 运行时不再要求 cwd 为仓库根：字体先查 exe 旁可选 `fonts/`，再查系统字体；但 showcase 的示例资源按 `<cwd>/assets` 找，跑那个示例仍需从仓库根启动。
 
 `probe-window.py` 在真窗口上量尺寸、像素、DPI 与关窗退出码，并**自己关窗**；加 `--dev` 则量 dev 壳形态。它也有无头预览的近亲 `drift-preview.php`，输出 SVG 或 PNG，用于确认「排开了、画出来了」，但不是真窗口。
 

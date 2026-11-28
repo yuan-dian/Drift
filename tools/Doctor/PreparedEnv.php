@@ -12,6 +12,7 @@ final class PreparedEnv
 {
     /**
      * @param array<string, string> $env 透传给 tpc 子进程的环境变量
+     * @param array<string, int>    $envPruned 为守住 Windows 环境块上限而剔除的项（变量名 => 字节）
      */
     public function __construct(
         public readonly array $env,
@@ -21,6 +22,7 @@ final class PreparedEnv
         public readonly string $tpcEntry,
         public readonly string $msvcVersion,
         public readonly string $sdkVersion,
+        public readonly array $envPruned = [],
     ) {
     }
 }

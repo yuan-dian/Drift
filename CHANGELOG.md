@@ -80,6 +80,26 @@
 
 ### 已实现
 
+- **`drift-build` 极简化：786 行 → 254 行，编译决策全归 tpc**。删掉输入指纹、SKIP 短路、
+  清缓存、旧产物备份还原、ABI preflight、`--dry` —— 这些都是重复 tpc 已有的能力。
+  脚本只剩三件事：把 bash 变成 MSVC 环境（tpc 找不到 cl.exe / ini / PHPX）、跑 tpc
+  （stdout/stderr **直连终端**，不经管道，所以实时）、判产物（`exit==0` **且** 新 exe 存在）。
+  `--full` 只透传 `--force`。
+  起因：2026-11-01 那次"新增类没生成 `.cc`"的 stale 事故**不可复现**（复现实验：新增类在
+  增量下正常生成 `.cc`，只重编 19 个单元），而"输入一变就清缓存"的保险让改一行 PHP
+  付 7 倍时间（474s vs 68s）。连带的 `StalePolicy` / `StalePolicyTest` /
+  `tools/build-stale-check.php` 与 verify 的 `stalepolicy` 步骤一并退役。
+
+- **构建不再因环境块超限而"0.2 秒失败"**：`Environment::prepare()` 新增 `pruneEnv()`。
+  Windows 每进程环境块上限 32767 字节，宿主 IDE / 智能体注入的 `CODEBUDDY_MCP_CONFIG`
+  一条就 15KB，287 个变量合计 34KB，`CreateProcess` 截断后 PHP 的 curl 扩展初始化失败，
+  tpc 报 `Unable to start curl module` 并立刻退出 —— 同一条命令在干净 shell 里却完全正常。
+  现在先整片剔宿主前缀（`CODEBUDDY_*` / `WORKBUDDY_*`），仍超预算再按体积降序剔，
+  但 `PATH` / `SystemRoot` / `TEMP` / `PHPRC` / `INCLUDE` / `LIB` 等必需项永不碰
+  （比较按大写：Windows 环境变量不区分大小写）。裁掉的项会打一行告知。
+  判据 `tools/env-budget-check.php`：含 20KB 假变量的正反例，并用裁剪后的 env 真起
+  一个 PHP 验证 curl 能加载。
+
 - **构建不再"卡住"看得见也收拾得干净**：`drift-build` 的子进程监督抽成
   `Drift\Dev\Build\Supervisor`，三件事一起解决 ——
   - **输出实时透传**：tpc 的 stdout/stderr 写 `_build/tpc.stdout.log`，脚本按偏移增量转发，

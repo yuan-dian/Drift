@@ -38,6 +38,25 @@ final class Environment
     public const TPC_MIN_COMMIT = 'bff46481';
 
     /**
+     * Windows 每进程环境块上限 32767 字节；留约 2.7KB 余量，免得踩边界。
+     *
+     * ★ 超限后 CreateProcess 截断环境块，PHP 的 curl 扩展读到残缺值就报
+     *   `Unable to start curl module`，子进程 0.2s 退出 —— 现场像"命令没跑"。
+     */
+    private const ENV_BLOCK_BUDGET = 30000;
+
+    /** 宿主 IDE / 智能体注入的变量前缀：构建用不到，体积却可能十几 KB。 */
+    private const ENV_HOST_PREFIXES = ['CODEBUDDY_', 'WORKBUDDY_'];
+
+    /** 裁剪环境时绝不动的项：系统运行 + 构建必需。 */
+    private const ENV_MUST_KEEP = [
+        'PATH', 'PATHEXT', 'COMSPEC', 'SystemRoot', 'SystemDrive', 'SystemDirectory', 'WINDIR',
+        'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'HOMEDRIVE', 'HOMEPATH',
+        'PROGRAMDATA', 'PUBLIC', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'OS',
+        'PHP_HOME', 'PHPX_HOME', 'PHPRC', 'INCLUDE', 'LIB',
+    ];
+
+    /**
      * 逐项体检（只读）。
      *
      * @return list<Check>
@@ -293,6 +312,10 @@ final class Environment
             $msvcVersion = self::envOr('DRIFT_MSVC_VERSION', self::DEFAULT_MSVC_VERSION);
         }
 
+        // ★ 必须在 INCLUDE / LIB / PATH 都拼好之后裁：那三项是构建必需，
+        //   先裁会把它们按体积剔掉。
+        [$env, $envPruned] = self::pruneEnv($env);
+
         return new PreparedEnv(
             $env,
             $distRoot,
@@ -301,7 +324,69 @@ final class Environment
             self::tpcEntry($root),
             $msvcVersion,
             $sdkVersion,
+            $envPruned,
         );
+    }
+
+    /**
+     * 裁剪传给子进程的环境，保证环境块不超 Windows 上限。
+     *
+     * ★ 为什么必须裁：宿主（IDE / 智能体）注入的 `CODEBUDDY_MCP_CONFIG` 一条就
+     *   15KB，287 个变量加起来 34KB > 32767 ⇒ CreateProcess 截断 ⇒ PHP 的 curl
+     *   扩展初始化失败，tpc 0.2s 退出。现象是"构建命令什么都没干就失败"，而
+     *   同样的命令在干净 shell 里正常 —— 差别只在环境块大小。
+     *
+     * @param array<string, string> $env
+     * @return array{0: array<string, string>, 1: array<string, int>} [裁剪后 env, 剔除项 => 字节]
+     */
+    private static function pruneEnv(array $env): array
+    {
+        $removed = [];
+
+        // ① 宿主前缀：构建用不到，先整片去掉（不依赖体积，可预期）
+        //   ★ 比较一律大写：Windows 环境变量不区分大小写，Git Bash 传下来的是
+        //     `SYSTEMROOT`，而白名单里写的是 `SystemRoot` —— 严格比较会把系统
+        //     变量当成"可剔项"。
+        foreach (array_keys($env) as $name) {
+            $upper = strtoupper($name);
+            foreach (self::ENV_HOST_PREFIXES as $prefix) {
+                if (str_starts_with($upper, $prefix)) {
+                    $removed[$name] = strlen((string) $env[$name]);
+                    unset($env[$name]);
+                    break;
+                }
+            }
+        }
+
+        // ② 兜底：仍超预算就按体积从大到小剔，绝不碰 ENV_MUST_KEEP
+        $protected = array_flip(array_map('strtoupper', self::ENV_MUST_KEEP));
+        $byLength = [];
+        foreach ($env as $name => $value) {
+            if (!isset($protected[strtoupper($name)])) {
+                $byLength[$name] = strlen((string) $value);
+            }
+        }
+        arsort($byLength);
+        foreach ($byLength as $name => $length) {
+            if (self::envBlockSize($env) <= self::ENV_BLOCK_BUDGET) {
+                break;
+            }
+            $removed[$name] = $length;
+            unset($env[$name]);
+        }
+
+        return [$env, $removed];
+    }
+
+    /** Windows 环境块字节数：`name=value\0` 逐项 + 结尾 `\0` */
+    private static function envBlockSize(array $env): int
+    {
+        $size = 1;
+        foreach ($env as $name => $value) {
+            $size += strlen($name) + 1 + strlen((string) $value) + 1;
+        }
+
+        return $size;
     }
 
     // ─────────────────────────── 定位（probe / prepare 共用，只写一遍） ───────────────────────────
