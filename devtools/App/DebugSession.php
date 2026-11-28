@@ -317,10 +317,16 @@ final class DebugSession implements Session
      */
     public function inspect(array $layers): array
     {
-        $on = $this->inspector()->setLayers($layers);
+        $inspector = $this->inspector();
+        $on = $inspector->setLayers($layers);
         $drawn = $this->history->overlayDrawn('inspect');
 
-        return ['layers' => $on, 'drawnFrame' => $drawn === null ? null : $drawn['frame']];
+        return [
+            'layers' => $on,
+            'drawnFrame' => $drawn === null ? null : $drawn['frame'],
+            // 与屏幕同一份：HUD 画什么，这里就报什么。判据拿它与 stats 逐值比。
+            'hud' => $inspector->hudValues(),
+        ];
     }
 
     /**

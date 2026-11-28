@@ -80,6 +80,14 @@
 
 ### 已实现
 
+- **真机检查器加 HUD 层**：`debug inspect --layer=hud` 在窗口右下角叠一块实底面板，
+  三行 —— `#帧号 耗时 重画数` / `类名 宽x高` / `pad | border | margin`。
+  帧号、耗时、重画数取**上一完成帧**（`Recorder::stats()`）：`paint()` 跑在帧中间，
+  正在录的帧还没有 `costMs`，混用会让 HUD 出现"帧号是新的、耗时是旧的"。`hudValues()`
+  同时是绘制输入与 `inspect` 回执，测试拿它与 `stats()`、`BoxLayers` 逐值比。`hud` 与
+  `box-model` 一样需要先选中。第四行发现计数暂缺：`Facts::gather()` 每帧跑会把规则引擎
+  拖进热路径，完整列表在 Web。
+
 - **`drift-build` 极简化：786 行 → 254 行，编译决策全归 tpc**。删掉输入指纹、SKIP 短路、
   清缓存、旧产物备份还原、ABI preflight、`--dry` —— 这些都是重复 tpc 已有的能力。
   脚本只剩三件事：把 bash 变成 MSVC 环境（tpc 找不到 cl.exe / ini / PHPX）、跑 tpc

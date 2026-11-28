@@ -14,7 +14,7 @@ use Drift\Theme\ThemeData;
 use Drift\Widget\Element;
 
 /**
- * 真机侧的检查器叠加：布局边界层与盒模型四层。
+ * 真机侧的检查器叠加：布局边界层、盒模型四层与 HUD。
  *
  * ## 只做 Web 给不了的三件事
  *
@@ -36,11 +36,14 @@ use Drift\Widget\Element;
  */
 final class Inspector
 {
-    /** 支持的层；顺序即绘制顺序（先淡后浓） */
-    public const array LAYERS = ['bounds', 'box-model'];
+    /** 支持的层；顺序即绘制顺序（先淡后浓，HUD 压在最上） */
+    public const array LAYERS = ['bounds', 'box-model', 'hud'];
+
+    /** 没有选中节点就没有意义的层。输出层用它决定提示哪一句，别在视图里再写一遍层名 */
+    public const array NEEDS_SELECTION = ['box-model', 'hud'];
 
     /** @var array<string, bool> */
-    private array $layers = ['bounds' => false, 'box-model' => false];
+    private array $layers = ['bounds' => false, 'box-model' => false, 'hud' => false];
 
     private ?Application $app = null;
 
@@ -145,8 +148,33 @@ final class Inspector
             $box = $selected->effectiveBox();
             $drew = ($box !== null && $this->paintBoxModel($canvas, $box, $theme)) || $drew;
         }
+        if ($this->layers['hud'] && $selected !== null) {
+            $drew = Hud::paint($canvas, $viewport, Hud::values($recorder, $selected), $theme, $app->metrics()) || $drew;
+        }
 
         return $drew;
+    }
+
+    /**
+     * HUD 这一帧展示的数值；没有选中时 `type` 为 null。
+     *
+     * 渲染与数据同一份：`paint()` 用它，`inspect` 回执也用它。判据拿它与
+     * `Recorder::stats()`、`BoxLayers::of()` 逐值比，而不是另算一遍。
+     *
+     * @return array<string, mixed>
+     */
+    public function hudValues(): array
+    {
+        $app = $this->app;
+        $recorder = $this->recorder;
+        if ($app === null || $recorder === null) {
+            return [];
+        }
+
+        $roots = $app->treeRoots();
+        $selected = $roots === [] ? null : $this->selected($roots, $recorder);
+
+        return Hud::values($recorder, $selected);
     }
 
     /**

@@ -25,6 +25,9 @@ use Drift\Widget\Widget;
  * |---|---|
  * | `testBoxLayersAgreeWithGeometryRecord` | `BoxLayers` 自己算错一层（含 content 原点） |
  * | `testBoxModelNeedsASelection` | "开着但没选中"时假装画了 / 选中了却不画 |
+ * | `testHudAgreesWithStatsAndBoxModel` | HUD 的帧号/耗时/重画数另算一遍，或几何对不上 |
+ * | `testHudNeedsASelection` | 没选中也给选中摘要 / 没选中仍上屏 |
+ * | `testHudDrawsWhenSelected` | HUD 开着但闭包没接上（像素不变） |
  * | `testAllLayersOffDrawsNothing` | 全关时仍在画（叠加层关不掉） |
  *
  * ★ 第一条是**数据判据**：活树四层与 `boxModel()` 记录四层逐值比。两边若各算一套，
@@ -109,6 +112,114 @@ final class InspectorOverlayTest extends SmokeTestCase
                 $this->pixels($probe) !== $before,
                 '像素没变 —— 选中了也不画',
             );
+        } finally {
+            $session->close();
+        }
+    }
+
+    public function testHudAgreesWithStatsAndBoxModel(): void
+    {
+        [$app, $session] = $this->open();
+        try {
+            $node = $this->targetNode($app);
+            check('找得到 Column 节点', $node > 0, 'node=' . $node);
+            if ($node <= 0) {
+                return;
+            }
+
+            // 几何记录只留"有变化"的帧：pump 之后的最新帧可能没有这个节点的记录。
+            // 先取有记录的那一帧，再取 HUD —— 布局没变，两边该逐值相同。
+            $model = $session->query('boxModel', ['node' => $node]);
+            check('盒模型查得到', ($model['found'] ?? false) === true, \json_encode($model));
+
+            $session->highlight($node);
+            $session->inspect(['hud']);
+            $session->pump(16.0);
+
+            $hud = $session->inspect(['hud'])['hud'] ?? [];
+            check('HUD 认得出选中类型', ($hud['type'] ?? null) === 'Column', \json_encode($hud));
+
+            $stats = $session->query('stats');
+            check(
+                '耗时与 stats 同源',
+                ($hud['costMs'] ?? null) == ($stats['lastCostMs'] ?? null),
+                \json_encode([$hud['costMs'] ?? null, $stats['lastCostMs'] ?? null]),
+            );
+            check(
+                '重画数与 stats 同源',
+                ($hud['rebuilt'] ?? null) === ($stats['lastRebuilt'] ?? null),
+                \json_encode([$hud['rebuilt'] ?? null, $stats['lastRebuilt'] ?? null]),
+            );
+
+            // 帧号必须也是**上一完成帧**：HUD 画在帧中间，拿正在录的号会与耗时差一帧。
+            $frames = $session->query('frames', ['limit' => 1])['frames'] ?? [];
+            $latest = $frames === [] ? 0 : (int) $frames[0]['id'];
+            check('帧号取上一完成帧', ($hud['frame'] ?? -1) === $latest, \json_encode([$hud['frame'] ?? null, $latest]));
+
+            check(
+                '尺寸与几何记录相同',
+                [$hud['width'] ?? null, $hud['height'] ?? null] == [$model['size']['w'], $model['size']['h']],
+                \json_encode([$hud['width'] ?? null, $hud['height'] ?? null, $model['size']]),
+            );
+            check('padding 与几何记录相同', ($hud['padding'] ?? null) == $model['padding'], \json_encode([$hud['padding'] ?? null, $model['padding']]));
+            check('border 与几何记录相同', ($hud['border'] ?? null) == $model['border']['width'], \json_encode([$hud['border'] ?? null, $model['border']]));
+            check('margin 与几何记录相同', ($hud['margin'] ?? null) == $model['margin'], \json_encode([$hud['margin'] ?? null, $model['margin']]));
+        } finally {
+            $session->close();
+        }
+    }
+
+    public function testHudNeedsASelection(): void
+    {
+        [, $session, $probe] = $this->open();
+        try {
+            $before = $this->pixels($probe);
+
+            $answer = $session->inspect(['hud']);
+            check('回执报出生效的层', ($answer['layers'] ?? []) === ['hud'], \json_encode($answer));
+            $hud = $answer['hud'] ?? [];
+            check(
+                '没选中时没有选中摘要',
+                \array_key_exists('type', $hud) && $hud['type'] === null,
+                \json_encode($hud),
+            );
+
+            $session->pump(16.0);
+            check(
+                '没选中时不上屏',
+                $this->pixels($probe) === $before,
+                '变了 —— 没选中也在画 HUD（摘要从哪来的？）',
+            );
+        } finally {
+            $session->close();
+        }
+    }
+
+    public function testHudDrawsWhenSelected(): void
+    {
+        [$app, $session, $probe] = $this->open();
+        try {
+            $baseline = $this->pixels($probe);
+            $baselineOps = $probe->list()->count();
+
+            $node = $this->targetNode($app);
+            check('找得到 Column 节点', $node > 0, 'node=' . $node);
+            if ($node <= 0) {
+                return;
+            }
+
+            $session->highlight($node);
+            $session->inspect(['hud']);
+            $session->pump(32.0);
+
+            check('HUD 上了屏', $this->pixels($probe) !== $baseline, '像素没变 —— 开了 hud 也不画');
+            check(
+                'HUD 真的多画了命令',
+                $probe->list()->count() > $baselineOps,
+                'ops=' . $probe->list()->count() . ' baseline=' . $baselineOps,
+            );
+            $drawn = $session->query('state')['inspectorDrawn'] ?? null;
+            check('上屏帧记账前进了', $drawn !== null && (int) $drawn > 0, \json_encode($drawn));
         } finally {
             $session->close();
         }

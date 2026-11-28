@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * `debug-inspect` —— 真机叠加层：全体布局边界 / 选中节点的盒模型四层。
+ * `debug-inspect` —— 真机叠加层：全体布局边界 / 选中节点的盒模型四层 / HUD。
  *
  * ## 这个出口回答什么
  *
@@ -26,7 +26,7 @@ declare(strict_types=1);
  *
  * 用法：
  *   php devtools/bin/debug-inspect.php --page=table --at=2 --layer=bounds
- *   php devtools/bin/debug-inspect.php --page=table --at=2 --layer=bounds,box-model
+ *   php devtools/bin/debug-inspect.php --page=table --at=2 --layer=bounds,box-model,hud
  *   php devtools/bin/debug-inspect.php --page=table --at=2                 # 全关
  *   php devtools/bin/debug-inspect.php --page=table --at=2 --layer=bounds --json
  */
@@ -50,7 +50,7 @@ $json = $args->bool('json');
 $layers = $args->strings('layer');
 $label = $args->label();
 if ($label === null) {
-    \fwrite(\STDERR, "用法：debug-inspect <AppClass|路由id> [--layer=bounds,box-model] [--page=<路由id>] [--json] [--remote]\n");
+    \fwrite(\STDERR, "用法：debug-inspect <AppClass|路由id> [--layer=bounds,box-model,hud] [--page=<路由id>] [--json] [--remote]\n");
     exit(2);
 }
 
@@ -106,6 +106,7 @@ try {
                 'drawnFrame' => $drawnFrame,
                 'selected' => $selection['node'] ?? 0,
                 'state' => $state['inspector'] ?? [],
+                'hud' => $answer['hud'] ?? [],
                 'pixels' => ['before' => $before, 'after' => $after],
             ],
             \JSON_UNESCAPED_UNICODE | \JSON_UNESCAPED_SLASHES | \JSON_PRETTY_PRINT,

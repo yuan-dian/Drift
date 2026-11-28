@@ -88,7 +88,7 @@
 | `props` | `debug-props.php` | driver | 按节点读 Widget / State 配置 | `--node` `--frame` `--maxDepth` `--maxFields` `--attach` `--session` |
 | `probe` | `debug-probe.php` | driver | dev 轻量内省：内存存活跨度 / 源码位置（不是证据） | `--what` `--source` `--limit` `--attach` `--session` |
 | `highlight` | `debug-highlight.php` | driver | 让一个节点在屏上被描边，并回答"真的上屏了没" | `--node` `--attach` `--session` |
-| `inspect` | `debug-inspect.php` | driver | 真机叠加层：全体边界 / 选中节点的盒模型四层 | `--layer` `--attach` `--session` |
+| `inspect` | `debug-inspect.php` | driver | 真机叠加层：全体边界 / 盒模型四层 / HUD | `--layer` `--attach` `--session` |
 | `host` | `debug-host.php` | protocol | 宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息） | — |
 | `serve` | `debug-serve.php` | driver | 常驻宿主：自己按脚本推帧，等人 attach 上来看 | `--speed` `--allow-eval` |
 | `ctl` | `debug-ctl.php` | protocol | 控制面：让自走的宿主停一下 / 走一步 / 接着跑 | — |
@@ -128,7 +128,7 @@
 
 > 应用自身的 Fatal 退出码也是 `3`（见[调试指南](../guides/debugging.md)），那是**产物进程**的码，与 CLI 无关；两者不要混用。
 
-`network` 看网络骨架与报文，`async` 看三个 TaskHost 后端调度过的 job 时间线（默认关，用 `--async` 开），`node` 把一个节点的因果 / 几何 / 网络三域对齐，`find` 在证据里按字面文本找出一串可追问的地址，`pick` 按视口坐标给出命中链，`props` 读 Widget / State 配置，`highlight` 让一个节点在屏上被描边并用像素回答"真的上屏了没"，`inspect` 往真机窗口上叠布局边界与选中节点的盒模型四层（覆盖式开关），`loop` 用重开同一页来证明等价；这些出口的参数见上表与各自的 `--help`。
+`network` 看网络骨架与报文，`async` 看三个 TaskHost 后端调度过的 job 时间线（默认关，用 `--async` 开），`node` 把一个节点的因果 / 几何 / 网络三域对齐，`find` 在证据里按字面文本找出一串可追问的地址，`pick` 按视口坐标给出命中链，`props` 读 Widget / State 配置，`highlight` 让一个节点在屏上被描边并用像素回答"真的上屏了没"，`inspect` 往真机窗口上叠布局边界、选中节点的盒模型四层与 HUD（覆盖式开关），`loop` 用重开同一页来证明等价；这些出口的参数见上表与各自的 `--help`。
 
 | composer 脚本 | 作用 |
 |---|---|

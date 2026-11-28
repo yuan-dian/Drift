@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Drift\DevTools\View;
 
+use Drift\DevTools\Inspect\Inspector;
 use Drift\DevTools\Session\Digest;
 
 /**
@@ -52,11 +53,14 @@ final class Inspect
             \sprintf('  上屏帧：%s', $drawnFrame === null ? '还没画过' : (string) $drawnFrame),
         ];
 
-        // 这里认得层名：目前只有 `box-model` 有前置条件。声明"层 → 前置条件"
-        // 要一张元数据表，而第二层还没出现 —— 真出现时把表搬进 `Inspector::LAYERS`
-        // 并让回执带过来，别在这里再加一个 if。
-        if (\in_array('box-model', $layers, true) && !$hasSelection) {
-            $lines[] = '  ⚠ 盒模型需要先选中一个节点：debug-highlight --node=N（或 Web 里点一个）';
+        // "层 → 前置条件"只有一份声明（`Inspector::NEEDS_SELECTION`）：这里只
+        // 负责把命中的层名念出来，不在视图里再维护第二份层表。
+        $needs = \array_values(\array_intersect($layers, Inspector::NEEDS_SELECTION));
+        if ($needs !== [] && !$hasSelection) {
+            $lines[] = \sprintf(
+                '  ⚠ %s 需要先选中一个节点：debug-highlight --node=N（或 Web 里点一个）',
+                \implode(' / ', $needs),
+            );
         }
 
         if ($drawnFrame === null) {

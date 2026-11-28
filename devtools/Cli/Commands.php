@@ -148,7 +148,7 @@ final class Commands
             'inspect' => [
                 // 覆盖式：不给任何 `--layer` 就是全关。两种写法同义（`Parsed::strings()`）：
                 // `--layer=bounds,box-model` 与 `--layer=bounds --layer=box-model`。
-                Opt::append('layer', '叠加层（bounds | box-model），可重复或逗号分隔'),
+                Opt::append('layer', '叠加层（bounds | box-model | hud），可重复或逗号分隔'),
                 ...$live(),
             ],
             'report' => [
