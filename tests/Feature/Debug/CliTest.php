@@ -27,7 +27,16 @@ final class CliTest extends SmokeTestCase
             $digests[$name] = Commands::set($name)->parse(self::WORDS)->script()->digest();
             check("{$name} 能由词表建出脚本", $digests[$name] !== '', $name);
         }
-        check('17 个出口', \count($digests) === 17, (string) \count($digests));
+        $drivers = \array_keys(\array_filter(Registry::all(), static fn($e): bool => $e->driver));
+        \sort($drivers);
+        $verbs = \array_keys($digests);
+        \sort($verbs);
+        // 不写死数量：覆盖了哪些出口由注册表回答，少一个出口这里就红（A78）。
+        check(
+            '词表覆盖注册表里每个 driver 出口',
+            $verbs === $drivers,
+            \implode(' ', \array_diff($drivers, $verbs)) . ' | ' . \implode(' ', \array_diff($verbs, $drivers)),
+        );
         check('同一份词只有一份指纹', \count(\array_unique($digests)) === 1, \implode(' ', $digests));
         $this->flushChecks();
     }
@@ -200,7 +209,6 @@ final class CliTest extends SmokeTestCase
         foreach (Registry::all() as $verb => $entry) {
             check("{$verb} 的脚本存在", \is_file($entry->path()), $entry->path());
         }
-        check('23 个出口', \count(Registry::all()) === 23, (string) \count(Registry::all()));
         $this->flushChecks();
     }
 

@@ -48,7 +48,7 @@ preview 阶段允许破坏性变更，但要守两条：
    - **待办（构建可达门槛未封闭）**：本地已用干净 checkout 验证文档路径闭环（doctor 11/11、`verify --fast` 13/13、`drift-build hello --full` 成功、`probe-window hello` 5/5 且退出码 0），公开仓库匿名可读、`deps-v2` 双平台资产与 `deps.lock.json` 的 schema=2 锚点一致。**但尚未做一次「全匿名、零本机替代」的端到端重跑**：上两轮本机代理在 git pack 传输中途断流、deps 包下载只到 11% 且反复 502，只能借用本地 clone / 拷贝 vendor 与 cpp。**完成条件**：在稳定网络下匿名 `git clone` → `fetch-deps`（SHA 过）→ `composer install` → doctor → build → probe，全程不依赖 token 和本机预置的 vendor/cpp；全绿才把 1.0「构建可达」记为满足。本机代理问题不构成产品缺陷，换网络即可重跑。
 2. **开发者体验收口**：减少可组合 Future + 命令式状态机样板；异步资源控件保持一个 `asset()` 入口；新机制先算"每应用省几行、几处写者"。
 3. **平台收口**：第二平台 Linux x64（X11）已过公开 CI 的 T2 端到端门；当前收窄能力差——Wayland / AT-SPI / 完整 IME 组合输入 / per-monitor DPI（X11 为每屏一值）未接；X11 系统色无统一 API（HC 用框架兜底配色）、材质空实现。已接 XSettings/环境外观跟随 + `ThemeChangedEvent`、zenity/yad 对话框、yad 托盘、XIM 插入符定位、xclip UTF-8 纯文本 `TARGETS` 探测，以及高 DPI（`X11Dpr` 全仓唯一换算入口）、标准 cursor font 光标、Motif hints 无边框 + EWMH 拖拽、主题变化推事件。第三平台等真实交付目标，不提前抽象。
-4. **工具链**：调试出口已收成 13 个注册项（`php bin/drift debug --help` 是清单），常驻宿主 / 控制面 / Web 视图 / 重开与命令手册都接进同一份声明，判据进日常验证；采集预算、绘制归因、规则注册表、基线回归与证据搜索已收口，余项按[调试器成熟度路线](docs/concepts/debugger-roadmap.md)推进（live attach / 常驻黑匣子 / 内存·异步·无障碍）。`create` 脚手架仍不做：没有真实用例的机制不上。
+4. **工具链**：调试出口以 `php bin/drift debug --help` 为清单（不在此写死数量，A78 的纪律），常驻宿主 / 控制面 / Web 视图 / 重开与命令手册都接进同一份声明，判据进日常验证；采集预算、绘制归因、规则注册表、基线回归与证据搜索已收口；协议升到 2，事件与响应同管并用 SSE 唤醒 Web 视图（A80），不设订阅动词的前提是 `MIN_VERSION = VERSION = 2`，出现仓库外消费者就要重开订阅设计。余项按[调试器成熟度路线](docs/concepts/debugger-roadmap.md)推进（live attach / 常驻黑匣子 / 内存·异步·无障碍）。`create` 脚手架仍不做：没有真实用例的机制不上。
 
 ## 明确不做（除非有失效条件触发）
 

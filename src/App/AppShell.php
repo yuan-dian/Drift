@@ -111,6 +111,32 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     private ?\Closure $frameObserver = null;
 
     /**
+     * 调试叠加层的绘制闭包（`null` = 没装）。由调试会话经
+     * {@see \Drift\App\Application::setDebugOverlay()} 装/摘。
+     *
+     * ★ 壳只负责**时机**：内容画完、快照拍完、`endFrame()` 之前。画什么、什么颜色、
+     *   谁是容器 —— 全在 `devtools/` 里，壳一个色值都不知道（A72 的位置划界）。
+     * ★ 存闭包而不是接口：装它的是 devtools，而 `src` 不得引用 `Drift\DevTools\`
+     *   （结构断言）；闭包是唯一不需要 `src` 认识对方类型的注入形状。
+     *
+     * @var null|\Closure(Canvas): bool 返回"这一帧画了东西吗"，壳只拿它记账
+     */
+    private ?\Closure $debugOverlay = null;
+
+    /**
+     * 叠加层的"该重画"版本号（`++` 于装/摘与显式请求）。
+     *
+     * ★ 为什么要版本号而不是比对闭包：闭包是同一个对象，策略层内部换了开关
+     *   （`inspect --on=bounds`）它也没变。A51 的坑是"设了但屏幕上什么都没有" ——
+     *   叠加层绕过了 `setState`，`Frame::run()` 的三条判据一条都不动，不给它
+     *   一条自己的失效信号，整帧就被跳过。
+     */
+    private int $debugOverlayVersion = 0;
+
+    /** 上一次真的上屏的叠加层版本（与 `$paintedHighlight` 同一类记账） */
+    private int $paintedOverlayVersion = 0;
+
+    /**
      * 有人要一张图，但树没变 ⇒ 这一帧本来会整段跳过绘制（`Frame::run()` 的快路）。
      * 置上它，下一帧强制画一次，画完就清。
      *
@@ -659,7 +685,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
         // 段名与分段计时同源：两者都只经 `stage()` 推一次，手写两份必漂。
         $this->frameTrace = FramePhase::begin();
-        $this->devFacts = Recorder::installed() ? ['stages' => [], 'settleSkipped' => false, 'paintSkipped' => false] : null;
+        $this->devFacts = Recorder::installed() ? ['stages' => [], 'settleSkipped' => false, 'paintSkipped' => false, 'overlays' => []] : null;
 
         // ① 外部数据先到，回调里 setState 的脏标记由紧随的 settle 消费。
         $this->stage(FrameStage::PUMP_IO, function (): void {
@@ -717,21 +743,29 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
         //   闭包根本不跑。这类静默只有把失效信号一起并进来才堵得住。
         $ringBefore = $this->focusRingTarget();
         $highlightBefore = $this->debugHighlight;
+        $overlayBefore = $this->debugOverlayVersion;
         $paintRequested = $this->paintOnDemand
             || $ringBefore !== $this->paintedFocus
             || $highlightBefore !== $this->paintedHighlight
+            || $overlayBefore !== $this->paintedOverlayVersion
             || $this->overlayLayout->panelsLagBehind();
 
         // 窗口帧：约束来自客户区，"内容比窗口大"是合法状态 ⇒ C5/C6 降级为裁剪 + diagnostic，
         // 不中止进程。直接调 `Frame::run()` 的测试仍按严格口径，写错布局照样红。
         $painted = LayoutTolerance::withinWindow(fn(): bool => $frame->run($root, $constraints, $timestampMs, $this->overlayHost->overlays()->all(), function (Canvas $canvas) use ($highlightBefore): void {
-            $this->paintOverlay($canvas, $highlightBefore);
+            // 顺序即语义（A81）：焦点环是应用自己的绘制（非调试时也在），跟着内容算；
+            // 快照必须落在**任何调试标记之前**，否则底图记的是"我上一秒点了谁"；
+            // 调试叠加压在最上层，只上屏、不进图。
+            $this->paintFocusRing($canvas);
+            $this->capturePainted($canvas);
+            $this->paintDebugOverlay($canvas, $highlightBefore);
         }, $paintRequested));
 
         // 真的上屏才记账；跳过或 paint 抛异常 ⇒ 不记账 ⇒ 下一帧继续请求。
         if ($painted) {
             $this->paintedFocus = $ringBefore;
             $this->paintedHighlight = $highlightBefore;
+            $this->paintedOverlayVersion = $overlayBefore;
             // 一次性：画成就清。留着不清就成了"每帧都强制重画"，静止的应用空转烧 CPU。
             $this->paintOnDemand = false;
         }
@@ -833,6 +867,7 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
 
         if ($this->focusRingTarget() !== $this->paintedFocus
             || $this->debugHighlight !== $this->paintedHighlight
+            || $this->debugOverlayVersion !== $this->paintedOverlayVersion
             || $this->overlayLayout->panelsLagBehind()
         ) {
             $this->pipeline->scheduleFrame();
@@ -898,10 +933,14 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
                 $this->lastTimestampMs,
                 $this->overlayHost->overlays()->all(),
                 function (Canvas $canvas) use ($highlight): void {
-                    // `$record = false`：拖动重排这一帧**不进录制**（没有 begin/endFrame），
-                    // 往 `devFacts` 里写一笔只会被下一帧覆盖 —— 靠"别人会重置"成立的
-                    // 正确性是隐式的，这里显式关掉。
-                    $this->paintOverlay($canvas, $highlight, false);
+                    $this->paintFocusRing($canvas);
+                    // ★ 拖动帧**不拍照**：这条路没有 `beginFrame/endFrame`，录制器帧号
+                    //   停在上一帧，而布局已经按新尺寸排完 ⇒ 拍出来的图配上一帧的框，
+                    //   就是"底图与线框错位"。宁可在拖动期间不动底图。
+                    // `$record = false`：这一帧不进录制，`overlayDrawn` 也不该记账
+                    // （往 `devFacts` 里写一笔只会被下一帧覆盖 —— 靠"别人会重置"成立的
+                    // 正确性是隐式的，这里显式关掉）。
+                    $this->paintDebugOverlay($canvas, $highlight, false);
                 },
             );
             // 重排这条路也要记账：不记的话，下一帧的 `paintRequested` 仍认为高亮没上屏，
@@ -1841,11 +1880,27 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     }
 
     /**
-     * 应用级叠加层：树与浮层都画完之后、`endFrame()` 之前。
+     * 帧出口的快照：`endFrame()` 之前**唯一**能取像素的时刻（画布随后被释放）。
      *
-     * 顺序是**高亮在下、焦点环在上**：高亮回答"你选的是这一块"（调试态，持久），
-     * 焦点环回答"键盘现在在这里"（交互态，随时消失）。两者压在同一块上时，
-     * 更短暂、更该立刻看见的那个在上面。
+     * 调用方保证它落在任何调试标记之前：快照回答"应用长什么样"，不回答"调试器
+     * 刚才点了谁"（A81）。帧号取录制器的号而不是 `frameSerial` —— 观察者要拿它去
+     * 和 `boxes?frame=N` 配对，两个计数器各走一条线，混用就是"图与框差一帧"。
+     */
+    private function capturePainted(Canvas $canvas): void
+    {
+        if ($this->frameObserver === null) {
+            return;
+        }
+
+        ($this->frameObserver)($canvas, $this->debugRecorder?->frameId() ?? 0);
+    }
+
+    /**
+     * 调试叠加：高亮与检查器层的绘制出口，**只上屏、不进快照**。
+     *
+     * 压在所有内容之上，也包括焦点环。旧顺序是"高亮在下、焦点环在上"（理由：更短暂、
+     * 更该立刻看见的在上）；快照纪律要求焦点环随内容先画，两者换位后重叠时
+     * "当前调试目标"优先 —— 这个取舍是有意的，不是漏改。
      *
      * ★ 高亮**不改结构**：不标脏、不重建、不重排，只是在已经画好的画布上多一圈
      *   描边。所以它进不了 `Digest::ofFrame()`（`rebuilt` / `causes` / `stages` /
@@ -1853,9 +1908,15 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
      *
      * @param bool $record 这一帧是不是录制中的正常帧（决定要不要把"叠加已上屏"报给录制器）
      */
-    private function paintOverlay(Canvas $canvas, ?Element $highlight, bool $record = true): void
+    private function paintDebugOverlay(Canvas $canvas, ?Element $highlight, bool $record = true): void
     {
-        $drew = false;
+        // 检查器层先画：它是**填充**（四层盒、全体边界），高亮是**描边**，
+        // 描边压在上面才看得见"选中的是哪个"。反过来会让 2px 主框被色块盖住。
+        // 它自己回答画没画（可能开着但一个盒都不在视口里），壳不替它猜 ——
+        // 一层一个布尔，正是 A51 说的"别再各加一组字段"。
+        $drewInspect = $this->debugOverlay !== null && ($this->debugOverlay)($canvas) === true;
+
+        $drewHighlight = false;
 
         if ($highlight !== null) {
             $box = $highlight->effectiveBox();
@@ -1866,23 +1927,17 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
                     $canvas,
                     Paint::stroke($this->theme()->color(ColorToken::Warning), 2.0),
                 );
-                $drew = true;
+                $drewHighlight = true;
             }
         }
 
-        $this->paintFocusRing($canvas);
-
-        if ($drew && $record && $this->devFacts !== null) {
-            // 只报"画了"，不报"画的谁"：录制器知道当前高亮的是哪个号
-            // （`noteHighlight()` 记的），而壳不该为了一笔记账去懂节点号。
-            $this->devFacts['overlayDrawn'] = true;
-        }
-
-        // 帧出口：画布在 `endFrame()` 里就被释放，这里是**唯一**还能取像素的时刻。
-        // 传录制器的帧号（不是 `frameSerial`）—— 观察者要拿它去和 `boxes?frame=N` 配对，
-        // 两个计数器各走一条线，混用就是"图与框差一帧"这种谁也没报错的错位。
-        if ($this->frameObserver !== null) {
-            ($this->frameObserver)($canvas, $this->debugRecorder?->frameId() ?? 0);
+        if ($record && $this->devFacts !== null) {
+            if ($drewHighlight) {
+                $this->devFacts['overlays']['highlight'] = true;
+            }
+            if ($drewInspect) {
+                $this->devFacts['overlays']['inspect'] = true;
+            }
         }
     }
 
@@ -1899,6 +1954,42 @@ final class AppShell implements TextEditingHost, InputHost, OverlayHost, PumpHos
     public function setFrameObserver(?\Closure $observer): void
     {
         $this->frameObserver = $observer;
+    }
+
+    /**
+     * 装/摘检查器叠加层（`null` = 摘）。
+     *
+     * ★ 装/摘都**请求一帧**：叠加层绕过 `setState`，树与浮层都没变时 `Frame::run()`
+     *   整帧跳过，表现就是"装了但屏幕上什么都没有"（A51 的原坑）。
+     * ★ 闭包返回"这一帧画了东西吗"，只用于记账，不参与绘制决策 —— 壳不替策略层
+     *   判断"开着但没东西可画"（选中已卸载、盒全在视口外、所有层都关了）。
+     *
+     * @param null|\Closure(Canvas): bool $painter
+     * @internal 由 `Application::setDebugOverlay()` 转发（调试会话专用）
+     */
+    public function setDebugOverlay(?\Closure $painter): void
+    {
+        $this->debugOverlay = $painter;
+        ++$this->debugOverlayVersion;
+        $this->pipeline->scheduleFrame();
+    }
+
+    /**
+     * 叠加层的输入变了（开关、选中），要再画一帧。
+     *
+     * ★ 与 {@see self::requestPaint()} 分工：那是画面通道"补第一张图"的一次性请求，
+     *   语义是"树没变也画一遍"；这里是"叠加层自己该重画了"。混用之后
+     *   "这一帧是谁要的"就重新变成一句猜。
+     * ★ 没装时早退：版本号空涨会让 `paintRequested` 恒真，把静止的应用打回满帧。
+     */
+    public function requestOverlayRepaint(): void
+    {
+        if ($this->debugOverlay === null) {
+            return;
+        }
+
+        ++$this->debugOverlayVersion;
+        $this->pipeline->scheduleFrame();
     }
 
     /**

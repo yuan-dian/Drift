@@ -452,11 +452,11 @@ S3a 的 `boxModel` / `constraints` 若只有测试在问，就还是"能力有�
 |---|---|---|
 | 重开（B5） | 重跑单位是**应用**；逐轮比对节点表 → 脚本 → 逐帧。复用实例会因输入自反 / 滚动饱和制造假一致 | `devtools/Host/Reopen.php`、`devtools/View/LoopReport.php` |
 | 词表（B6） | 10 个 driver 共用一份 schema，`Parsed::script()` 唯一组装；`--width` 统一视口、`--text-width` 另管排版 | `devtools/Cli/OptionSet.php`、`devtools/Cli/Parsed.php` |
-| 出口（B7） | 15 个出口只在 Registry 声明；分发与两级 help 都从它派生（`eval` 是协议型出口，不进 schema） | `devtools/Cli/Registry.php`、`bin/drift` |
+| 出口（B7） | 出口只在 Registry 声明；分发与两级 help 都从它派生（`eval` 是协议型出口，不进 schema） | `devtools/Cli/Registry.php`、`bin/drift` |
 | 结束（B8） | `finish` 是动作，`afterDrive(at)` 是唯一规则：`paused/at` 或 `finished/null`；本地与远端同形 | `src/Debug/Session/SessionState.php`、`devtools/Host/Source.php` |
 | 手册（B9） | 枚举事实由 Registry / schema 生成，语义散文留在文档；生成块与散文里的参数名都有机检 | `devtools/Cli/Doc.php`、`tools/gen-cli-doc.php`、`docs/reference/cli.md` |
-
 | 高亮（S6 反向流） | `highlight(node)`（`0` = 清除）走驱动面，注解进脚本（`Step::HIGHLIGHT`），绘制后叠加；协议 `highlight` 方法跨进程同形；出口 `debug highlight` 用像素指纹回答"真的上屏了没"（A50/A51/A52） | `src/Debug/Session/Step.php`、`src/App/AppShell.php`、`devtools/Protocol/Methods.php`、`devtools/bin/debug-highlight.php` |
+| 叠加层（A81） | 快照只记应用，调试装饰画在拍照之后；`highlight` 与 `inspect` 两层各自记账（`Recorder::ledger()['overlay']` 是 `layer => {frame, node}`），`inspect` 进 `state.inspector` 但**不进**包 / 指纹 / 重放 | `src/App/AppShell.php`、`devtools/Inspect/Inspector.php`、`devtools/bin/debug-inspect.php` |
 
 ### 未做（按执行顺序）
 

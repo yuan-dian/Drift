@@ -22,6 +22,14 @@
 
 ### Breaking
 
+- **快照从此只记应用，不含调试装饰**：`Recorder` 的快照帧在调试高亮 / 检查器叠加**之前**
+  拍（A81）。此前高亮框会被烤进底图、`repaintForResize()` 还会顺手多拍一张 —— 于是
+  "同一份脚本跑两遍"因调试开关不同拿到不同快照，而帧号在 resize 路径上不前进（那条路
+  没有 `beginFrame`），多出来的那张快照与上一帧同号。现在拍帧与画装饰是两个动作。
+  叠加层"有没有真的上屏"仍照记，但改按层：`Recorder::ledger()['overlay']` 从
+  `{frame, node}|null` 变成 `layer => {frame, node}` 的映射，`History::overlayDrawn()`
+  带层名参数（默认 `highlight`）。两个叠加层能独立失败，"高亮上了屏"不等于
+  "检查器也上了屏"。
 - **`ScrollView::vertical()` 改名为 `isVertical()`**：与 `LazyList` / `Flex` 的同一判据同名
   （此前同一个问题有三个叫法，读代码要先确认是哪一种容器的哪个词）。唯一消费者是
   `ScrollViewState`，应用侧零改动。
@@ -46,6 +54,13 @@
 - 诊断工具的相应路径假设同步更新（`probe_win.py` / `probe-window.py` /
   `probe-two-windows.py` / `probe-hotreload-p15.php`）。
 
+- **调试协议升到 2：事件与响应共用一条 NDJSON 管道**：顶层有整数 `id` 是响应，有字符串
+  `event` 是事件，两者皆无回 `BAD_RESPONSE`；事件信封 `{event, seq, data}`，`seq` 是宿主
+  单调序号、不是帧号，首版只有 `frame`，`data` 为 `{id, cost}`（`cost` 量不到给 `null`）。
+  `MIN_VERSION = VERSION = 2`：旧 AOT exe 带 `protocol: 1` 会收到明确的 `unsupported_version`，
+  不再静默按当前版解释。预览阶段无仓库外消费者，宿主默认推给所有已连接通道，不设
+  `subscribe`；这个前提的失效条件写在裁决 A80。
+
 - **`Bind` 的 builder 收 `BuildContext`**：原先要求 `fn (): Widget`，于是任何"细粒度
   订阅 + 需要当前主题色"的段落都得额外造一个只为了把 ctx 带进 `build()` 的
   `StatelessWidget` 壳（watermark 里这样的壳有 4 个）。现在统一为
@@ -64,6 +79,35 @@
   被守护的 API 消失后它们只会匹配到应用自己同名的非订阅方法。
 
 ### 已实现
+
+- **`debug inspect`：真机叠加层**。协议新增 `inspect` 动词（干预组第 4 个，与 `highlight`
+  同形：不进证据包 / 指纹 / 重放，但进 `state.inspector` 与 `state.inspectorDrawn`），
+  两个叠加层可分别开关、覆盖式传参（`--layer=a,b` 与 `--layer=a --layer=b` 同义）：
+  - `bounds`：全体盒边界。容器淡画（alpha 64）、叶子浓（144）、选中节点整条祖先链满
+    （255）；视口外的盒不画。
+  - `box-model`：选中节点的 margin / border / padding / content 四环。边框在盒边线上
+    描、内外各半宽，所以环厚恰等于 `borderWidth`（`border` 不占布局，减进原点就是错）。
+  - 数据读**活树**（`RenderBox::absoluteOrigin()` + `Modifier`），不读几何记录：后者只留
+    60 帧内变过的节点，空闲几秒就滚出窗口。`BoxLayers::of()` 的字段名与 `boxModel()` 对齐，
+    判据是"同一帧两边逐值相同"，不是"看起来差不多"。
+  - 壳侧只认一个 `?\Closure(Canvas): bool`（返回"这一帧画了东西吗"）—— 注入形状如此，
+    `src/` 才不必引用 `Drift\DevTools\`（A72）。叠加层绕过 `setState`，闭包是同一对象，
+    故用单调递增的 `debugOverlayVersion` 驱动重绘；它进 `frame()` 与 `continueFrame()`
+    两处判定，漏一处就是"开了 inspect 屏幕没反应"。
+- **调试器事件通道（A80）**：`frame` 事件与请求/响应共用同一条 NDJSON 管道。事件名与
+  `data` 形状只在 `Events::describe()` 声明并双向闭合；`RemoteSession::call()` 遇到事件先入
+  256 条有界缓冲再继续等响应，新增 `events()` / `waitEvents()` / `droppedEvents()`。宿主侧
+  `Host::advance(\Closure)` 与 `publishFrame()` 是唯一发布点，靠 `publishedFrame` 水位线做
+  边沿触发；写失败的通道当场摘除，不影响其他观察者。管道传输的 `readable()` 恒 `false`、
+  `waitEvents()` 只取已有缓冲，socket 上才用 `stream_select` 主动等。事件不进证据、指纹
+  与重放。
+- **`debug web` 改由 SSE 唤醒**：`HttpServer` 从单连接阻塞改成 `stream_select` 多连接循环，
+  handler 可返回一次性响应或 `{stream}` 流式响应；`/api/events` 推 `frame`（协议事件）与
+  `tick`（Web 兜底节拍，不进 `Events::ALL`），前端 `EventSource` + 200ms 合并窗口替代
+  定时轮询。判据钉住“流开着时另一个 `/api/state` 仍在 1 秒内应答”，否则单连接阻塞下
+  一条 SSE 会占死服务位。顺带修掉 A73 搬迁后静态资源根失效导致的 web 404。
+- **调试宿主两处收敛**：`FrameTable` 合并原先两份帧表/墙钟实现；`Host::dispatch()` 改成
+  动词 → handler 一张表，`unavailable()` 检查只留一处，`Methods::ALL` 与 handler 表双向闭合。
 
 - **UIA `IScrollProvider`（滚动容器无障碍）**：语义节点新增 `scrollAxis` 三态
   （`0` 非滚动容器 / `1` 水平 / `2` 垂直）与 `scrollOffset` / `scrollMax` /

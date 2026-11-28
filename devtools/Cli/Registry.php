@@ -43,6 +43,7 @@ final class Registry
             ['props', 'debug-props.php', '按节点读 Widget / State 配置', true],
             ['probe', 'debug-probe.php', 'dev 轻量内省：内存存活跨度 / 源码位置（不是证据）', true],
             ['highlight', 'debug-highlight.php', '让一个节点在屏上被描边，并回答"真的上屏了没"', true],
+            ['inspect', 'debug-inspect.php', '真机叠加层：全体边界 / 选中节点的盒模型四层', true],
             ['host', 'debug-host.php', '宿主进程（被 --remote 拉起，也可手工对着 stdio 发消息）', false],
             ['serve', 'debug-serve.php', '常驻宿主：自己按脚本推帧，等人 attach 上来看', true],
             ['ctl', 'debug-ctl.php', '控制面：让自走的宿主停一下 / 走一步 / 接着跑', false],

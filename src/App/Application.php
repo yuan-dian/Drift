@@ -386,6 +386,30 @@ abstract class Application
     }
 
     /**
+     * 装/摘检查器叠加层（`null` = 摘）—— 画在快照之后、`endFrame()` 之前。
+     *
+     * ★ 闭包返回"这一帧画了东西吗"。壳只记这个布尔，不解释"为什么没画"：
+     *   那是策略层能答的事（选中已卸载 / 盒在视口外 / 所有层都关）。
+     *
+     * @param null|\Closure(\Drift\Rendering\Canvas): bool $painter
+     * @internal 调试会话专用
+     */
+    public function setDebugOverlay(?\Closure $painter): void
+    {
+        $this->shell->setDebugOverlay($painter);
+    }
+
+    /**
+     * 叠加层输入变了（开关 / 选中），请求重画一帧。
+     *
+     * @internal 调试会话专用
+     */
+    public function requestOverlayRepaint(): void
+    {
+        $this->shell->requestOverlayRepaint();
+    }
+
+    /**
      * 请求画一帧（一次性）—— 画面通道用它给静止的应用补上第一张图。
      *
      * @internal 调试会话专用

@@ -309,6 +309,21 @@ final class RemoteSession implements Session
     }
 
     /**
+     * 开 / 关检查器叠加层（覆盖式，`[]` = 全关）。
+     *
+     * 回执里的 `drawnFrame` 是**上屏**的帧号，可能停在上一次成功那帧 ——
+     * 例如 `box-model` 开着但还没有选中节点。那不是错误，是要暴露的事实。
+     *
+     * @param list<string> $layers
+     * @return array{layers: list<string>, drawnFrame: int|null}
+     */
+    public function inspect(array $layers): array
+    {
+        /** @var array{layers: list<string>, drawnFrame: int|null} */
+        return $this->callObject(Methods::INSPECT, ['layers' => $layers]);
+    }
+
+    /**
      * 布防 / 撤防活窗口拾取（A58）。只对有真窗口的 live 宿主有意义。
      *
      * ★ 不在这里记"布防了没有"：那是桥的状态，客户端再存一份就会漂。回执是唯一

@@ -411,6 +411,7 @@ final class Host
         Methods::PAUSE => ['answerControl', true],
         Methods::RESUME => ['answerControl', true],
         Methods::HIGHLIGHT => ['answerHighlight', true],
+        Methods::INSPECT => ['answerInspect', true],
         Methods::PICK => ['answerPick', true],
         Methods::FINISH => ['answerFinish', true],
     ];
@@ -520,6 +521,12 @@ final class Host
     private function answerHighlight(string $method, array $params, ?int $version): array
     {
         return $this->highlight($this->session, $params);
+    }
+
+    /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
+    private function answerInspect(string $method, array $params, ?int $version): array
+    {
+        return $this->inspect($this->session, $params);
     }
 
     /** @param array<array-key, mixed> $params @return array<array-key, mixed> */
@@ -848,6 +855,34 @@ final class Host
             'node' => $history->highlightedNode(),
             'drawnFrame' => $drawn === null ? null : $drawn['frame'],
         ];
+    }
+
+    /**
+     * 开 / 关检查器叠加层（覆盖式）。与 `highlight` 同组、同形状：
+     * 只改下一次绘制，回执里带上屏帧号。
+     *
+     * @param array<array-key, mixed> $params
+     *
+     * @return array<array-key, mixed>
+     */
+    private function inspect(DebugSession $session, array $params): array
+    {
+        $layers = $params['layers'] ?? [];
+        if (!\is_array($layers)) {
+            throw new ProtocolError(ProtocolError::BAD_REQUEST, 'inspect 需要字符串数组 layers（[] 表示全关）');
+        }
+
+        $names = [];
+        foreach ($layers as $layer) {
+            if (!\is_string($layer) || $layer === '') {
+                throw new ProtocolError(ProtocolError::BAD_REQUEST, 'inspect 的 layers 只接受非空字符串');
+            }
+            $names[] = $layer;
+        }
+
+        // 不认识的层名在 `Inspector::setLayers()` 里抛（那里是唯一声明了一份可用清单），
+        // `failFor()` 翻成 `call_failed` —— 与本地直调抛的是同一件事。
+        return $session->inspect($names);
     }
 
     /**

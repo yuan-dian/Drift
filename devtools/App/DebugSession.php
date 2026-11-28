@@ -8,6 +8,7 @@ use Drift\Debug\Session\RecordOptions;
 use Drift\Debug\Session\Recorder;
 use Drift\Debug\Session\Script;
 use Drift\Debug\Session\SessionState;
+use Drift\DevTools\Inspect\Inspector;
 use Drift\DevTools\Session\History;
 use Drift\DevTools\Session\Query;
 use Drift\DevTools\Session\QueryRouter;
@@ -74,6 +75,14 @@ final class DebugSession implements Session
     private array $effects = [];
 
     private readonly History $history;
+
+    /**
+     * 真机检查器叠加（`null` = 会话已关 / 没装）。
+     *
+     * ★ 挂在这里而不是宿主：会话是唯一知道"这个窗口装了录制器、也真的在画"的地方。
+     *   宿主、出口、Web 三条路都经由会话获取，所以叠加层的存在不取决于谁连上来。
+     */
+    private ?Inspector $inspector = null;
 
     private function __construct(
         private readonly Application $app,
@@ -293,6 +302,60 @@ final class DebugSession implements Session
         $this->app->setDebugHighlight($element);
     }
 
+    /**
+     * 开 / 关真机检查器的叠加层（覆盖式：`[]` = 全关）。
+     *
+     * ★ 与 {@see self::highlight()} 同形，是**干预**组：改的是"下一次绘制画什么"。
+     *   "现在开着哪几层"由 `query('state')['inspector']` 回答，两者不合并 ——
+     *   请求与上屏混成一个字段，就再也分不出"开了但没画出来"。
+     * ★ 回执带 `drawnFrame`：与 `highlight` 一样把"上屏了没"直接答掉。
+     *   注意它可能停在上一次成功那帧（例如 `box-model` 开着但没选中节点）——
+     *   那正是要暴露的事实，不是错误。
+     *
+     * @param list<string> $layers
+     * @return array{layers: list<string>, drawnFrame: int|null}
+     */
+    public function inspect(array $layers): array
+    {
+        $on = $this->inspector()->setLayers($layers);
+        $drawn = $this->history->overlayDrawn('inspect');
+
+        return ['layers' => $on, 'drawnFrame' => $drawn === null ? null : $drawn['frame']];
+    }
+
+    /**
+     * 惰性建叠加层：第一次有人开它才装。
+     *
+     * ★ 不在 `open()` 里装。装会 `scheduleFrame()` 一帧，而"装了"
+     *   这件事本身就成了被测状态的一部分 —— `DebugSessionTest` 拿"会话驱动的帧"
+     *   与"直接驱动的帧"逐值比，多排的那一帧会让 `paint` 记账在两边分叉
+     *   （实测：直接驱动 `paint: true`，会话驱动 `paint: false`）。
+     *   不用检查器的会话，因此与没有这个功能时一模一样。
+     *
+     * @throws \LogicException 会话已关闭
+     */
+    private function inspector(): Inspector
+    {
+        if ($this->closed) {
+            throw new \LogicException('会话已关闭：叠加层已经摘掉了');
+        }
+
+        if ($this->inspector === null) {
+            $inspector = new Inspector();
+            // 装的是闭包，`src` 因此不认识 `Inspector` —— 结构断言仍成立。
+            $inspector->attach($this->app, $this->recorder);
+            $this->inspector = $inspector;
+        }
+
+        return $this->inspector;
+    }
+
+    /** @return list<string> 现在开着的叠加层 */
+    public function inspectorLayers(): array
+    {
+        return $this->inspector?->enabled() ?? [];
+    }
+
     /** 本次会话的脚本（帧边界 + 输入 + 副作用）。 */
     public function script(): Script
     {
@@ -335,7 +398,20 @@ final class DebugSession implements Session
      */
     public function query(string $name, array $args = []): array
     {
-        return $this->router->query($name, $args);
+        $answer = $this->router->query($name, $args);
+
+        // `state` 补一层叠加开关：Web 要镜像"真机现在开着哪几层"，而这几层是会话
+        // 状态、不是记录 —— 放进 `Recorder` 就会跟着证据包一起走（A81 明确不进包）。
+        // 离线包没有叠加层，字段缺席，读者按"没有"处理。
+        // ★ `inspectorDrawn` 单独给：`inspect` 的回执读在画之前，只能是"上一次"，
+        //   而读者真正要问的是"现在屏上那一层是哪一帧"——那个只能在帧后读。
+        if ($name === 'state') {
+            $answer['inspector'] = $this->inspectorLayers();
+            $drawn = $this->history->overlayDrawn('inspect');
+            $answer['inspectorDrawn'] = $drawn === null ? null : $drawn['frame'];
+        }
+
+        return $answer;
     }
 
     /** @return list<array<string, mixed>> */
@@ -409,6 +485,8 @@ final class DebugSession implements Session
 
         // 叠加层随会话一起撤：会话结束了还留着描边，等于把一个已结束的会话
         // 的最后状态当成"现在正看着它"。
+        $this->inspector?->detach();
+        $this->inspector = null;
         $this->app->setDebugHighlight(null);
 
         // ★ 解绑而不是 `uninstall()`：`uninstall()` 是进程级硬重置，同进程里可能还有

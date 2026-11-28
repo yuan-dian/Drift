@@ -224,7 +224,11 @@ final class LiveTicker implements DebugTicker, DebugInputInterceptor
     }
 
     /**
-     * 帧出口回调（`AppShell::paintOverlay()` 末尾调）。
+     * 帧出口回调（`AppShell::capturePainted()` 调，在调试叠加之前）。
+     *
+     * ★ 拍的是"应用长什么样"，不是"应用 + 调试标记"：高亮与检查器层都画在这一刻
+     *   之后（A81）。反过来说，任何新增的调试装饰都必须画在快照之后，否则底图
+     *   会带上它。
      *
      * ★ 时间用 `hrtime` 而不是注入的帧时间戳：拍多密是**观察策略**，不是被测行为。
      *   拿注入时钟去限流，暂停 / 单步时时钟不走，画面反而全拍下来了。

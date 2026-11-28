@@ -145,6 +145,12 @@ final class Commands
                 Opt::int('node', 0, 0, null, '节点 id（0 = 清除）'),
                 ...$live(),
             ],
+            'inspect' => [
+                // 覆盖式：不给任何 `--layer` 就是全关。两种写法同义（`Parsed::strings()`）：
+                // `--layer=bounds,box-model` 与 `--layer=bounds --layer=box-model`。
+                Opt::append('layer', '叠加层（bounds | box-model），可重复或逗号分隔'),
+                ...$live(),
+            ],
             'report' => [
                 Opt::flag('verify', '验证模式'),
                 Opt::int('top', 10, 1, null, 'top N'),

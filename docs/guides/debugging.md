@@ -96,6 +96,8 @@ php devtools/bin/debug-web.php            # 不用参数：自动接当前目录
 
 底部帧时间轴下面就是网络泳道，和帧条共用一条横轴（每格一帧；静止空帧已折叠，所以它不是毫秒刻度）。一条横条从发起帧画到结算帧，落在帧窗口之外的用虚线；点它右侧给四段：请求骨架、同帧落地的节点、结算那一帧的重建与因果、那一帧重画了多少盒与层缓存命中多少。落地节点和帧号都能点回去，从一次请求直接走到控件与画面。泳道下面常驻「仅统计经 Drift HTTP 客户端的请求」——应用自己调 `curl_*` / `file_get_contents` 的请求不在证据里，别把空白读成"没发过请求"；没开采集时页面说"没开"，开了但没请求才说"没有"。
 
+真机窗口自己也能叠两层，不用切到浏览器：`php devtools/bin/debug-inspect.php --page=table --layer=bounds,box-model`。`bounds` 画全体盒的边界（容器淡、叶子浓、选中链满），回答"是谁把内容挤成这样"；`box-model` 画选中节点的 margin / border / padding / content 四层，回答"它多大、padding 占多少"。开关是**覆盖式**的——不给 `--layer` 就是全关；`box-model` 需要先选中（`debug-highlight --node=N`，或在浏览器里点一个）。叠加层只上屏、**不进快照**，所以 web 的底图永远是"应用长什么样"，不会带着你上一秒点的那圈框；拖动窗口时也不更新底图（那一帧没有自己的帧号，拍出来必与线框错配）。
+
 边界要记住：**画面不进证据**。它不参与指纹、不进基线、`--assert` 不看它。像素是"给人看的"，断言仍然只认 `boxes` / `cascade` / `repaint` 那些数字。
 
 接着追问也不用换目标：当前目录只有一个活会话时，`debug-props --node=N`、`debug-node --node=N --frame=N`、`debug-find --pattern=…`、`debug-network` 和 `debug-brief` 都直接接它，不必再写应用类名或路由。`debug-pick-live` 点中节点后打印的 `debug-props --node=N` 就是这条路径。多个会话时要 `--session=<id>` 点名——挑错了会让人对着另一个应用的结构找问题。

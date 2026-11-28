@@ -83,6 +83,16 @@ final class Methods
     public const string HIGHLIGHT = 'highlight';
 
     /**
+     * 开 / 关真机检查器的叠加层。参数 `layers`（字符串数组；`[]` = 全关）。
+     *
+     * ★ 与 `highlight` 分工：那个管"选中谁"，这个管"画哪几层"。合成一个动词的话
+     *   "选中一个节点"与"打开边界层"就变成同一种操作，而它们能独立失败。
+     * ★ 与 `highlight` 一样只改下一次绘制，不改记录：不进包、不进指纹、不进重放。
+     *   但**进** `state` 的 `inspector` 字段 —— Web 要镜像"真机开着哪几层"。
+     */
+    public const string INSPECT = 'inspect';
+
+    /**
      * 布防 / 撤防**活窗口拾取**。参数 `enabled`（布尔）。
      *
      * ★ 布防后真窗口的下一次点击不进应用，只走 `pick` → `highlight`，点完自动撤防。
@@ -119,6 +129,7 @@ final class Methods
         self::EVAL,
         self::PAUSE,
         self::HIGHLIGHT,
+        self::INSPECT,
         self::PICK,
         self::RESUME,
         self::FINISH,

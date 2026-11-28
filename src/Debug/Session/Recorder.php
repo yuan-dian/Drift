@@ -183,15 +183,17 @@ final class Recorder implements PaintObserver
     private int $highlightFrame = 0;
 
     /**
-     * 最近一次**真的画上屏**的叠加：`['frame' => 帧号, 'node' => 节点号]`；没画过为 `null`。
+     * 最近一次**真的画上屏**的叠加，按层记：`layer => ['frame' => 帧号, 'node' => 节点号]`。
      *
      * ★ 与 {@see self::$highlightNode} 分开记，是为了区分两件事：
      *   "请求了高亮"与"高亮真的到了屏幕上"。中间隔着绘制（元素已卸载、盒没尺寸、
      *   帧被跳过都会让它只停在第一件上）—— 而那种失败是静默的。
+     * ★ 按层而不是一个值：高亮与检查器是两层，各自能独立失败（A51 的推翻条件就是
+     *   "出现第二个叠加层"，那时收成一份，不是再各加一组字段）。
      *
-     * @var array{frame: int, node: int}|null
+     * @var array<string, array{frame: int, node: int}>
      */
-    private ?array $overlayDrawn = null;
+    private array $overlays = [];
 
     /**
      * 几何窗口比帧窗口短得多：600 帧 × 2000 节点全存撑不住，而"这一帧为什么这个尺寸"
@@ -650,10 +652,14 @@ final class Recorder implements PaintObserver
         $this->activeJob = 0;
 
         // 叠加层：**画成功才算**。壳在 afterPaint 里真的描了边才把这一笔报上来；
-        // 帧被跳过、paint 抛异常、元素已卸载 ⇒ 这里收不到 ⇒ `overlayDrawn` 停在
-        // 上一次成功的那一帧，读者据此能分出"请求了"与"上屏了"。
-        if (($facts['overlayDrawn'] ?? false) === true && $this->highlightNode > 0) {
-            $this->overlayDrawn = ['frame' => $this->frameId, 'node' => $this->highlightNode];
+        // 帧被跳过、paint 抛异常、元素已卸载 ⇒ 这里收不到 ⇒ 那一层停在上一次成功的
+        // 帧号，读者据此能分出"请求了"与"上屏了"。
+        // ★ 不要求 `highlightNode > 0`：检查器的边界层不依赖选中，把它绑在选中号上
+        //   就会"屏幕上有框、账上却没画过"。`node` 允许是 0，意思是"这一层与选中无关"。
+        foreach (($facts['overlays'] ?? []) as $layer => $drawn) {
+            if ($drawn === true) {
+                $this->overlays[(string) $layer] = ['frame' => $this->frameId, 'node' => $this->highlightNode];
+            }
         }
 
         $this->trim();
@@ -843,8 +849,6 @@ final class Recorder implements PaintObserver
         $this->options->script()?->add(Step::highlight($node, $t));
     }
 
-    /** 当前高亮的节点号；`0` = 没有。 */
-    /** 当前这个高亮是在第几帧被请求的；`0` = 本次录制还没请求过。 */
     /**
      * 原始帧号：`beginFrame()` 每帧自增，与 `frames` 窗口是否裁剪无关。
      *
@@ -901,7 +905,7 @@ final class Recorder implements PaintObserver
      *     frameId: int,
      *     highlighted: int,
      *     highlightFrame: int,
-     *     overlay: array{frame: int, node: int}|null,
+     *     overlay: array<string, array{frame: int, node: int}>,
      * }
      */
     public function ledger(): array
@@ -921,7 +925,7 @@ final class Recorder implements PaintObserver
             'frameId' => $this->frameId,
             'highlighted' => $this->highlightNode,
             'highlightFrame' => $this->highlightFrame,
-            'overlay' => $this->overlayDrawn,
+            'overlay' => $this->overlays,
         ];
     }
 
@@ -1384,7 +1388,7 @@ final class Recorder implements PaintObserver
         // 留着会让"这页一开就高亮着某个陌生节点"，而叠加层照画不误。
         $this->highlightNode = 0;
         $this->highlightFrame = 0;
-        $this->overlayDrawn = null;
+        $this->overlays = [];
         $this->seq = 0;
         $this->tag = ++self::$sessionSeq;
     }

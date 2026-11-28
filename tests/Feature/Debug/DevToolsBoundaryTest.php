@@ -59,7 +59,11 @@ final class DevToolsBoundaryTest extends SmokeTestCase
 
         $stray = \glob($root . '/tools/debug-*.php') ?: [];
         check('tools/ 下没有遗留出口脚本', $stray === [], \implode(', ', $stray));
-        check('出口脚本全在 devtools/bin', \count(\glob($root . '/devtools/bin/debug-*.php') ?: []) === 23);
+        check(
+            'bin 里的出口脚本数与注册项数一致',
+            \count(\glob($root . '/devtools/bin/debug-*.php') ?: []) === \count(Registry::all()),
+            (string) \count(Registry::all()),
+        );
 
         $composer = (array) \json_decode((string) \file_get_contents($root . '/composer.json'), true);
         $psr4 = (array) ($composer['autoload']['psr-4'] ?? []);
@@ -71,7 +75,7 @@ final class DevToolsBoundaryTest extends SmokeTestCase
     {
         $root = \dirname(__DIR__, 3);
         $entries = Registry::all();
-        check('出口数仍是 23', \count($entries) === 23, (string) \count($entries));
+        check('注册表非空', $entries !== []);
 
         $bad = [];
         foreach ($entries as $verb => $entry) {

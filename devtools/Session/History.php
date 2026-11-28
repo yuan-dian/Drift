@@ -665,17 +665,19 @@ final class History
     }
 
     /**
-     * 最近一次真的上屏的叠加；一次都没有为 `null`。
+     * 最近一次真的上屏的某一层叠加；一次都没有为 `null`。
      *
      * ★ 与 {@see highlightedNode()} 分开记，是为了区分两件事："请求了高亮"与"高亮
      *   真的到了屏幕上"。中间隔着绘制（元素已卸载、盒没尺寸、帧被跳过都会让它只停在
      *   第一件上）—— 而那种失败是静默的。
+     * ★ 按层取（`highlight` / `inspect`），默认 `highlight`：两层能独立失败，把
+     *   "高亮上屏了"当成"检查器也上屏了"就是又一次把两件事写成一个布尔。
      *
      * @return array{frame: int, node: int}|null
      */
-    public function overlayDrawn(): ?array
+    public function overlayDrawn(string $layer = 'highlight'): ?array
     {
-        return $this->recorder->ledger()['overlay'];
+        return $this->recorder->ledger()['overlay'][$layer] ?? null;
     }
 
     /**

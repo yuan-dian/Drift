@@ -248,24 +248,33 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 | headless | 显式 `frame(ts)`，虚拟时钟 | CI 断言、脚本回放 |
 | live | 真窗口帧循环 | 开发期人看 |
 | attach | 另一个进程读已有会话：宿主子进程，或 dev 壳里正在跑的真窗口（A57，`DRIFT_DEBUG_LIVE=1`） | 一次运行多次追问、将来的面板与崩溃取证；宿主自走时还能叫停与单步 |
-| web | 浏览器读同一个会话（`debug web` 起本机 HTTP，页面轮询 `frames(since)`） | 把几何画出来：终端只能印数字，而矩形能被看见 |
+| web | 浏览器读同一个会话（`debug web` 起本机 HTTP，`/api/events` 用 SSE 说“该看一眼了”，帧号变化后再取查询与几何） | 把几何画出来：终端只能印数字，而矩形能被看见 |
 
 三者的查询代码完全相同：`DebugSession` 与 `RemoteSession` 实现同一对接口
 （`SessionQueries` / `SessionDriver`），差异只在"谁执行那串步骤"。
 
-### 协议十二个方法，按角色分组
+### 协议十四个方法，加一条同管事件
 
 | 角色 | 方法 |
 |---|---|
 | 会话 | `open` / `close` |
+| 发现 | `capabilities`（`open` 之前可问） |
 | 驱动 | `frame` / `input` / `effect` |
 | 读 | `query` |
 | 内省 | `eval`（默认关，不是证据） |
-| 干预 | `pause` / `resume` / `highlight` / `pick` |
+| 干预 | `pause` / `resume` / `highlight` / `inspect` / `pick` |
 | 收尾 | `finish` |
 
-`pause` / `resume` 改的是谁推帧，`highlight` 改的是下一帧画什么，`pick` 改的是
-下一次输入给谁（A58）—— 三者都不改记录，所以同属干预这一组。活窗口拾取只由
+除此之外，同一条 NDJSON 管道上还有第二种消息形状：**事件**。顶层有整数 `id` 是响应，
+有字符串 `event` 是事件，两者皆无是 `BAD_RESPONSE`。首版只有 `frame` 事件，信封是
+`{event, seq, data}`，`data` 为 `{id, cost}`：`seq` 是宿主单调序号而非帧号（一帧可以没有
+事件，也可能连发两条），`cost` 量不到时是 `null` 而不是编一个 `0`。事件名与形状只在
+`Events::describe()` 声明并双向闭合；预览阶段宿主推给所有已连接通道，不设订阅动词，
+代价是 `MIN_VERSION = VERSION = 2` 一放开就必须先补订阅。
+
+`pause` / `resume` 改的是谁推帧，`highlight` 与 `inspect` 改的是下一帧画什么
+（前者给一个节点描边，后者按层叠上全体边界或选中节点的盒模型），`pick` 改的是
+下一次输入给谁（A58）—— 四者都不改记录，所以同属干预这一组。活窗口拾取只由
 有真窗口的 live 宿主支持，自走宿主回 `not_applicable`。
 
 凡是 `query` 能表达的都不另开动词 —— `script` 与 `digest` 因此是**查询名**。
@@ -293,7 +302,7 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
   同理，对象不许过线：`json_encode(new stdClass())` 是 `{}`（不报错，内容没了），
   所以编码前显式走一遍"只有标量 / 数组 / null"。
 
-传输的**实现**只在 `tools/`（stdio、子进程管道与 loopback socket）。协议（`Wire` / `Methods` / `Capabilities` / `RemoteSession`）与查询面住在 `devtools/`（A72）—— 它们物理上不在 `src/` 里，也就不进任何应用的 `sources`；写面 `Recorder` 留在 `src/Debug/Session`，因为它要在帧热路径上被 tap。协议层不碰任何 I/O ⇒ AOT 面因此不变。
+传输的**实现**住在 `devtools/Host/`（stdio、子进程管道与 loopback socket）；协议（`Wire` / `Methods` / `Capabilities` / `RemoteSession`）与查询面也在 `devtools/`（A72/A73）—— 它们物理上不在 `src/` 里，也就不进任何应用的 `sources`；写面 `Recorder` 留在 `src/Debug/Session`，因为它要在帧热路径上被 tap。协议层不碰任何 I/O ⇒ AOT 面因此不变。
 
 可判的条件是**帧时间 `t` 来自脚本**，不是"宿主从属"。从属只是一种实现方式：宿主
 不自推帧、不读时钟，于是墙钟混不进来；但反过来不成立 —— 自走宿主照样可判，只要它
@@ -381,16 +390,19 @@ Chrome、Flutter、React Profiler 都在往"时间 + 因果"走，但它们的�
 
 ### 浏览器说不了 NDJSON
 
-协议传输是"一行进一行出"（`Transport`），三个实现都是本机管道。浏览器只会 HTTP。
-`debug web` 因此自己起一个最小 HTTP/1.1（`devtools/Host/HttpServer.php`）：一个连接一条
-请求、`Connection: close`、不做 keep-alive / 分块 / 压缩。它不用 `php -S`，因为那些请求
-要读的是**本进程里的** `SessionQueries` —— 把几百帧的数组交给另一个进程只能落盘，而落盘
-等于每个请求重做一遍采集。
+协议传输是"一行进一行出"（`Transport`）。浏览器只会 HTTP，不能直接说 NDJSON，
+所以 `debug web` 自己起一个本机 HTTP/1.1（`devtools/Host/HttpServer.php`）。它不用
+`php -S`，因为请求要读的是**本进程里的** `SessionQueries` —— 把几百帧的数组交给另一个
+进程只能落盘，而落盘等于每个请求重做一遍采集。服务端现在是 `stream_select` 多连接循环：
+普通请求一问一答，`/api/events` 是 SSE 流式响应（无 `Content-Length`，`Connection: close`
+定界，15s 注释行保活），一条长连接不再占死服务位。
 
-### 轮询，不是 SSE 也不是 WebSocket
+### SSE 唤醒，不是 WebSocket，也不是第二套查询
 
-当前页面每 1s 轮询 `/api/state`，帧号变化后再取该帧几何；`frames(since)` 本身仍是无状态游标（见上），只是页面暂未用它。SSE 要在服务端存订阅者集合，WS 要多一套帧协议与掩码 —— 两个都要引入
-"谁在看"这份状态，而这份状态会与帧推进耦合。
+页面用 `EventSource('/api/events')` 等宿主说"该看一眼了"，收到 `frame` 或 Web 兜底 `tick`
+后在 200ms 合并窗口里读 `/api/state` 与对应几何；事件本身不搬数据，查询仍是唯一读数口径。
+`tick` 只是 Web 层的保底节拍，不进 `Events::ALL`、不是协议事件。判据不是"流返回了内容"，
+而是流开着时另一个 `/api/state` 仍在 1 秒内应答 —— 单连接阻塞 HTTP 上这条必红。
 
 Chrome DevTools 用 WebSocket 是因为 CDP 是**双向命令**通道；这层的控制只有 `pause` /
 `resume` 两个低频动作，普通 POST 就够。为了"像成熟工具"而引入 WS，是拿一份会漂的状态

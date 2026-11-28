@@ -77,6 +77,7 @@ final class Capabilities
         Methods::EVAL => ['kind' => 'introspect', 'params' => ['expression', 'node']],
         Methods::PAUSE => ['kind' => 'control', 'params' => []],
         Methods::HIGHLIGHT => ['kind' => 'control', 'params' => ['node']],
+        Methods::INSPECT => ['kind' => 'control', 'params' => ['layers']],
         Methods::PICK => ['kind' => 'control', 'params' => ['enabled']],
         Methods::RESUME => ['kind' => 'control', 'params' => ['frames']],
         Methods::FINISH => ['kind' => 'finish', 'params' => ['at']],
