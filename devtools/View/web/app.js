@@ -9,6 +9,9 @@ const state = {
   frame: 0,
   boxes: [],
   paint: null,
+  // 选中节点的 `boxModel`：四层图的唯一输入。换选中先清空 —— 旧节点的四层
+  // 留在屏上比不画更糟，读者会拿它解释新选中的盒子。
+  boxModel: null,
   selected: 0,
   hover: 0,
   // 选中的真相在宿主 `query('highlight')`：页面里的 selected 只是它的镜像。
@@ -1111,7 +1114,10 @@ function draw() {
     if (b.y < 0 || b.y + b.h > view.h || b.x < 0 || b.x + b.w > view.w) hidden++;
   }
 
-  if (sel) annotate(ctx, sel, vx, vy, scale, vw, vh);
+  if (sel) {
+    drawBoxModel(ctx, selRow, state.boxModel, vx, vy, scale);
+    annotate(ctx, sel, vx, vy, scale, vw, vh);
+  }
   ctx.restore();
 
   state.hidden = hidden;
@@ -1151,6 +1157,74 @@ function placeShot(x, y, w, h) {
   // 放大到能看见单个像素时用最近邻 —— 调试时要看的是"这一像素是什么颜色"，
   // 不是"它插值之后好看"。缩小时用平滑，否则文字会碎。
   img.style.imageRendering = state.scale >= 1.5 ? 'pixelated' : 'auto';
+}
+
+/**
+ * 选中节点的盒模型四层。输入全部是 `boxModel` 的数值，这里只做**外接矩形**
+ * 的推导 —— 与真机 `Inspector::paintBoxModel()` 同一条公式：margin 外扩、
+ * border 跨边线（内外各 half）、padding 内缩、content 填充。
+ *
+ * ★ 不在这里判断"谁是容器"、不算任何宽度：数值由查询给，公式只回答"画在哪"。
+ *   两边的数值判据是"同一节点与 `boxModel()` 逐值相同"，不是像素比对。
+ */
+function drawBoxModel(ctx, row, bm, vx, vy, scale) {
+  if (!row || !bm || bm.found === false || bm.error) return;
+
+  const m = bm.margin || {};
+  const p = bm.padding || {};
+  const bw = Number((bm.border || {}).width || 0);
+  const b = row.rect;
+  const x = vx + b.x * scale;
+  const y = vy + b.y * scale;
+  const w = Math.max(0.75, b.w * scale);
+  const h = Math.max(0.75, b.h * scale);
+
+  // margin：border box 向外扩
+  const mx = x - (m.l || 0) * scale;
+  const my = y - (m.t || 0) * scale;
+  const mw = w + ((m.l || 0) + (m.r || 0)) * scale;
+  const mh = h + ((m.t || 0) + (m.b || 0)) * scale;
+  fillRing(ctx, mx, my, mw, mh, x, y, w, h, 'rgba(255,183,77,0.30)');
+
+  // border：跨在边线上（内外各 half）—— 本项目的 border 是描边，不占布局空间
+  let ix = x;
+  let iy = y;
+  let iw = w;
+  let ih = h;
+  if (bw > 0) {
+    const half = (bw * scale) / 2;
+    ix = x + half;
+    iy = y + half;
+    iw = w - bw * scale;
+    ih = h - bw * scale;
+    fillRing(ctx, x - half, y - half, w + bw * scale, h + bw * scale, ix, iy, iw, ih, 'rgba(79,195,247,0.36)');
+  }
+
+  // padding：border 内缘到 content
+  const cx = ix + (p.l || 0) * scale;
+  const cy = iy + (p.t || 0) * scale;
+  const cw = iw - ((p.l || 0) + (p.r || 0)) * scale;
+  const ch = ih - ((p.t || 0) + (p.b || 0)) * scale;
+  fillRing(ctx, ix, iy, iw, ih, cx, cy, cw, ch, 'rgba(129,199,132,0.30)');
+
+  if (cw > 0.5 && ch > 0.5) {
+    ctx.fillStyle = 'rgba(100,181,246,0.22)';
+    ctx.fillRect(cx, cy, cw, ch);
+  }
+}
+
+/** 外框减内框的四条边；厚度非正的边不出矩形 —— 与真机 `fillRings()` 同一条。 */
+function fillRing(ctx, ox, oy, ow, oh, ix, iy, iw, ih, color) {
+  const pieces = [
+    [ox, oy, ow, iy - oy],
+    [ox, iy + ih, ow, oy + oh - (iy + ih)],
+    [ox, iy, ix - ox, ih],
+    [ix + iw, iy, ox + ow - (ix + iw), ih],
+  ];
+  ctx.fillStyle = color;
+  for (const [px, py, pw, ph] of pieces) {
+    if (pw > 0 && ph > 0) ctx.fillRect(px, py, pw, ph);
+  }
 }
 
 /** 选中框的尺寸标注：DevTools 式的黑底小白字，贴在上边框外侧。 */
@@ -1303,6 +1377,7 @@ function updateSelectionSource() {
 function showSelection(node, note) {
   state.selected = node;
   state.selectionNote = note || '';
+  state.boxModel = null;
   scheduleDraw();
   renderNode(node);
   markTreeSelection();
@@ -1313,8 +1388,13 @@ async function loadCard(node) {
   if (!node) return;   // renderNode(0) 已经写了空态文案
   try {
     const card = await get(`/api/node?node=${node}&frame=${state.frame}`);
+    // 快速切换选中时旧应答可能后到：它会把四层画成上一个节点的盒子。
+    if (state.selected !== node) return;
+    state.boxModel = card.boxModel || null;
     renderCard(card);
+    scheduleDraw();
   } catch (e) {
+    state.boxModel = null;
     document.getElementById('card').textContent = e.message;
   }
 }
@@ -1409,6 +1489,21 @@ function paintFact(node) {
   return (p.painted || []).includes(node) ? '重画' : '未重画';
 }
 
+/** 四边相同给一个数，否则 l/t/r/b —— 与真机 HUD 同一条读法 */
+function edges(e) {
+  if (!e) return '0';
+  const n = (v) => Math.round(Number(v || 0) * 10) / 10;
+  const l = n(e.l);
+  const t = n(e.t);
+  const r = n(e.r);
+  const b = n(e.b);
+  return l === t && t === r && r === b ? String(l) : [l, t, r, b].join('/');
+}
+
+function fmtNum(v) {
+  return v === undefined || v === null ? '?' : String(Math.round(Number(v) * 10) / 10);
+}
+
 function renderCard(card) {
   const host = document.getElementById('card');
   host.textContent = '';
@@ -1430,6 +1525,9 @@ function renderCard(card) {
   const rows = [
     ['类型', (row && row.type) || bm.type || '?'],
     ['尺寸', `${bm.size?.w ?? '?'} × ${bm.size?.h ?? '?'}`],
+    ['margin', edges(bm.margin)],
+    ['border', fmtNum((bm.border || {}).width ?? 0)],
+    ['padding', edges(bm.padding)],
     ['偏移', `${bm.offset?.x ?? '?'}, ${bm.offset?.y ?? '?'}（相对父内容盒）`],
     ['父', bm.parent || '—'],
     ['本帧绘制', paintFact(card.node)],
@@ -1575,6 +1673,14 @@ function updateNoShot(driven) {
     : '离线包 / 只读会话只带几何与发现，节点与因果仍可查';
 }
 
+/** 真机开着的层：页面只镜像。开关在真机侧（`debug inspect`），这里不提供控制。 */
+function renderInspector(layers) {
+  const chip = document.getElementById('inspectorLayers');
+  chip.hidden = false;
+  chip.textContent = layers.length ? `真机叠加 ${layers.join(' · ')}` : '真机叠加 关';
+  chip.title = '真机窗口此刻开着的检查器层（Web 只镜像，不控制）';
+}
+
 async function poll() {
   let driven = false;
   try {
@@ -1584,6 +1690,9 @@ async function poll() {
     chip.hidden = false;
     driven = st.driven === true;
     document.getElementById('ctl').hidden = !driven;
+
+    const layers = Array.isArray(st.inspector) ? st.inspector : [];
+    renderInspector(layers);
 
     // ★ 这里**不**按 `lastFrame` 刷几何。帧号是"主循环跑过几轮"，空闲的应用
     //   被调试桥叫醒也会涨（~80fps）—— 按它刷新等于每 500ms 全量重取一遍几何，

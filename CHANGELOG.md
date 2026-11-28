@@ -80,6 +80,10 @@
 
 ### 已实现
 
+- **Web 检查器补盒模型四层图与开关镜像**：选中节点时 canvas 按 `boxModel` 的
+  margin / border / padding 数值画四层（与真机同一套公式），节点卡片补三行数值；
+  顶栏镜像真机此刻开着的层（`真机叠加 bounds · hud`），不提供控制。
+
 - **真机检查器加 HUD 层**：`debug inspect --layer=hud` 在窗口右下角叠一块实底面板，
   三行 —— `#帧号 耗时 重画数` / `类名 宽x高` / `pad | border | margin`。
   帧号、耗时、重画数取**上一完成帧**（`Recorder::stats()`）：`paint()` 跑在帧中间，

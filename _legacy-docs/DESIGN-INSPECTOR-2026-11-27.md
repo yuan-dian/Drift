@@ -390,3 +390,20 @@ Web 读**记录**（`GeometryQuery` 的 history），真机要读**活树**（`e
 - **未做**：折叠（`Tab` 切换）与"遮住内容自动缩成一行"。前者要输入钩子，后者要命中
   测试，都不属于策略层能独立完成的范围；先固定三行。
 
+### 棒 5（Web 补齐，2026-11-28）
+
+Web 侧不另造几何：选中节点的四层矩形由 `/api/node` 的 `boxModel` 数值推导，公式与
+真机 `Inspector::paintBoxModel()` 同构（margin 外扩 / border 跨线 / padding 内缩 /
+content 填充）。节点卡片补 `margin` / `border` / `padding` 三行，格式与真机 HUD
+同一条读法（四边相同给一个数，否则 `l/t/r/b`）。
+
+- **不扩证据 schema**：曾考虑让 `boxModel` 直接返回四个 rect，省掉 JS 的三行公式；
+  但 `boxModel` 在证据面里（进包、可回放），为"怎么画"加字段会让证据膨胀，而收益
+  只是三行公式。否决。
+- **开关镜像**：`/api/state` 的 `inspector` 已在（A81），Web 顶部镜像成
+  `真机叠加 bounds · hud`；不提供控制 —— 开关只有 `debug inspect` 一处。
+- **源码位置**：仍不做（§8）。
+- **判据**：数值同源（Web 与真机都读 `boxModel`），格式规则同一条；
+  `check-web-routes.php` 覆盖新 id；前端只有 `node --check`，没有单测。
+
+
